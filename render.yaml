@@ -1,0 +1,73 @@
+# Render Blueprint for the Mandi POS backend. Both services run in Singapore,
+# next to the Neon project (aws-ap-southeast-1).
+#
+# Deploy flow: every push to `main` deploys staging automatically; production is
+# deployed by hand from the Render dashboard once staging looks right.
+# Migrations run as the pre-deploy step — if one fails, the old version keeps serving.
+
+envVarGroups:
+  - name: mandipos-staging
+    envVars:
+      - key: APP_ENV
+        value: staging
+      - key: DATABASE_URL          # Neon pooled URL, role mandipos_app, branch staging
+        sync: false
+      - key: DATABASE_URL_DIRECT   # Neon direct URL, role mandipos_owner, branch staging
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_HASH_SECRET
+        generateValue: true
+      - key: TWOFACTOR_API_KEY
+        sync: false
+      - key: TWOFACTOR_OTP_TEMPLATE_NAME
+        sync: false
+  - name: mandipos-production
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL          # Neon pooled URL, role mandipos_app, branch main
+        sync: false
+      - key: DATABASE_URL_DIRECT   # Neon direct URL, role mandipos_owner, branch main
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_HASH_SECRET
+        generateValue: true
+      - key: TWOFACTOR_API_KEY
+        sync: false
+      - key: TWOFACTOR_OTP_TEMPLATE_NAME
+        sync: false
+
+services:
+  - type: web
+    name: mandipos-api-staging
+    runtime: node
+    region: singapore
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    preDeployCommand: pnpm migrate
+    startCommand: node --max-old-space-size=384 dist/main.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+      - fromGroup: mandipos-staging
+
+  - type: web
+    name: mandipos-api
+    runtime: node
+    region: singapore
+    plan: standard
+    branch: main
+    autoDeploy: false
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    preDeployCommand: pnpm migrate
+    startCommand: node --max-old-space-size=1536 dist/main.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+      - fromGroup: mandipos-production
