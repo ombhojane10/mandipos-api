@@ -18,7 +18,7 @@ shop's books between terminals. Design and reasoning: [`../mandierp/BACKEND-PLAN
   are new rows. **Masters** (buyers, trucks) are last-write-wins on `updated_at`.
 - **Shops are isolated by Postgres row-level security.** The API sets `app.shop_id` per
   transaction with `set_config(..., true)` (safe through Neon's pooler) and connects as
-  `mandipos_app`, which is subject to the policies.
+  `mandipos_api`, which is subject to the policies.
 - **Bill numbers** are made on the device: `<device code>/<FY>/<serial>`, e.g.
   `A1/2627/000123` (kachchi series: `A1K/…`). Device codes (A1, A2 …) are assigned per shop
   at login; a re-login with the stored `deviceId` keeps the code, so the series continues.
@@ -49,7 +49,7 @@ Needs Postgres 16+ running locally and pnpm.
 
 ```bash
 createdb mandipos_local
-psql -d postgres -c "CREATE ROLE mandipos_app LOGIN PASSWORD 'local-only'"
+psql -d postgres -c "CREATE ROLE mandipos_api LOGIN PASSWORD 'local-only'"
 cp .env.example .env
 DATABASE_URL_DIRECT=postgres://localhost/mandipos_local pnpm migrate
 pnpm dev            # http://localhost:3000 — OTPs are printed to the log
@@ -66,8 +66,15 @@ pnpm test           # e2e suite on a throwaway mandipos_test database
 | Env group | `mandipos-staging` | `mandipos-production` |
 
 Everything is in [`render.yaml`](render.yaml). `DATABASE_URL` is Neon's **pooled** URL for the
-`mandipos_app` role; `DATABASE_URL_DIRECT` is the **direct** URL for the owner role and is
+`mandipos_api` role; `DATABASE_URL_DIRECT` is the **direct** URL for the owner role and is
 only used by `pnpm migrate` (Render's pre-deploy step).
 
-Before the first migration on a Neon branch, create the `mandipos_app` login role in Neon
-(console or API) — `002_security.sql` only grants to it.
+Before the first migration on a Neon branch, create the runtime role **with SQL, as
+`mandipos_owner`** — not in the Neon console or API, whose roles join `neon_superuser` and
+bypass row-level security (which would silently disable shop isolation):
+
+```sql
+CREATE ROLE mandipos_api LOGIN PASSWORD '<strong random>' NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT;
+```
+
+Branches created afterwards inherit it. `002_security.sql` only grants to it.

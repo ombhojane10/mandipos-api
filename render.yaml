@@ -10,7 +10,7 @@ envVarGroups:
     envVars:
       - key: APP_ENV
         value: staging
-      - key: DATABASE_URL          # Neon pooled URL, role mandipos_app, branch staging
+      - key: DATABASE_URL          # Neon pooled URL, role mandipos_api, branch staging
         sync: false
       - key: DATABASE_URL_DIRECT   # Neon direct URL, role mandipos_owner, branch staging
         sync: false
@@ -26,7 +26,7 @@ envVarGroups:
     envVars:
       - key: APP_ENV
         value: production
-      - key: DATABASE_URL          # Neon pooled URL, role mandipos_app, branch main
+      - key: DATABASE_URL          # Neon pooled URL, role mandipos_api, branch main
         sync: false
       - key: DATABASE_URL_DIRECT   # Neon direct URL, role mandipos_owner, branch main
         sync: false

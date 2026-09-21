@@ -24,7 +24,7 @@ async function admin(sql: string) {
 beforeAll(async () => {
   await admin(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
   await admin(`CREATE DATABASE ${DB}`);
-  await admin(`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mandipos_app') THEN CREATE ROLE mandipos_app LOGIN PASSWORD 'local-only'; END IF; END $$`);
+  await admin(`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mandipos_api') THEN CREATE ROLE mandipos_api LOGIN PASSWORD 'local-only'; END IF; END $$`);
   execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'migrate.mjs')], {
     env: { ...process.env, DATABASE_URL_DIRECT: OWNER_URL },
     stdio: 'pipe',
@@ -32,7 +32,7 @@ beforeAll(async () => {
 
   Object.assign(process.env, {
     APP_ENV: 'test',
-    DATABASE_URL: `postgres://mandipos_app:local-only@localhost/${DB}`,
+    DATABASE_URL: `postgres://mandipos_api:local-only@localhost/${DB}`,
     JWT_SECRET: 'test-secret-test-secret-test-secret-123',
     OTP_HASH_SECRET: 'test-otp-secret-123',
   });
