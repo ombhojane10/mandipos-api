@@ -65,7 +65,18 @@ pnpm test           # e2e suite on a throwaway mandipos_test database
 | Neon | project `mandipos`, branch `staging` | project `mandipos`, branch `main` |
 | Env group | `mandipos-staging` | `mandipos-production` |
 
-Everything is in [`render.yaml`](render.yaml). `DATABASE_URL` is Neon's **pooled** URL for the
+| URL | https://mandipos-api-staging.onrender.com | https://mandipos-api.onrender.com |
+| Render service id | `srv-daopbev40ujc7384pkvg` | `srv-daopc65g1s2s7383q00g` |
+
+Live since 2026-09-22 in Render workspace `tea-d57p78u3jp1c73b3rn5g`, from the public repo
+`github.com/ombhojane10/mandipos-api`. Neon project `mandipos` is `proud-violet-83797826`
+(branches `main` = `br-young-sound-b33uyuqp`, `staging` = `br-empty-lake-b3pvywsx`).
+The services were created through Render's API, which cannot set a pre-deploy command or
+health-check path, so the start command runs `node scripts/migrate.mjs` before the server
+(a failed migration stops the new instance; the old one keeps serving). Set the health-check
+path to `/healthz` in each service's settings.
+
+[`render.yaml`](render.yaml) describes the same setup as a Blueprint. `DATABASE_URL` is Neon's **pooled** URL for the
 `mandipos_api` role; `DATABASE_URL_DIRECT` is the **direct** URL for the owner role and is
 only used by `pnpm migrate` (Render's pre-deploy step).
 
