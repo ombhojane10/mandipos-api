@@ -47,13 +47,13 @@ services:
     plan: starter
     branch: main
     autoDeploy: true
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     preDeployCommand: pnpm migrate
     startCommand: node --max-old-space-size=384 dist/main.js
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
-        value: "22.12.0"
+        value: "24"
       - fromGroup: mandipos-staging
 
   - type: web
@@ -63,11 +63,11 @@ services:
     plan: standard
     branch: main
     autoDeploy: false
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     preDeployCommand: pnpm migrate
     startCommand: node --max-old-space-size=1536 dist/main.js
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
-        value: "22.12.0"
+        value: "24"
       - fromGroup: mandipos-production
