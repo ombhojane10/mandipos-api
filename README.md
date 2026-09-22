@@ -56,31 +56,30 @@ pnpm dev            # http://localhost:3000 — OTPs are printed to the log
 pnpm test           # e2e suite on a throwaway mandipos_test database
 ```
 
-## Environments
+## Production
 
-| | Staging | Production |
-|---|---|---|
-| Render service | `mandipos-api-staging` (Starter) | `mandipos-api` (Standard) |
-| Deploys | every push to `main` | manually, after staging |
-| Neon | project `mandipos`, branch `staging` | project `mandipos`, branch `main` |
-| Env group | `mandipos-staging` | `mandipos-production` |
+One environment, no staging.
 
-| URL | https://mandipos-api-staging.onrender.com | https://mandipos-api.onrender.com |
-| Render service id | `srv-daopbev40ujc7384pkvg` | `srv-daopc65g1s2s7383q00g` |
+| | |
+|---|---|
+| URL | https://mandipos-api.onrender.com |
+| Render | service `mandipos-api` (`srv-daopc65g1s2s7383q00g`), Standard, Singapore, workspace `tea-d57p78u3jp1c73b3rn5g` |
+| Neon | project `mandipos` (`proud-violet-83797826`), branch `main` (`br-young-sound-b33uyuqp`), always on, 7-day restore |
+| Code | public repo `github.com/ombhojane10/mandipos-api`, branch `main` |
+| Secrets | gitignored `.env.production` (and Render's env settings) |
 
-Live since 2026-09-22 in Render workspace `tea-d57p78u3jp1c73b3rn5g`, from the public repo
-`github.com/ombhojane10/mandipos-api`. Neon project `mandipos` is `proud-violet-83797826`
-(branches `main` = `br-young-sound-b33uyuqp`, `staging` = `br-empty-lake-b3pvywsx`).
-The services were created through Render's API, which cannot set a pre-deploy command or
-health-check path, so the start command runs `node scripts/migrate.mjs` before the server
-(a failed migration stops the new instance; the old one keeps serving). Set the health-check
-path to `/healthz` in each service's settings.
+Deploys are manual (auto-deploy is off): push to `main`, then deploy from the Render dashboard
+(or ask Claude to trigger it). The start command runs `node scripts/migrate.mjs` before the
+server, because the service was created through Render's API, which cannot set a pre-deploy
+command; a failed migration stops the new instance and the old one keeps serving. Set the
+health-check path to `/healthz` in the service settings.
 
-[`render.yaml`](render.yaml) describes the same setup as a Blueprint. `DATABASE_URL` is Neon's **pooled** URL for the
-`mandipos_api` role; `DATABASE_URL_DIRECT` is the **direct** URL for the owner role and is
-only used by `pnpm migrate` (Render's pre-deploy step).
+`DATABASE_URL` is Neon's **pooled** URL for the `mandipos_api` role; `DATABASE_URL_DIRECT` is
+the **direct** URL for the owner role, used only by the migration step.
+`OTP_TEST_LOGINS` (fixed QA codes, no SMS) is for local use; the API refuses to start with it
+in production.
 
-Before the first migration on a Neon branch, create the runtime role **with SQL, as
+Before the first migration on a new Neon project, create the runtime role **with SQL, as
 `mandipos_owner`** — not in the Neon console or API, whose roles join `neon_superuser` and
 bypass row-level security (which would silently disable shop isolation):
 
@@ -88,4 +87,4 @@ bypass row-level security (which would silently disable shop isolation):
 CREATE ROLE mandipos_api LOGIN PASSWORD '<strong random>' NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT;
 ```
 
-Branches created afterwards inherit it. `002_security.sql` only grants to it.
+`002_security.sql` only grants to it.

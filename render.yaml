@@ -1,27 +1,8 @@
-# Render Blueprint for the Mandi POS backend. Both services run in Singapore,
-# next to the Neon project (aws-ap-southeast-1).
-#
-# Deploy flow: every push to `main` deploys staging automatically; production is
-# deployed by hand from the Render dashboard once staging looks right.
-# Migrations run as the pre-deploy step — if one fails, the old version keeps serving.
+# Render Blueprint for the Mandi POS backend (production only), in Singapore next to
+# the Neon project (aws-ap-southeast-1). Database migrations run before the server
+# starts; if one fails the new instance never goes live and the old one keeps serving.
 
 envVarGroups:
-  - name: mandipos-staging
-    envVars:
-      - key: APP_ENV
-        value: staging
-      - key: DATABASE_URL          # Neon pooled URL, role mandipos_api, branch staging
-        sync: false
-      - key: DATABASE_URL_DIRECT   # Neon direct URL, role mandipos_owner, branch staging
-        sync: false
-      - key: JWT_SECRET
-        generateValue: true
-      - key: OTP_HASH_SECRET
-        generateValue: true
-      - key: TWOFACTOR_API_KEY
-        sync: false
-      - key: TWOFACTOR_OTP_TEMPLATE_NAME
-        sync: false
   - name: mandipos-production
     envVars:
       - key: APP_ENV
@@ -41,22 +22,6 @@ envVarGroups:
 
 services:
   - type: web
-    name: mandipos-api-staging
-    runtime: node
-    region: singapore
-    plan: starter
-    branch: main
-    autoDeploy: true
-    buildCommand: pnpm install --frozen-lockfile && pnpm build
-    preDeployCommand: pnpm migrate
-    startCommand: node --max-old-space-size=384 dist/main.js
-    healthCheckPath: /healthz
-    envVars:
-      - key: NODE_VERSION
-        value: "24"
-      - fromGroup: mandipos-staging
-
-  - type: web
     name: mandipos-api
     runtime: node
     region: singapore
@@ -64,8 +29,7 @@ services:
     branch: main
     autoDeploy: false
     buildCommand: pnpm install --frozen-lockfile && pnpm build
-    preDeployCommand: pnpm migrate
-    startCommand: node --max-old-space-size=1536 dist/main.js
+    startCommand: node scripts/migrate.mjs && node --max-old-space-size=1536 dist/main.js
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
