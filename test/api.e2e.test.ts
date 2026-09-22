@@ -35,6 +35,7 @@ beforeAll(async () => {
     DATABASE_URL: `postgres://mandipos_api:local-only@localhost/${DB}`,
     JWT_SECRET: 'test-secret-test-secret-test-secret-123',
     OTP_HASH_SECRET: 'test-otp-secret-123',
+    OTP_TEST_LOGINS: '9000000000:123456',
   });
 
   const { AppModule } = await import('../src/app.module');
@@ -88,6 +89,12 @@ describe('auth', () => {
     expect(s.me.device.code).toBe('A1');
     const me = await http().get('/v1/me').set('Authorization', `Bearer ${s.accessToken}`).expect(200);
     expect(me.body.shop.name).toBe('Shop One');
+  });
+
+  it('accepts a configured QA login code without sending anything', async () => {
+    await http().post('/v1/auth/otp').send({ phone: '9000000000' }).expect(204);
+    expect(OtpService.issuedForTests.has('9000000000')).toBe(false);
+    await http().post('/v1/auth/verify').send({ phone: '9000000000', code: '123456' }).expect(200);
   });
 
   it('rejects a wrong OTP and limits attempts', async () => {

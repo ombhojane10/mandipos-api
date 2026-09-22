@@ -1,7 +1,7 @@
 import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { uuidv7 } from '../common/uuid';
-import { config, sendsRealSms } from '../config';
+import { config, sendsRealSms, testLoginCode } from '../config';
 import { Db } from '../db/db.service';
 
 const TTL_MINUTES = 10;
@@ -28,14 +28,17 @@ export class OtpService {
       `SELECT count(*) AS n FROM otp_codes WHERE phone = $1 AND created_at > now() - make_interval(mins => $2)`,
       [phone, SEND_WINDOW_MINUTES],
     );
-    // The cap protects SMS spend and phones from spam; local/test send nothing.
-    if (sendsRealSms() && Number(recent?.n ?? 0) >= MAX_SENDS_PER_WINDOW) {
+    // The cap protects SMS spend and phones from spam; local/test and QA logins send nothing.
+    if (sendsRealSms() && !testLoginCode(phone) && Number(recent?.n ?? 0) >= MAX_SENDS_PER_WINDOW) {
       throw new HttpException('Bahut baar OTP maanga. 10 minute baad try karein.', HttpStatus.TOO_MANY_REQUESTS);
     }
 
     let providerSession: string | null = null;
     let codeHash: string | null = null;
-    if (sendsRealSms()) {
+    const qaCode = testLoginCode(phone);
+    if (qaCode) {
+      codeHash = this.hash(phone, qaCode);
+    } else if (sendsRealSms()) {
       providerSession = await this.sendVia2Factor(phone);
     } else {
       const code = randomInt(100000, 1000000).toString();
