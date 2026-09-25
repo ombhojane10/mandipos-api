@@ -170,7 +170,7 @@ describe('sync', () => {
       { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'RJ11GC3033', supplier: 'Maddur', arrived_at: t, freight_paise: 11000000, labour_paise: 800000, commission_paise: 2736000 } },
       ...(['1', '2', '3'] as const).map((g, i) => ({ table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: g, billed_qty: [5500, 4400, 2100][i], free_qty: [300, 200, 100][i], received_qty: [5800, 4600, 2200][i], rate_paise: [4200, 3800, 3100][i] } })),
       { table: 'buyers', row: { id: buyerId, created_at: t, updated_at: t, name: 'Buyer One', phone: '9811111111', kind: 'Hotel', credit_limit_paise: 2000000 } },
-      { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'credit', total_paise: 2680000, paid_paise: 0 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'mixed', total_paise: 2830000, paid_paise: 2830000, slip_no: 643, truck_id: truckId, cash_paise: 1830000, upi_paise: 1000000, labour_paise: 150000, packing: 'katta10', packs: 50, delivery: 1, staff_name: 'Rajat' } },
       { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 400, rate_paise: 6700 } },
       { table: 'collections', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1000000, pay_mode: 'cash', business_date: today() } },
     ]);
@@ -180,7 +180,7 @@ describe('sync', () => {
   it('ignores a retried row (same id) and rejects a bad one without blocking the batch', async () => {
     const t = now();
     const res = await push(owner.accessToken, [
-      { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'credit', total_paise: 2680000, paid_paise: 0 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'mixed', total_paise: 2830000, paid_paise: 2830000, slip_no: 643, truck_id: truckId, cash_paise: 1830000, upi_paise: 1000000, labour_paise: 150000, packing: 'katta10', packs: 50, delivery: 1, staff_name: 'Rajat' } },
       { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_name: 'x', business_date: today(), pay_mode: 'cash', total_paise: 100, paid_paise: 100 } },
       { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: uuidv7(), truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, rate_paise: 1 } },
       { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'too-long-number-xyz', kind: 'kachchi', buyer_name: 'x', business_date: today(), pay_mode: 'cash', total_paise: 1, paid_paise: 1 } },
@@ -190,6 +190,23 @@ describe('sync', () => {
     expect(res.body.results.map((r: any) => r.status)).toEqual(['skipped', 'rejected', 'rejected', 'rejected', 'rejected', 'applied']);
     expect(res.body.results[1].error).toMatch(/duplicate/);
     expect(res.body.results[2].error).toMatch(/parent/);
+  });
+
+  // The shop's night check is "is any slip number missing?", which only means something if
+  // two terminals can never hand out the same one.
+  it('refuses a second slip with a number the shop already used', async () => {
+    const t = now();
+    const slip = (extra: Record<string, unknown>) => ({
+      table: 'bills',
+      row: {
+        id: uuidv7(), created_at: t, number: `A2/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+        total_paise: 100, paid_paise: 100, cash_paise: 100, ...extra,
+      },
+    });
+    const res = await push(owner.accessToken, [slip({ slip_no: 700 }), slip({ slip_no: 700 }), slip({ slip_no: 701 })]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected', 'applied']);
+    expect(res.body.results[1].error).toMatch(/duplicate/);
   });
 
   it('keeps the newest version of a master row', async () => {
@@ -213,7 +230,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'spoilage', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'spoilage', 'bills', 'bills', 'buyers']);
     const renamed = all.filter((c) => c.table === 'buyers').pop();
     expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
   });

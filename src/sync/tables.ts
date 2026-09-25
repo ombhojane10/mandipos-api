@@ -45,6 +45,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       id, created_at: at, updated_at: at,
       name: z.string().trim().min(1).max(120), phone: text(15), kind: text(40),
       credit_limit_paise: paise.default(0), vehicle: text(20),
+      // Where the rickshaw takes the goods: shop/gali, and the local transport stand.
+      address: text(200), destination: text(120),
     }),
   },
   trucks: {
@@ -67,13 +69,23 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       received_qty: z.number().int().min(0), rate_paise: paise,
     }),
   },
+  // The parchi. total_paise is goods plus packing labour, i.e. what the customer owes.
   bills: {
     kind: 'fact',
     row: z.object({
       id, created_at: at,
       number: z.string().max(16).regex(/^[A-Za-z0-9/-]+$/), kind: z.enum(['kachchi', 'pakka']),
       buyer_id: id.nullable().default(null), buyer_name: z.string().max(120), business_date: day,
-      pay_mode: z.enum(['cash', 'upi', 'card', 'credit']), total_paise: paise, paid_paise: paise, payment_ref: text(40),
+      pay_mode: z.enum(['cash', 'upi', 'card', 'credit', 'mixed']), total_paise: paise, paid_paise: paise, payment_ref: text(40),
+      // The trader's own serial, counted from 1 per shop; the night check is that none is missing.
+      slip_no: z.number().int().positive().max(9_999_999).nullable().default(null),
+      // The vehicle these nuts left, so a short truck can be traced back to its slips.
+      truck_id: id.nullable().default(null),
+      cash_paise: paise.default(0), upi_paise: paise.default(0),
+      labour_paise: paise.default(0),
+      packing: z.enum(['loose', 'katta10', 'katta20', 'panni']).default('loose'),
+      packs: z.number().int().min(0).max(100_000).default(0),
+      delivery: bool.default(false), staff_name: text(60),
     }),
   },
   bill_lines: {
