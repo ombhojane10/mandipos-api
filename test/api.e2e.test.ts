@@ -15,6 +15,13 @@ const OWNER_URL = ADMIN_URL.replace(/\/[^/]*$/, `/${DB}`);
 let app: INestApplication;
 let OtpService: typeof import('../src/auth/otp.service').OtpService;
 
+/** Runs SQL on the test database as the owner (the API role can't see sessions). */
+async function owner(sql: string) {
+  const c = new Client({ connectionString: OWNER_URL });
+  await c.connect();
+  try { await c.query(sql); } finally { await c.end(); }
+}
+
 async function admin(sql: string) {
   const c = new Client({ connectionString: ADMIN_URL });
   await c.connect();
@@ -116,11 +123,21 @@ describe('auth', () => {
     expect(again.me.device).toEqual(second.me.device);
   });
 
-  it('rotates refresh tokens and revokes the device session on reuse', async () => {
+  it('forgives a token the terminal just rotated (foreground sync racing the worker)', async () => {
     const s = await login('9800000002');
     const r1 = await http().post('/v1/auth/refresh').send({ refreshToken: s.refreshToken }).expect(200);
-    await http().post('/v1/auth/refresh').send({ refreshToken: r1.body.refreshToken }).expect(200);
-    // Replaying the first token is theft: everything on that device is revoked.
+    // The loser of the race still holds the original token; it must not log the counter out.
+    const raced = await http().post('/v1/auth/refresh').send({ refreshToken: s.refreshToken }).expect(200);
+    expect(raced.body.refreshToken).not.toEqual(r1.body.refreshToken);
+    // And the pair it got back works.
+    await http().post('/v1/auth/refresh').send({ refreshToken: raced.body.refreshToken }).expect(200);
+  });
+
+  it('revokes the device once an old token comes back after the grace window', async () => {
+    const s = await login('9800000004');
+    const r1 = await http().post('/v1/auth/refresh').send({ refreshToken: s.refreshToken }).expect(200);
+    await owner(`UPDATE sessions SET revoked_at = now() - interval '5 minutes' WHERE revoked_at IS NOT NULL`);
+    // Replaying a long-dead token is theft: everything on that device goes.
     await http().post('/v1/auth/refresh').send({ refreshToken: s.refreshToken }).expect(401);
     await http().post('/v1/auth/refresh').send({ refreshToken: r1.body.refreshToken }).expect(401);
   });

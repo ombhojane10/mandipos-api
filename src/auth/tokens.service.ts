@@ -7,6 +7,8 @@ import { Db, Tx } from '../db/db.service';
 
 export const ACCESS_TTL_SECONDS = 15 * 60;
 const REFRESH_TTL_DAYS = 60;
+/** How long a just-rotated refresh token still answers, for a terminal that raced itself. */
+const ROTATION_GRACE_MS = 60_000;
 
 /** What every authenticated request knows about its caller. */
 export type Principal = {
@@ -63,33 +65,73 @@ export class TokensService {
   }
 
   /**
-   * Swaps a refresh token for a new pair. Presenting an already-rotated token means it
-   * leaked: every session on that device is revoked and the caller must log in again.
+   * Swaps a refresh token for a new pair.
+   *
+   * Presenting an already-rotated token usually means it leaked, and every session on that
+   * device is revoked. The exception is the terminal racing itself: the foreground sync and
+   * the background worker can both refresh within the same moment, and the loser then holds
+   * a token that was rotated a second ago. That is not a leak, so a token rotated within
+   * [ROTATION_GRACE_MS] is answered from the live end of its chain instead of logging the
+   * counter out mid-sale.
    */
   async rotate(refreshToken: string): Promise<Tokens> {
-    return this.db.tx(async (tx) => {
-      const { rows } = await tx.query<{ id: string; user_id: string; device_id: string; revoked_at: Date | null; expires_at: Date; device_revoked: Date | null }>(
-        `SELECT s.id, s.user_id, s.device_id, s.revoked_at, s.expires_at, d.revoked_at AS device_revoked
-         FROM sessions s JOIN devices d ON d.id = s.device_id
-         WHERE s.refresh_hash = $1 FOR UPDATE OF s`,
-        [sha256(refreshToken)],
-      );
-      const s = rows[0];
-      if (!s) throw new UnauthorizedException('Dobara login karein');
-      if (s.revoked_at) {
-        await tx.query(`UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL`, [s.device_id]);
-        throw new UnauthorizedException('Dobara login karein');
-      }
-      if (s.device_revoked || s.expires_at < new Date()) throw new UnauthorizedException('Dobara login karein');
+    // A real leak must revoke the device's sessions in a transaction of its own: the rejection
+    // rolls the rotation back, which would otherwise undo the revocation with it.
+    let leakedDevice: string | null = null;
+    try {
+      return await this.db.tx(async (tx) => {
+        const { rows } = await tx.query<{
+          id: string; user_id: string; device_id: string;
+          revoked_at: Date | null; expires_at: Date; device_revoked: Date | null;
+        }>(
+          `SELECT s.id, s.user_id, s.device_id, s.revoked_at, s.expires_at, d.revoked_at AS device_revoked
+           FROM sessions s JOIN devices d ON d.id = s.device_id
+           WHERE s.refresh_hash = $1 FOR UPDATE OF s`,
+          [sha256(refreshToken)],
+        );
+        const s = rows[0];
+        if (!s) throw new UnauthorizedException('Dobara login karein');
+        if (s.device_revoked || s.expires_at < new Date()) throw new UnauthorizedException('Dobara login karein');
 
-      const p = await this.principalFor(tx, s.user_id, s.device_id);
-      const next = await this.issue(tx, p);
-      await tx.query(
-        `UPDATE sessions SET revoked_at = now(), replaced_by = (SELECT id FROM sessions WHERE refresh_hash = $2) WHERE id = $1`,
-        [s.id, sha256(next.refreshToken)],
-      );
-      return next;
-    });
+        // Already rotated: either this terminal racing itself (answer from the live end of
+        // the chain) or a replayed token (revoke the device).
+        let current = s.id;
+        if (s.revoked_at) {
+          const heir = Date.now() - s.revoked_at.getTime() < ROTATION_GRACE_MS ? await this.liveHeir(tx, s.id) : null;
+          if (!heir) {
+            leakedDevice = s.device_id;
+            throw new UnauthorizedException('Dobara login karein');
+          }
+          current = heir;
+        }
+
+        const p = await this.principalFor(tx, s.user_id, s.device_id);
+        const next = await this.issue(tx, p);
+        await tx.query(
+          `UPDATE sessions SET revoked_at = now(), replaced_by = (SELECT id FROM sessions WHERE refresh_hash = $2) WHERE id = $1`,
+          [current, sha256(next.refreshToken)],
+        );
+        return next;
+      });
+    } finally {
+      if (leakedDevice) {
+        await this.db.query(`UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL`, [leakedDevice]);
+      }
+    }
+  }
+
+  /** The still-valid session this one was rotated into, following the chain. */
+  private async liveHeir(tx: Tx, sessionId: string): Promise<string | null> {
+    const { rows } = await tx.query<{ id: string }>(
+      `WITH RECURSIVE chain AS (
+         SELECT id, replaced_by, revoked_at FROM sessions WHERE id = $1
+         UNION ALL
+         SELECT s.id, s.replaced_by, s.revoked_at FROM sessions s JOIN chain c ON s.id = c.replaced_by
+       )
+       SELECT id FROM chain WHERE revoked_at IS NULL LIMIT 1`,
+      [sessionId],
+    );
+    return rows[0]?.id ?? null;
   }
 
   async revoke(refreshToken: string): Promise<void> {
