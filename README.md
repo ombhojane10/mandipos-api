@@ -76,8 +76,10 @@ health-check path to `/healthz` in the service settings.
 
 `DATABASE_URL` is Neon's **pooled** URL for the `mandipos_api` role; `DATABASE_URL_DIRECT` is
 the **direct** URL for the owner role, used only by the migration step.
-`OTP_TEST_LOGINS` (fixed QA codes, no SMS) is for local use; the API refuses to start with it
-in production.
+`OTP_TEST_LOGINS` (fixed QA codes, no SMS) holds one demo login in production —
+`9000000000:123456`, the number the Pine Labs UAT device signs in with. Anyone who knows the
+pair is that shop, so it stays a demo shop and the variable is cleared before real shops are
+onboarded; the owner's own number is refused there by the config schema.
 
 Before the first migration on a new Neon project, create the runtime role **with SQL, as
 `mandipos_owner`** — not in the Neon console or API, whose roles join `neon_superuser` and
