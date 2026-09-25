@@ -13,12 +13,30 @@ const at = z.iso.datetime({ offset: true });
 const day = z.iso.date();
 const paise = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const qty = z.number().int().positive().max(10_000_000);
-const grade = z.enum(['A', 'B', 'C']);
+// Size grade within an origin: 1st, 2nd, 3rd, or a mixed lot sold at a blended rate.
+const grade = z.enum(['1', '2', '3', 'mix']);
 const text = (max: number) => z.string().max(max).default('');
 
 export type TableDef = { kind: 'fact' | 'master'; row: z.ZodObject };
 
 export const SYNC_TABLES: Record<string, TableDef> = {
+  // Origins the shop deals in — V. Kota, Pollachi, Gujarat — the axis rates hang off.
+  brands: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at,
+      name: z.string().trim().min(1).max(60), sort_order: z.number().int().min(0).max(999).default(0),
+      hidden: z.boolean().default(false), shelf_days: z.number().int().min(1).max(60).default(7),
+    }),
+  },
+  // One row per shop-day-brand-grade; corrections overwrite, yesterday's rows stay for history.
+  rates: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at,
+      business_date: day, brand_id: id, grade, rate_paise: paise,
+    }),
+  },
   buyers: {
     kind: 'master',
     row: z.object({
@@ -32,14 +50,20 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     row: z.object({
       id, created_at: at, updated_at: at,
       number: z.string().trim().min(1).max(20), supplier: text(120), arrived_at: at,
-      billed_qty: qty, free_qty: z.number().int().min(0).default(0),
-      rate_paise: paise, freight_paise: paise.default(0), labour_paise: paise.default(0),
+      freight_paise: paise.default(0), labour_paise: paise.default(0),
+      // Arhat plus market fee, as an amount; part of landed cost.
+      commission_paise: paise.default(0),
       closed_at: at.nullable().default(null),
     }),
   },
+  // A lot: this many nuts of one brand and grade off one truck, at the rate they were bought.
   truck_grades: {
     kind: 'fact',
-    row: z.object({ id, created_at: at, truck_id: id, grade, received_qty: z.number().int().min(0) }),
+    row: z.object({
+      id, created_at: at, truck_id: id, brand_id: id, grade,
+      billed_qty: z.number().int().min(0), free_qty: z.number().int().min(0).default(0),
+      received_qty: z.number().int().min(0), rate_paise: paise,
+    }),
   },
   bills: {
     kind: 'fact',
@@ -52,7 +76,7 @@ export const SYNC_TABLES: Record<string, TableDef> = {
   },
   bill_lines: {
     kind: 'fact',
-    row: z.object({ id, created_at: at, bill_id: id, truck_id: id, grade, qty, rate_paise: paise }),
+    row: z.object({ id, created_at: at, bill_id: id, truck_id: id, brand_id: id, grade, qty, rate_paise: paise }),
   },
   lading_slips: {
     kind: 'fact',
@@ -67,7 +91,7 @@ export const SYNC_TABLES: Record<string, TableDef> = {
   },
   spoilage: {
     kind: 'fact',
-    row: z.object({ id, created_at: at, truck_id: id, grade, qty, business_date: day }),
+    row: z.object({ id, created_at: at, truck_id: id, brand_id: id, grade, qty, business_date: day }),
   },
   day_closes: {
     kind: 'fact',

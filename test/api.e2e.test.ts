@@ -133,6 +133,7 @@ describe('auth', () => {
 
 describe('sync', () => {
   let owner: Awaited<ReturnType<typeof registerShop>>;
+  const brandId = uuidv7();
   const truckId = uuidv7();
   const buyerId = uuidv7();
   const billId = uuidv7();
@@ -147,14 +148,16 @@ describe('sync', () => {
   it('applies a full sale in order and reports each row', async () => {
     const t = now();
     const res = await push(owner.accessToken, [
-      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'RJ11GC3033', supplier: 'Maddur', arrived_at: t, billed_qty: 12000, free_qty: 600, rate_paise: 3800, freight_paise: 11000000, labour_paise: 800000 } },
-      ...(['A', 'B', 'C'] as const).map((g, i) => ({ table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, grade: g, received_qty: [5800, 4600, 2200][i] } })),
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Maddur', sort_order: 1, shelf_days: 7 } },
+      { table: 'rates', row: { id: uuidv7(), created_at: t, updated_at: t, business_date: today(), brand_id: brandId, grade: '1', rate_paise: 6700 } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'RJ11GC3033', supplier: 'Maddur', arrived_at: t, freight_paise: 11000000, labour_paise: 800000, commission_paise: 2736000 } },
+      ...(['1', '2', '3'] as const).map((g, i) => ({ table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: g, billed_qty: [5500, 4400, 2100][i], free_qty: [300, 200, 100][i], received_qty: [5800, 4600, 2200][i], rate_paise: [4200, 3800, 3100][i] } })),
       { table: 'buyers', row: { id: buyerId, created_at: t, updated_at: t, name: 'Buyer One', phone: '9811111111', kind: 'Hotel', credit_limit_paise: 2000000 } },
       { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'credit', total_paise: 2680000, paid_paise: 0 } },
-      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, grade: 'A', qty: 400, rate_paise: 6700 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 400, rate_paise: 6700 } },
       { table: 'collections', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1000000, pay_mode: 'cash', business_date: today() } },
     ]);
-    expect(res.body.results.map((r: any) => r.status)).toEqual(Array(8).fill('applied'));
+    expect(res.body.results.map((r: any) => r.status)).toEqual(Array(10).fill('applied'));
   });
 
   it('ignores a retried row (same id) and rejects a bad one without blocking the batch', async () => {
@@ -162,10 +165,10 @@ describe('sync', () => {
     const res = await push(owner.accessToken, [
       { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'credit', total_paise: 2680000, paid_paise: 0 } },
       { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_name: 'x', business_date: today(), pay_mode: 'cash', total_paise: 100, paid_paise: 100 } },
-      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: uuidv7(), truck_id: truckId, grade: 'A', qty: 1, rate_paise: 1 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: uuidv7(), truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, rate_paise: 1 } },
       { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'too-long-number-xyz', kind: 'kachchi', buyer_name: 'x', business_date: today(), pay_mode: 'cash', total_paise: 1, paid_paise: 1 } },
       { table: 'users', row: { id: uuidv7() } },
-      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, grade: 'A', qty: 40, business_date: today() } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 40, business_date: today() } },
     ]);
     expect(res.body.results.map((r: any) => r.status)).toEqual(['skipped', 'rejected', 'rejected', 'rejected', 'rejected', 'applied']);
     expect(res.body.results[1].error).toMatch(/duplicate/);
@@ -193,7 +196,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'spoilage', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'spoilage', 'buyers']);
     const renamed = all.filter((c) => c.table === 'buyers').pop();
     expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
   });
@@ -204,7 +207,7 @@ describe('sync', () => {
     expect(pulled.body.changes).toHaveLength(0);
     // Referencing shop one's truck from shop two fails the composite foreign key.
     const res = await push(other.accessToken, [
-      { table: 'spoilage', row: { id: uuidv7(), created_at: now(), truck_id: truckId, grade: 'A', qty: 1, business_date: today() } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: now(), truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, business_date: today() } },
     ]);
     expect(res.body.results[0].status).toBe('rejected');
   });
