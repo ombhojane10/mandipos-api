@@ -16,6 +16,8 @@ const qty = z.number().int().positive().max(10_000_000);
 // Size grade within an origin: 1st, 2nd, 3rd, or a mixed lot sold at a blended rate.
 const grade = z.enum(['1', '2', '3', 'mix']);
 const text = (max: number) => z.string().max(max).default('');
+/** SQLite has no boolean, so terminals send 0/1; accept either. */
+const bool = z.union([z.boolean(), z.literal(0), z.literal(1)]).transform(Boolean);
 
 export type TableDef = { kind: 'fact' | 'master'; row: z.ZodObject };
 
@@ -26,7 +28,7 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     row: z.object({
       id, created_at: at, updated_at: at,
       name: z.string().trim().min(1).max(60), sort_order: z.number().int().min(0).max(999).default(0),
-      hidden: z.boolean().default(false), shelf_days: z.number().int().min(1).max(60).default(7),
+      hidden: bool.default(false), shelf_days: z.number().int().min(1).max(60).default(7),
     }),
   },
   // One row per shop-day-brand-grade; corrections overwrite, yesterday's rows stay for history.
