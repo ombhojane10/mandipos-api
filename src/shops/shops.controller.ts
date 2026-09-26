@@ -9,6 +9,8 @@ const CreateShopBody = z.object({
   name: z.string().trim().min(1).max(120),
   mandi: z.string().trim().max(80).default(''),
   shopNo: z.string().trim().max(20).default(''),
+  // Stall numbers, printed under the firm name on every slip.
+  fard: z.string().trim().max(40).default(''),
   gstin: z.string().trim().toUpperCase().max(15).default(''),
   role: z.enum(['owner', 'manager', 'munim']).default('owner'),
   ownerName: z.string().trim().max(80).default(''),

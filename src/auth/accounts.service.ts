@@ -8,7 +8,7 @@ export type DeviceInfo = { label: string; platform: string; appVersion: string }
 export type MeView = {
   user: { id: string; phone: string; name: string };
   device: { id: string; code: string | null };
-  shop: { id: string; name: string; mandi: string; shopNo: string; gstin: string; role: string } | null;
+  shop: { id: string; name: string; mandi: string; shopNo: string; fard: string; gstin: string; role: string } | null;
 };
 
 /** Series codes a shop's devices get, in order: A1…A9, B1…Z9 (234 devices per shop). */
@@ -55,7 +55,7 @@ export class AccountsService {
   }
 
   /** Registers the caller's shop (the sketch's "customer registration") and attaches this device. */
-  async createShop(p: Principal, shop: { name: string; mandi: string; shopNo: string; gstin: string; role: string; ownerName: string }):
+  async createShop(p: Principal, shop: { name: string; mandi: string; shopNo: string; fard?: string; gstin: string; role: string; ownerName: string }):
     Promise<{ accessToken: string; me: MeView }> {
     return this.db.tx(async (tx) => {
       const existing = (await tx.query(`SELECT 1 FROM shop_members WHERE user_id = $1`, [p.userId])).rowCount;
@@ -63,8 +63,8 @@ export class AccountsService {
 
       const shopId = uuidv7();
       await tx.query(
-        `INSERT INTO shops (id, name, mandi, shop_no, gstin, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [shopId, shop.name, shop.mandi, shop.shopNo, shop.gstin, p.userId],
+        `INSERT INTO shops (id, name, mandi, shop_no, fard, gstin, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [shopId, shop.name, shop.mandi, shop.shopNo, shop.fard ?? '', shop.gstin, p.userId],
       );
       await tx.query(`INSERT INTO shop_members (shop_id, user_id, role) VALUES ($1, $2, $3)`, [shopId, p.userId, shop.role]);
       // shop_counters is tenant-scoped: row-level security needs this transaction to be the new shop.
@@ -94,10 +94,10 @@ export class AccountsService {
   private async me(tx: Tx, p: Principal): Promise<MeView> {
     const { rows } = await tx.query<{
       user_id: string; phone: string; user_name: string; device_id: string; code: string | null;
-      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; gstin: string | null; role: string | null;
+      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; fard: string | null; gstin: string | null; role: string | null;
     }>(
       `SELECT u.id AS user_id, u.phone, u.name AS user_name, d.id AS device_id, d.code,
-              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.gstin, m.role
+              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.fard, s.gstin, m.role
        FROM devices d JOIN users u ON u.id = d.user_id
        LEFT JOIN shops s ON s.id = d.shop_id
        LEFT JOIN shop_members m ON m.shop_id = d.shop_id AND m.user_id = d.user_id
@@ -109,7 +109,7 @@ export class AccountsService {
       user: { id: r.user_id, phone: r.phone, name: r.user_name },
       device: { id: r.device_id, code: r.code },
       shop: r.shop_id
-        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, gstin: r.gstin!, role: r.role! }
+        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, fard: r.fard ?? '', gstin: r.gstin!, role: r.role! }
         : null,
     };
   }
