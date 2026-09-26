@@ -81,6 +81,18 @@ the **direct** URL for the owner role, used only by the migration step.
 pair is that shop, so it stays a demo shop and the variable is cleared before real shops are
 onboarded; the owner's own number is refused there by the config schema.
 
+After a migration adds a table, re-grant the **local** dev role — the migrations grant to
+production's `mandipos_api` by name, so a local database's own role (e.g. `mandipos_app`) is
+missed and every write to the new table fails with "not allowed for this shop" (Postgres 42501):
+
+```bash
+psql -d mandipos_local -c "SET my.role = 'mandipos_app';" -f scripts/local-role.sql
+```
+
+It copies the `shop_isolation` policy for the dev role only where the migrations created one.
+Do not enable row-level security anywhere else: `devices` and `shop_members` are written before
+a shop is known, and an isolation policy there blocks logging in.
+
 Before the first migration on a new Neon project, create the runtime role **with SQL, as
 `mandipos_owner`** — not in the Neon console or API, whose roles join `neon_superuser` and
 bypass row-level security (which would silently disable shop isolation):

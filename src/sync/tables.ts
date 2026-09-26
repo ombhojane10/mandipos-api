@@ -47,6 +47,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       credit_limit_paise: paise.default(0), vehicle: text(20),
       // Where the rickshaw takes the goods: shop/gali, and the local transport stand.
       address: text(200), destination: text(120),
+      // Taken off the counter's list without losing the slips that refer to them.
+      hidden: bool.default(false),
     }),
   },
   trucks: {
@@ -91,6 +93,11 @@ export const SYNC_TABLES: Record<string, TableDef> = {
   bill_lines: {
     kind: 'fact',
     row: z.object({ id, created_at: at, bill_id: id, truck_id: id, brand_id: id, grade, qty, rate_paise: paise }),
+  },
+  // The driver's receiving, brought back after a delivery: proof it reached the right shop.
+  receivings: {
+    kind: 'fact',
+    row: z.object({ id, created_at: at, bill_id: id, received_by: text(120), note: text(200) }),
   },
   lading_slips: {
     kind: 'fact',
