@@ -99,6 +99,12 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'fact',
     row: z.object({ id, created_at: at, bill_id: id, received_by: text(120), note: text(200) }),
   },
+  // The rickshaw's slip. Made with the parchi or hours later, and it holds where this load
+  // went rather than where the customer usually is.
+  delivery_slips: {
+    kind: 'fact',
+    row: z.object({ id, created_at: at, bill_id: id, address: text(200), destination: text(120) }),
+  },
   lading_slips: {
     kind: 'fact',
     row: z.object({ id, created_at: at, bill_id: id, vehicle: text(20) }),
