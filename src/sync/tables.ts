@@ -108,6 +108,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     row: z.object({
       id, created_at: at, buyer_id: id, amount_paise: paise.positive(),
       pay_mode: z.enum(['cash', 'upi', 'card']), payment_ref: text(40), business_date: day,
+      // The slip this money was taken for, when it was taken on one.
+      bill_id: id.nullable().default(null),
     }),
   },
   spoilage: {
