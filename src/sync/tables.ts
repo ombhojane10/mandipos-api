@@ -126,6 +126,17 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'fact',
     row: z.object({ id, created_at: at, truck_id: id, brand_id: id, grade, qty, business_date: day }),
   },
+  // The daybook's manual entries. Cash sales and vasooli are never written here — they are
+  // read from bills and collections when the day is drawn, so the books cannot disagree.
+  daybook_entries: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at,
+      direction: z.enum(['in', 'out']), mode: z.enum(['cash', 'upi', 'bank']).default('cash'),
+      category: text(40), party_name: text(120), note: text(200),
+      amount_paise: paise.positive(), business_date: day, hidden: bool.default(false),
+    }),
+  },
   day_closes: {
     kind: 'fact',
     row: z.object({

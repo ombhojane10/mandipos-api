@@ -173,10 +173,11 @@ describe('sync', () => {
       { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'mixed', total_paise: 2830000, paid_paise: 2830000, slip_no: 643, truck_id: truckId, cash_paise: 1830000, upi_paise: 1000000, labour_paise: 150000, packing: 'katta10', packs: 50, delivery: 1, staff_name: 'Rajat' } },
       { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 400, rate_paise: 6700 } },
       { table: 'collections', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1000000, pay_mode: 'mixed', business_date: today(), receipt_no: 1, cash_paise: 600000, upi_paise: 400000 } },
+      { table: 'daybook_entries', row: { id: uuidv7(), created_at: t, updated_at: t, direction: 'out', mode: 'cash', category: 'mazdoori', amount_paise: 600000, business_date: today() } },
       { table: 'delivery_slips', row: { id: uuidv7(), created_at: t, bill_id: billId, address: 'Shop 7, Ghaziabad Mandi', destination: 'Taj stand' } },
       { table: 'receivings', row: { id: uuidv7(), created_at: t, bill_id: billId, received_by: 'Shop boy' } },
     ]);
-    expect(res.body.results.map((r: any) => r.status)).toEqual(Array(12).fill('applied'));
+    expect(res.body.results.map((r: any) => r.status)).toEqual(Array(13).fill('applied'));
   });
 
   it('ignores a retried row (same id) and rejects a bad one without blocking the batch', async () => {
@@ -232,7 +233,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'buyers']);
     const renamed = all.filter((c) => c.table === 'buyers').pop();
     expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
   });
