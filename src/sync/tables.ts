@@ -71,7 +71,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       received_qty: z.number().int().min(0), rate_paise: paise,
     }),
   },
-  // The parchi. total_paise is goods plus packing labour, i.e. what the customer owes.
+  // The parchi. total_paise is the goods — what the customer owes. labour_paise rides along
+  // only as the shop's own mazdoori accrual (30p/nag), never charged to the customer.
   bills: {
     kind: 'fact',
     row: z.object({
