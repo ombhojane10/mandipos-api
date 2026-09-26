@@ -114,9 +114,12 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'fact',
     row: z.object({
       id, created_at: at, buyer_id: id, amount_paise: paise.positive(),
-      pay_mode: z.enum(['cash', 'upi', 'card']), payment_ref: text(40), business_date: day,
+      pay_mode: z.enum(['cash', 'upi', 'card', 'mixed']), payment_ref: text(40), business_date: day,
       // The slip this money was taken for, when it was taken on one.
       bill_id: id.nullable().default(null),
+      // The receipt's own serial, and the split — one payment can be part cash, part UPI.
+      receipt_no: z.number().int().positive().max(9_999_999).nullable().default(null),
+      cash_paise: paise.default(0), upi_paise: paise.default(0),
     }),
   },
   spoilage: {

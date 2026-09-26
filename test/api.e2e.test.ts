@@ -172,7 +172,7 @@ describe('sync', () => {
       { table: 'buyers', row: { id: buyerId, created_at: t, updated_at: t, name: 'Buyer One', phone: '9811111111', kind: 'Hotel', credit_limit_paise: 2000000 } },
       { table: 'bills', row: { id: billId, created_at: t, number: 'A2/2627/000001', kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Buyer One', business_date: today(), pay_mode: 'mixed', total_paise: 2830000, paid_paise: 2830000, slip_no: 643, truck_id: truckId, cash_paise: 1830000, upi_paise: 1000000, labour_paise: 150000, packing: 'katta10', packs: 50, delivery: 1, staff_name: 'Rajat' } },
       { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 400, rate_paise: 6700 } },
-      { table: 'collections', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1000000, pay_mode: 'cash', business_date: today() } },
+      { table: 'collections', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1000000, pay_mode: 'mixed', business_date: today(), receipt_no: 1, cash_paise: 600000, upi_paise: 400000 } },
       { table: 'delivery_slips', row: { id: uuidv7(), created_at: t, bill_id: billId, address: 'Shop 7, Ghaziabad Mandi', destination: 'Taj stand' } },
       { table: 'receivings', row: { id: uuidv7(), created_at: t, bill_id: billId, received_by: 'Shop boy' } },
     ]);
