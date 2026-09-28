@@ -212,6 +212,30 @@ describe('sync', () => {
     expect(res.body.results[1].error).toMatch(/duplicate/);
   });
 
+  // Badlein on a saved slip: cancel it, then write the corrected one under the same number.
+  it('lets a slip number be used again only after the slip holding it is voided', async () => {
+    const t = now();
+    const slip = (id: string) => ({
+      table: 'bills',
+      row: {
+        id, created_at: t, number: `A2/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+        total_paise: 100, paid_paise: 100, cash_paise: 100, slip_no: 800,
+      },
+    });
+    const first = uuidv7();
+    const second = uuidv7();
+    const res = await push(owner.accessToken, [
+      slip(first),
+      slip(uuidv7()),
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: first, slip_no: 800, reason: 'edited' } },
+      slip(second),
+      slip(uuidv7()),
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected', 'applied', 'applied', 'rejected']);
+    expect(res.body.results[4].error).toMatch(/duplicate/);
+  });
+
   it('keeps the newest version of a master row', async () => {
     const later = new Date(Date.now() + 60_000).toISOString();
     const earlier = new Date(Date.now() - 60_000).toISOString();
@@ -233,7 +257,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();

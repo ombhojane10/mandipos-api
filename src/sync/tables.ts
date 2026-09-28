@@ -91,6 +91,16 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       delivery: bool.default(false), staff_name: text(60),
     }),
   },
+  // A slip cancelled — outright, or because a corrected one took its number. The bill row
+  // stays; terminals drop a voided slip from their books when they pull this.
+  bill_voids: {
+    kind: 'fact',
+    row: z.object({
+      id, created_at: at, bill_id: id,
+      slip_no: z.number().int().positive().max(9_999_999).nullable().default(null),
+      reason: z.enum(['deleted', 'edited']).default('deleted'),
+    }),
+  },
   bill_lines: {
     kind: 'fact',
     row: z.object({ id, created_at: at, bill_id: id, truck_id: id, brand_id: id, grade, qty, rate_paise: paise }),
