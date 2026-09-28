@@ -122,9 +122,13 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       cash_paise: paise.default(0), upi_paise: paise.default(0),
     }),
   },
+  // Nuts taken off a gaadi without a sale: rotten ones, or a count that was entered too high.
   spoilage: {
     kind: 'fact',
-    row: z.object({ id, created_at: at, truck_id: id, brand_id: id, grade, qty, business_date: day }),
+    row: z.object({
+      id, created_at: at, truck_id: id, brand_id: id, grade, qty, business_date: day,
+      kind: z.enum(['spoiled', 'correction']).default('spoiled'),
+    }),
   },
   // The daybook's manual entries. Cash sales and vasooli are never written here — they are
   // read from bills and collections when the day is drawn, so the books cannot disagree.

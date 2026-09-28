@@ -188,7 +188,7 @@ describe('sync', () => {
       { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: uuidv7(), truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, rate_paise: 1 } },
       { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'too-long-number-xyz', kind: 'kachchi', buyer_name: 'x', business_date: today(), pay_mode: 'cash', total_paise: 1, paid_paise: 1 } },
       { table: 'users', row: { id: uuidv7() } },
-      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 40, business_date: today() } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 40, business_date: today(), kind: 'correction' } },
     ]);
     expect(res.body.results.map((r: any) => r.status)).toEqual(['skipped', 'rejected', 'rejected', 'rejected', 'rejected', 'applied']);
     expect(res.body.results[1].error).toMatch(/duplicate/);
@@ -234,6 +234,8 @@ describe('sync', () => {
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
     expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'buyers']);
+    // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
+    expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();
     expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
   });
