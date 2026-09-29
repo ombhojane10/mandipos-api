@@ -83,6 +83,13 @@ export class ShopsController {
     await this.accounts.setSlipLimit(p, parse(LimitBody, body).slipLimitPaise);
   }
 
+  /** Admin: the mobile number printed on the shop's slips. */
+  @Post('phone')
+  @HttpCode(204)
+  async shopPhone(@Me() p: Principal, @Body() body: unknown) {
+    await this.accounts.setShopPhone(p, parse(z.object({ phone }), body).phone);
+  }
+
   /** Admin: a new join code; the old one stops working. */
   @Post('join-code')
   @HttpCode(200)

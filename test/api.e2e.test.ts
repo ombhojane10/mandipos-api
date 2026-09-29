@@ -147,6 +147,11 @@ describe('slip limit', () => {
     await http().post('/v1/shops/slip-limit').set(auth(admin.accessToken)).send({ slipLimitPaise: 5000000 }).expect(204);
     const me = await http().get('/v1/me').set(auth(munim.accessToken)).expect(200);
     expect(me.body.shop.slipLimitPaise).toBe(5000000);
+    // The slip's phone is the shop's, not whoever is logged in; only an admin changes it.
+    expect(me.body.shop.phone).toBe('9822200001');
+    await http().post('/v1/shops/phone').set(auth(munim.accessToken)).send({ phone: '9871429335' }).expect(403);
+    await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335' }).expect(204);
+    expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.phone).toBe('9871429335');
 
     // The accountant asks; they cannot approve it themselves.
     const req = await http().post('/v1/requests').set(auth(munim.accessToken))
