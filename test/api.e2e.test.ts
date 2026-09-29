@@ -236,6 +236,20 @@ describe('sync', () => {
     expect(res.body.results[4].error).toMatch(/duplicate/);
   });
 
+  it('takes a 15-katta slip and a named panni', async () => {
+    const t = now();
+    const slip = (extra: Record<string, unknown>) => ({
+      table: 'bills',
+      row: {
+        id: uuidv7(), created_at: t, number: `A2/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+        total_paise: 100, paid_paise: 100, cash_paise: 100, ...extra,
+      },
+    });
+    const res = await push(owner.accessToken, [slip({ packing: 'katta15', packs: 30 }), slip({ packing: 'panni', panni_name: 'Jai Ho', packs: 200 })]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
+  });
+
   it('keeps the newest version of a master row', async () => {
     const later = new Date(Date.now() + 60_000).toISOString();
     const earlier = new Date(Date.now() - 60_000).toISOString();
@@ -257,7 +271,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();

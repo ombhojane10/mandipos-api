@@ -86,7 +86,9 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       truck_id: id.nullable().default(null),
       cash_paise: paise.default(0), upi_paise: paise.default(0),
       labour_paise: paise.default(0),
-      packing: z.enum(['loose', 'katta10', 'katta20', 'panni']).default('loose'),
+      packing: z.enum(['loose', 'katta10', 'katta15', 'katta20', 'panni']).default('loose'),
+      // Which named panni the maal went out in (Nariyal Pani, Jai Ho, AB, Organic); blank otherwise.
+      panni_name: text(40),
       packs: z.number().int().min(0).max(100_000).default(0),
       delivery: bool.default(false), staff_name: text(60),
     }),
