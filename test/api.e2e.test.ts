@@ -79,6 +79,61 @@ async function registerShop(phone: string, name: string) {
 const now = () => new Date().toISOString();
 const today = () => new Date().toISOString().slice(0, 10);
 
+describe('team', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('joins by code as accountant, admin-adds a number that lands in the shop, and keeps team changes admin-only', async () => {
+    const admin = await registerShop('9811100001', 'Team Shop');
+    const team = await http().get('/v1/shops/members').set(auth(admin.accessToken)).expect(200);
+    expect(team.body.youAreAdmin).toBe(true);
+    expect(team.body.joinCode).toMatch(/^\d{6}$/);
+
+    // Join by code: an accountant in the same shop.
+    const joiner = await login('9811100002');
+    expect(joiner.me.shop).toBeNull();
+    await http().post('/v1/shops/join').set(auth(joiner.accessToken)).send({ code: '000000' === team.body.joinCode ? '111111' : '000000' }).expect(404);
+    const joined = await http().post('/v1/shops/join').set(auth(joiner.accessToken)).send({ code: team.body.joinCode }).expect(200);
+    expect(joined.body.me.shop).toMatchObject({ id: admin.me.shop.id, role: 'munim' });
+
+    // An accountant sees the team but not the code, and cannot change it.
+    const seen = await http().get('/v1/shops/members').set(auth(joined.body.accessToken)).expect(200);
+    expect(seen.body.joinCode).toBeNull();
+    await http().post('/v1/shops/members').set(auth(joined.body.accessToken)).send({ phone: '9811100009' }).expect(403);
+
+    // Admin adds a number; its very first login opens this shop.
+    await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9811100003', name: 'Munim Ji' }).expect(204);
+    await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9811100003' }).expect(409);
+    const added = await login('9811100003');
+    expect(added.me.shop).toMatchObject({ id: admin.me.shop.id, role: 'munim' });
+
+    // Promote to admin; the last admin cannot step down.
+    await http().patch(`/v1/shops/members/${added.me.user.id}`).set(auth(admin.accessToken)).send({ role: 'admin' }).expect(204);
+    const now3 = await http().get('/v1/shops/members').set(auth(added.accessToken)).expect(200);
+    expect(now3.body.youAreAdmin).toBe(true);
+    await http().patch(`/v1/shops/members/${added.me.user.id}`).set(auth(admin.accessToken)).send({ role: 'accountant' }).expect(204);
+    await http().patch(`/v1/shops/members/${admin.me.user.id}`).set(auth(admin.accessToken)).send({ role: 'accountant' }).expect(400);
+
+    // Removing someone shuts their device out at once, and their refresh stops working.
+    await http().delete(`/v1/shops/members/${joiner.me.user.id}`).set(auth(admin.accessToken)).expect(204);
+    await http().get('/v1/me').set(auth(joined.body.accessToken)).expect(401);
+    await http().post('/v1/auth/refresh').send({ refreshToken: joiner.refreshToken }).expect(401);
+
+    // A new code replaces the old one.
+    const fresh = await http().post('/v1/shops/join-code').set(auth(admin.accessToken)).expect(200);
+    expect(fresh.body.joinCode).not.toEqual(team.body.joinCode);
+  });
+
+  it('picks up a shop the number was added to after it logged in', async () => {
+    const admin = await registerShop('9811100011', 'Late Shop');
+    const waiting = await login('9811100012');
+    expect(waiting.me.shop).toBeNull();
+    await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9811100012' }).expect(204);
+    const me = await http().get('/v1/me').set(auth(waiting.accessToken)).expect(200);
+    expect(me.body.shop).toMatchObject({ id: admin.me.shop.id });
+    expect(me.body.accessToken).toBeTruthy();
+  });
+});
+
 describe('health', () => {
   it('answers without touching the database', async () => {
     const res = await http().get('/healthz').expect(200);
