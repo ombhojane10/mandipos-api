@@ -110,7 +110,7 @@ describe('team', () => {
     await http().patch(`/v1/shops/members/${added.me.user.id}`).set(auth(admin.accessToken)).send({ role: 'admin' }).expect(204);
     const now3 = await http().get('/v1/shops/members').set(auth(added.accessToken)).expect(200);
     expect(now3.body.youAreAdmin).toBe(true);
-    await http().patch(`/v1/shops/members/${added.me.user.id}`).set(auth(admin.accessToken)).send({ role: 'accountant' }).expect(204);
+    await http().post(`/v1/shops/members/${added.me.user.id}/role`).set(auth(admin.accessToken)).send({ role: 'accountant' }).expect(204);
     await http().patch(`/v1/shops/members/${admin.me.user.id}`).set(auth(admin.accessToken)).send({ role: 'accountant' }).expect(400);
 
     // Removing someone shuts their device out at once, and their refresh stops working.
