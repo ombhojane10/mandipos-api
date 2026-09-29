@@ -54,14 +54,17 @@ export class ShopsController {
     await this.accounts.addMember(p, b.phone, b.name, b.role);
   }
 
-  /**
-   * Admin: make admin, or back to accountant. Also as POST .../role, because Android's
-   * HttpURLConnection cannot send PATCH.
-   */
+  /** Admin: make admin, or back to accountant. */
   @Patch('members/:userId')
-  @Post('members/:userId/role')
   @HttpCode(204)
   async setRole(@Me() p: Principal, @Param('userId') userId: string, @Body() body: unknown) {
+    await this.accounts.setRole(p, parse(UserId, userId), parse(RoleBody, body).role);
+  }
+
+  /** The same as POST, because Android's HttpURLConnection cannot send PATCH. */
+  @Post('members/:userId/role')
+  @HttpCode(204)
+  async setRoleByPost(@Me() p: Principal, @Param('userId') userId: string, @Body() body: unknown) {
     await this.accounts.setRole(p, parse(UserId, userId), parse(RoleBody, body).role);
   }
 
