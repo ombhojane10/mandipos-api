@@ -93,6 +93,11 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       delivery: bool.default(false), staff_name: text(60),
     }),
   },
+  // Udhaar not from a slip: a grahak's balance from the old book, or credit added by hand.
+  udhaar_entries: {
+    kind: 'fact',
+    row: z.object({ id, created_at: at, buyer_id: id, amount_paise: paise.positive(), note: text(200), business_date: day }),
+  },
   // A slip cancelled — outright, or because a corrected one took its number. The bill row
   // stays; terminals drop a voided slip from their books when they pull this.
   bill_voids: {

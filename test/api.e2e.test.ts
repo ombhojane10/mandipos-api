@@ -250,6 +250,14 @@ describe('sync', () => {
     expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
   });
 
+  it('carries a grahak\'s purana udhaar', async () => {
+    const res = await push(owner.accessToken, [
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: now(), buyer_id: buyerId, amount_paise: 1250000, note: 'Purana udhaar', business_date: today() } },
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: now(), buyer_id: buyerId, amount_paise: 0, business_date: today() } },
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
+  });
+
   it('keeps the newest version of a master row', async () => {
     const later = new Date(Date.now() + 60_000).toISOString();
     const earlier = new Date(Date.now() - 60_000).toISOString();
@@ -271,7 +279,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();
