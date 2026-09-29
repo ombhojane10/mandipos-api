@@ -134,6 +134,44 @@ describe('team', () => {
   });
 });
 
+describe('slip limit', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('sends an accountant\'s big slip to the admin, and lets only the admin decide', async () => {
+    const admin = await registerShop('9822200001', 'Limit Shop');
+    await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9822200002', name: 'Munim' }).expect(204);
+    const munim = await login('9822200002');
+
+    // The limit is the admin's to set, and every terminal reads it from /me.
+    await http().post('/v1/shops/slip-limit').set(auth(munim.accessToken)).send({ slipLimitPaise: 5000000 }).expect(403);
+    await http().post('/v1/shops/slip-limit').set(auth(admin.accessToken)).send({ slipLimitPaise: 5000000 }).expect(204);
+    const me = await http().get('/v1/me').set(auth(munim.accessToken)).expect(200);
+    expect(me.body.shop.slipLimitPaise).toBe(5000000);
+
+    // The accountant asks; they cannot approve it themselves.
+    const req = await http().post('/v1/requests').set(auth(munim.accessToken))
+      .send({ buyerName: 'Gaurav', totalPaise: 6000000, detail: { lines: [{ maal: 'Gujarat', grade: 'I', dana: 1000, bhav: 6000 }] } }).expect(201);
+    expect(req.body.status).toBe('pending');
+    await http().post(`/v1/requests/${req.body.id}/approve`).set(auth(munim.accessToken)).expect(403);
+
+    // The admin sees it and approves; the accountant's terminal then uses it once.
+    const list = await http().get('/v1/requests').set(auth(admin.accessToken)).expect(200);
+    expect(list.body.youAreAdmin).toBe(true);
+    expect(list.body.requests[0]).toMatchObject({ id: req.body.id, status: 'pending', buyerName: 'Gaurav' });
+    await http().post(`/v1/requests/${req.body.id}/approve`).set(auth(admin.accessToken)).expect(200);
+    await http().post(`/v1/requests/${req.body.id}/reject`).set(auth(admin.accessToken)).expect(400);
+    const seen = await http().get(`/v1/requests/${req.body.id}`).set(auth(munim.accessToken)).expect(200);
+    expect(seen.body.status).toBe('approved');
+    await http().post(`/v1/requests/${req.body.id}/used`).set(auth(munim.accessToken)).send({ billId: uuidv7() }).expect(204);
+    await http().post(`/v1/requests/${req.body.id}/used`).set(auth(munim.accessToken)).send({ billId: uuidv7() }).expect(400);
+
+    // A rejected one stays rejected.
+    const two = await http().post('/v1/requests').set(auth(munim.accessToken)).send({ buyerName: 'X', totalPaise: 9000000 }).expect(201);
+    const rejected = await http().post(`/v1/requests/${two.body.id}/reject`).set(auth(admin.accessToken)).expect(200);
+    expect(rejected.body.status).toBe('rejected');
+  });
+});
+
 describe('health', () => {
   it('answers without touching the database', async () => {
     const res = await http().get('/healthz').expect(200);

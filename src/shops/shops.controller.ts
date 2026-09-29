@@ -21,6 +21,7 @@ const role = z.enum(['admin', 'accountant']);
 const AddMemberBody = z.object({ phone, name: z.string().trim().max(80).default(''), role: role.default('accountant') });
 const RoleBody = z.object({ role });
 const UserId = z.uuid();
+const LimitBody = z.object({ slipLimitPaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) });
 
 @Controller('v1/shops')
 @UseGuards(AuthGuard)
@@ -73,6 +74,13 @@ export class ShopsController {
   @HttpCode(204)
   async remove(@Me() p: Principal, @Param('userId') userId: string) {
     await this.accounts.removeMember(p, parse(UserId, userId));
+  }
+
+  /** Admin: the parchi limit above which an accountant's slip needs approval (0 = none). */
+  @Post('slip-limit')
+  @HttpCode(204)
+  async slipLimit(@Me() p: Principal, @Body() body: unknown) {
+    await this.accounts.setSlipLimit(p, parse(LimitBody, body).slipLimitPaise);
   }
 
   /** Admin: a new join code; the old one stops working. */

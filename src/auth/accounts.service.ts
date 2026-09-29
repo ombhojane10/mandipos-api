@@ -8,7 +8,7 @@ export type DeviceInfo = { label: string; platform: string; appVersion: string }
 export type MeView = {
   user: { id: string; phone: string; name: string };
   device: { id: string; code: string | null };
-  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string } | null;
+  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number } | null;
 };
 
 /** How the app names a role; the table keeps the older words. */
@@ -175,6 +175,14 @@ export class AccountsService {
     });
   }
 
+  /** Admin: the most an accountant's slip may come to before it needs approval; 0 = no limit. */
+  async setSlipLimit(p: Principal, paise: number) {
+    return this.db.tx(async (tx) => {
+      await this.requireAdmin(tx, p);
+      await tx.query(`UPDATE shops SET slip_limit_paise = $2 WHERE id = $1`, [p.shopId, paise]);
+    });
+  }
+
   /** A new join code; the old one stops working. */
   async newJoinCode(p: Principal): Promise<{ joinCode: string }> {
     return this.db.tx(async (tx) => {
@@ -233,10 +241,10 @@ export class AccountsService {
   private async me(tx: Tx, p: Principal): Promise<MeView> {
     const { rows } = await tx.query<{
       user_id: string; phone: string; user_name: string; device_id: string; code: string | null;
-      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null;
+      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null;
     }>(
       `SELECT u.id AS user_id, u.phone, u.name AS user_name, d.id AS device_id, d.code,
-              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role
+              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise
        FROM devices d JOIN users u ON u.id = d.user_id
        LEFT JOIN shops s ON s.id = d.shop_id
        LEFT JOIN shop_members m ON m.shop_id = d.shop_id AND m.user_id = d.user_id
@@ -248,7 +256,7 @@ export class AccountsService {
       user: { id: r.user_id, phone: r.phone, name: r.user_name },
       device: { id: r.device_id, code: r.code },
       shop: r.shop_id
-        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role! }
+        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0) }
         : null,
     };
   }
