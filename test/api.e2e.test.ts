@@ -177,6 +177,38 @@ describe('slip limit', () => {
   });
 });
 
+describe('ledger details', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('lets only an admin set the address and bank accounts that head the ledger', async () => {
+    const admin = await registerShop('9833300021', 'Ledger Shop');
+    await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9833300022', name: 'Munim' }).expect(204);
+    const munim = await login('9833300022');
+
+    // Nothing is required: a new shop has none.
+    expect((await http().get('/v1/me').set(auth(admin.accessToken))).body.shop).toMatchObject({ address: '', bankAccounts: [] });
+
+    const details = {
+      address: 'B-142, New Subzi Mandi, Azadpur, Delhi-33',
+      bankAccounts: [
+        { holder: 'ASHISH BROTHERS', bank: 'IDFC BANK', ifsc: 'idfb0020254', account: '80913380910' },
+        { holder: '', bank: '', ifsc: '', account: '' },
+        { holder: 'SHIV FRUIT CO.', bank: 'ICICI BANK', ifsc: 'ICIC0000423', account: '04230550848' },
+      ],
+    };
+    await http().post('/v1/shops/ledger-details').set(auth(munim.accessToken)).send(details).expect(403);
+    await http().post('/v1/shops/ledger-details').set(auth(admin.accessToken)).send(details).expect(204);
+
+    // Every terminal reads them from /me; the empty row is dropped and IFSC is upper-cased.
+    const shop = (await http().get('/v1/me').set(auth(munim.accessToken))).body.shop;
+    expect(shop.address).toBe('B-142, New Subzi Mandi, Azadpur, Delhi-33');
+    expect(shop.bankAccounts).toEqual([
+      { holder: 'ASHISH BROTHERS', bank: 'IDFC BANK', ifsc: 'IDFB0020254', account: '80913380910' },
+      { holder: 'SHIV FRUIT CO.', bank: 'ICICI BANK', ifsc: 'ICIC0000423', account: '04230550848' },
+    ]);
+  });
+});
+
 describe('print queue', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
   // A real 1x1 PNG: the queue refuses anything that isn't one.

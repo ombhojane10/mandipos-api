@@ -21,6 +21,16 @@ const role = z.enum(['admin', 'accountant']);
 const AddMemberBody = z.object({ phone, name: z.string().trim().max(80).default(''), role: role.default('accountant') });
 const RoleBody = z.object({ role });
 const UserId = z.uuid();
+const BankAccount = z.object({
+  holder: z.string().trim().max(80).default(''),
+  bank: z.string().trim().max(80).default(''),
+  ifsc: z.string().trim().toUpperCase().max(11).default(''),
+  account: z.string().trim().max(34).default(''),
+});
+const LedgerBody = z.object({
+  address: z.string().trim().max(200).default(''),
+  bankAccounts: z.array(BankAccount).max(4).default([]),
+});
 const LimitBody = z.object({ slipLimitPaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) });
 
 @Controller('v1/shops')
@@ -81,6 +91,16 @@ export class ShopsController {
   @HttpCode(204)
   async slipLimit(@Me() p: Principal, @Body() body: unknown) {
     await this.accounts.setSlipLimit(p, parse(LimitBody, body).slipLimitPaise);
+  }
+
+  /** Admin: the address and bank accounts at the head of every customer ledger. All optional. */
+  @Post('ledger-details')
+  @HttpCode(204)
+  async ledgerDetails(@Me() p: Principal, @Body() body: unknown) {
+    const b = parse(LedgerBody, body);
+    // A row with nothing typed in it is left out rather than printed blank.
+    const accounts = b.bankAccounts.filter((a) => a.holder || a.bank || a.ifsc || a.account);
+    await this.accounts.setLedgerDetails(p, b.address, accounts);
   }
 
   /** Admin: the mobile number printed on the shop's slips. */
