@@ -110,7 +110,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
   },
   bill_lines: {
     kind: 'fact',
-    row: z.object({ id, created_at: at, bill_id: id, truck_id: id, brand_id: id, grade, qty, rate_paise: paise }),
+    // leak: cracked nuts sold for a lump sum, still booked under a real grade for the stock.
+    row: z.object({ id, created_at: at, bill_id: id, truck_id: id, brand_id: id, grade, qty, rate_paise: paise, leak: bool.default(false) }),
   },
   // The driver's receiving, brought back after a delivery: proof it reached the right shop.
   receivings: {
