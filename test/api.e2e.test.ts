@@ -191,9 +191,9 @@ describe('ledger details', () => {
     const details = {
       address: 'B-142, New Subzi Mandi, Azadpur, Delhi-33',
       bankAccounts: [
-        { holder: 'ASHISH BROTHERS', bank: 'IDFC BANK', ifsc: 'idfb0020254', account: '80913380910' },
+        { holder: 'SHARMA TRADERS', bank: 'HDFC BANK', ifsc: 'hdfc0000123', account: '50100012345678' },
         { holder: '', bank: '', ifsc: '', account: '' },
-        { holder: 'SHIV FRUIT CO.', bank: 'ICICI BANK', ifsc: 'ICIC0000423', account: '04230550848' },
+        { holder: 'GUPTA FRUIT CO.', bank: 'SBI', ifsc: 'SBIN0001234', account: '30012345678' },
       ],
     };
     await http().post('/v1/shops/ledger-details').set(auth(munim.accessToken)).send(details).expect(403);
@@ -203,8 +203,8 @@ describe('ledger details', () => {
     const shop = (await http().get('/v1/me').set(auth(munim.accessToken))).body.shop;
     expect(shop.address).toBe('B-142, New Subzi Mandi, Azadpur, Delhi-33');
     expect(shop.bankAccounts).toEqual([
-      { holder: 'ASHISH BROTHERS', bank: 'IDFC BANK', ifsc: 'IDFB0020254', account: '80913380910' },
-      { holder: 'SHIV FRUIT CO.', bank: 'ICICI BANK', ifsc: 'ICIC0000423', account: '04230550848' },
+      { holder: 'SHARMA TRADERS', bank: 'HDFC BANK', ifsc: 'HDFC0000123', account: '50100012345678' },
+      { holder: 'GUPTA FRUIT CO.', bank: 'SBI', ifsc: 'SBIN0001234', account: '30012345678' },
     ]);
   });
 });
