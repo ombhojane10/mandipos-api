@@ -26,7 +26,11 @@ export class SyncService {
     return this.db.withShop(shopId, async (tx) => {
       await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [shopId]);
       const results: PushResult[] = [];
-      for (const item of items) results.push(await this.applyOne(tx, p, shopId, item));
+      // Read fresh, not from the token: a role changed an hour ago must bind now.
+      let role: string | null | undefined;
+      const roleOf = async () => role !== undefined ? role : (role = (await tx.query<{ role: string }>(
+        `SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, p.userId])).rows[0]?.role ?? null);
+      for (const item of items) results.push(await this.applyOne(tx, p, shopId, item, roleOf));
       return results;
     });
   }
@@ -42,7 +46,9 @@ export class SyncService {
     });
   }
 
-  private async applyOne(tx: Tx, p: Principal, shopId: string, item: PushItem): Promise<PushResult> {
+  private async applyOne(
+    tx: Tx, p: Principal, shopId: string, item: PushItem, roleOf: () => Promise<string | null>,
+  ): Promise<PushResult> {
     const rawId = typeof item?.row?.id === 'string' ? item.row.id : null;
     const def = SYNC_TABLES[item?.table];
     if (!def) return { id: rawId, status: 'rejected', error: `unknown table ${item?.table}` };
@@ -50,6 +56,11 @@ export class SyncService {
     if (!parsed.success) {
       const i = parsed.error.issues[0];
       return { id: rawId, status: 'rejected', error: `${i.path.join('.')}: ${i.message}` };
+    }
+
+    if (item.table === 'daybook_entries' && (await roleOf()) !== 'owner') {
+      const refused = await daybookRefusal(tx, p, parsed.data);
+      if (refused) return { id: rawId, status: 'rejected', error: refused };
     }
 
     const row: Record<string, unknown> = { ...parsed.data, shop_id: shopId, device_id: p.deviceId, created_by: p.userId };
@@ -85,6 +96,19 @@ export class SyncService {
       return { id: row.id as string, status: 'rejected', error: describe(err) };
     }
   }
+}
+
+/**
+ * What an accountant may not write in the daybook. The galla is theirs; the bank and the
+ * malik's own cash are not ("no accountant can enter bank transactions… this is for our
+ * safety"), nor is the opening balance the whole book rests on, nor a line someone else wrote.
+ */
+async function daybookRefusal(tx: Tx, p: Principal, row: Record<string, unknown>): Promise<string | null> {
+  if (row.mode !== 'cash') return 'bank, UPI and office lines are for an admin';
+  if (row.category === 'opening') return 'the opening balance is for an admin';
+  const { rows } = await tx.query<{ created_by: string }>(`SELECT created_by FROM daybook_entries WHERE id = $1`, [row.id]);
+  if (rows[0] && rows[0].created_by !== p.userId) return 'this line was written by someone else';
+  return null;
 }
 
 function describe(err: unknown): string {

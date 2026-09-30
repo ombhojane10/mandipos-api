@@ -153,7 +153,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'master',
     row: z.object({
       id, created_at: at, updated_at: at,
-      direction: z.enum(['in', 'out']), mode: z.enum(['cash', 'upi', 'bank']).default('cash'),
+      // cash = the phad's galla, office = the malik's own cash, upi/bank = the bank (019).
+      direction: z.enum(['in', 'out']), mode: z.enum(['cash', 'office', 'upi', 'bank']).default('cash'),
       category: text(40), party_name: text(120), note: text(200),
       amount_paise: paise.positive(), business_date: day, hidden: bool.default(false),
     }),

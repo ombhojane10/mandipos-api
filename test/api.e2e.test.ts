@@ -177,6 +177,52 @@ describe('slip limit', () => {
   });
 });
 
+describe('daybook books', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const push = (token: string, items: unknown[]) =>
+    http().post('/v1/sync/push').set(auth(token)).send({ items }).expect(200);
+  const entry = (over: Record<string, unknown>) => {
+    const t = now();
+    return { table: 'daybook_entries', row: { id: uuidv7(), created_at: t, updated_at: t, direction: 'out', mode: 'cash', category: 'kharcha', amount_paise: 5000, business_date: today(), ...over } };
+  };
+
+  it('lets an accountant write the galla only, and only their own lines', async () => {
+    const admin = await registerShop('9822200011', 'Books Shop');
+    await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9822200012', name: 'Rajnish' }).expect(204);
+    const munim = await login('9822200012');
+
+    const adminLine = entry({ mode: 'office', category: 'kiraya', amount_paise: 2500000 });
+    const own = entry({});
+    const res = await push(munim.accessToken, [
+      own,
+      entry({ category: 'handover', amount_paise: 4500000 }),
+      entry({ mode: 'upi', direction: 'in', category: 'aur_aaya' }),
+      entry({ mode: 'office', direction: 'in', category: 'committee_mili' }),
+      entry({ mode: 'bank', category: 'bank_nikala' }),
+      entry({ direction: 'in', category: 'opening', amount_paise: 1000000 }),
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'rejected', 'rejected', 'rejected', 'rejected']);
+
+    // The admin writes every book, and the opening.
+    const byAdmin = await push(admin.accessToken, [
+      adminLine,
+      entry({ mode: 'upi', direction: 'in', category: 'aur_aaya', note: 'Diary' }),
+      entry({ direction: 'in', category: 'opening', amount_paise: 1000000 }),
+    ]);
+    expect(byAdmin.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied']);
+
+    // An accountant can take back their own line, not the admin's — even one in the galla.
+    const later = new Date(Date.now() + 1000).toISOString();
+    const adminCash = entry({ category: 'bhada' });
+    await push(admin.accessToken, [adminCash]);
+    const hides = await push(munim.accessToken, [
+      { ...own, row: { ...own.row, hidden: true, updated_at: later } },
+      { ...adminCash, row: { ...adminCash.row, hidden: true, updated_at: later } },
+    ]);
+    expect(hides.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
+  });
+});
+
 describe('health', () => {
   it('answers without touching the database', async () => {
     const res = await http().get('/healthz').expect(200);
