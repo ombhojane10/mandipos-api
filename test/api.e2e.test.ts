@@ -177,6 +177,61 @@ describe('slip limit', () => {
   });
 });
 
+describe('print queue', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  // A real 1x1 PNG: the queue refuses anything that isn't one.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABc3UBGAAAAABJRU5ErkJggg==', 'base64').toString('base64');
+
+  it('prints a slip sent from home on the shop\'s station, once', async () => {
+    const home = await registerShop('9833300011', 'Print Shop');
+    const office = await login('9833300011');           // same owner, the Pine terminal
+    const other = await registerShop('9833300012', 'Other Shop');
+
+    // No station yet.
+    expect((await http().get('/v1/print/station').set(auth(home.accessToken)).expect(200)).body.station).toBeNull();
+    await http().post('/v1/print/jobs').set(auth(home.accessToken)).send({ title: 'x', image: Buffer.from('not a png').toString('base64'), widthDots: 384 }).expect(400);
+
+    // The office machine comes on: an empty poll returns 204 and marks it online.
+    await http().get('/v1/print/next?wait=0&name=P052&widthDots=576').set(auth(office.accessToken)).expect(204);
+    const st = (await http().get('/v1/print/station').set(auth(home.accessToken)).expect(200)).body.station;
+    expect(st).toMatchObject({ online: true, name: 'P052', widthDots: 576, thisDevice: false });
+
+    // Home sends; the waiting station wakes and claims it.
+    const waiting = http().get('/v1/print/next?wait=10&name=P052&widthDots=576').set(auth(office.accessToken));
+    await new Promise((r) => setTimeout(r, 200));
+    const sent = await http().post('/v1/print/jobs').set(auth(home.accessToken)).send({ title: 'Order parchi #20', image: png, widthDots: 576 }).expect(201);
+    expect(sent.body.status).toBe('queued');
+    const got = await waiting.expect(200);
+    expect(got.body).toMatchObject({ id: sent.body.id, title: 'Order parchi #20', widthDots: 576, image: png });
+
+    // Nobody else gets it, and another shop can't see it.
+    await http().get('/v1/print/next?wait=0').set(auth(home.accessToken)).expect(204);
+    await http().get(`/v1/print/jobs/${sent.body.id}`).set(auth(other.accessToken)).expect(404);
+    await http().post(`/v1/print/jobs/${sent.body.id}/done`).set(auth(home.accessToken)).send({ ok: true }).expect(400);
+
+    // Printed: the sender sees it, and it can't be reported twice.
+    await http().post(`/v1/print/jobs/${sent.body.id}/done`).set(auth(office.accessToken)).send({ ok: true }).expect(204);
+    await http().post(`/v1/print/jobs/${sent.body.id}/done`).set(auth(office.accessToken)).send({ ok: true }).expect(400);
+    const seen = await http().get(`/v1/print/jobs/${sent.body.id}`).set(auth(home.accessToken)).expect(200);
+    expect(seen.body).toMatchObject({ status: 'printed', station: 'P052', mine: true });
+
+    // A failed one says why and can be sent again.
+    const two = await http().post('/v1/print/jobs').set(auth(home.accessToken)).send({ title: 'Payment parchi #20', image: png, widthDots: 576 }).expect(201);
+    await http().get('/v1/print/next?wait=0').set(auth(office.accessToken)).expect(200);
+    await http().post(`/v1/print/jobs/${two.body.id}/done`).set(auth(office.accessToken)).send({ ok: false, error: 'Paper khatam' }).expect(204);
+    expect((await http().get(`/v1/print/jobs/${two.body.id}`).set(auth(home.accessToken))).body).toMatchObject({ status: 'failed', error: 'Paper khatam' });
+    await http().post(`/v1/print/jobs/${two.body.id}/retry`).set(auth(home.accessToken)).expect(200);
+    expect((await http().get('/v1/print/next?wait=0').set(auth(office.accessToken)).expect(200)).body.id).toBe(two.body.id);
+
+    // Switched off: the station is gone.
+    await http().delete('/v1/print/station').set(auth(office.accessToken)).expect(204);
+    // (home polled once above, which made it a station too)
+    await http().delete('/v1/print/station').set(auth(home.accessToken)).expect(204);
+    expect((await http().get('/v1/print/station').set(auth(home.accessToken))).body.station).toBeNull();
+    expect((await http().get('/v1/print/jobs').set(auth(home.accessToken))).body.jobs).toHaveLength(2);
+  });
+});
+
 describe('daybook books', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
   const push = (token: string, items: unknown[]) =>
