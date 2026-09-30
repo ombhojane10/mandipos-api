@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { UdhaarAlertsService } from './alerts/udhaar-alerts.service';
 import { AccountsService } from './auth/accounts.service';
 import { AuthController } from './auth/auth.controller';
 import { AuthGuard } from './auth/auth.guard';
@@ -16,6 +17,6 @@ import { SyncService } from './sync/sync.service';
 
 @Module({
   controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController],
-  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService],
+  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService, UdhaarAlertsService],
 })
 export class AppModule {}

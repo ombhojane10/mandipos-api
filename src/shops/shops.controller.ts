@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
+import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { AccountsService } from '../auth/accounts.service';
 import { AuthGuard, Me } from '../auth/auth.guard';
 import { Principal } from '../auth/tokens.service';
@@ -36,7 +37,7 @@ const LimitBody = z.object({ slipLimitPaise: z.number().int().min(0).max(Number.
 @Controller('v1/shops')
 @UseGuards(AuthGuard)
 export class ShopsController {
-  constructor(private readonly accounts: AccountsService) {}
+  constructor(private readonly accounts: AccountsService, private readonly alerts: UdhaarAlertsService) {}
 
   /** Registers the caller's shop and attaches this device; returns an access token that carries the shop. */
   @Post()
@@ -84,6 +85,18 @@ export class ShopsController {
   @HttpCode(204)
   async remove(@Me() p: Principal, @Param('userId') userId: string) {
     await this.accounts.removeMember(p, parse(UserId, userId));
+  }
+
+  /** Admin: the morning udhaar WhatsApp — on or off, and who would get one today. */
+  @Get('udhaar-alerts')
+  udhaarAlerts(@Me() p: Principal) {
+    return this.alerts.preview(p);
+  }
+
+  @Post('udhaar-alerts')
+  @HttpCode(204)
+  async setUdhaarAlerts(@Me() p: Principal, @Body() body: unknown) {
+    await this.alerts.setOn(p, parse(z.object({ on: z.boolean() }), body).on);
   }
 
   /** Admin: the parchi limit above which an accountant's slip needs approval (0 = none). */

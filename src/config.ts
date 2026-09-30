@@ -17,6 +17,15 @@ const schema = z
      * before real shops are onboarded.
      */
     OTP_TEST_LOGINS: z.string().default(''),
+    /**
+     * The morning udhaar WhatsApp. Nothing is sent unless this is "on", the MandiPlus bot's
+     * Cloud API credentials are set, and the shop's admin has turned it on.
+     */
+    UDHAAR_ALERTS: z.enum(['off', 'on']).default('off'),
+    WHATSAPP_TOKEN: z.string().optional(),
+    WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+    UDHAAR_ALERT_TEMPLATE: z.string().default('udhaar_baaki_reminder_v1'),
+    UDHAAR_ALERT_LANG: z.string().default('hi'),
   })
   .refine((c) => c.APP_ENV === 'local' || c.APP_ENV === 'test' || !!c.TWOFACTOR_API_KEY, {
     message: 'TWOFACTOR_API_KEY is required in staging and production',

@@ -310,6 +310,47 @@ describe('daybook books', () => {
   });
 });
 
+describe('udhaar alerts', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const push = (token: string, items: unknown[]) =>
+    http().post('/v1/sync/push').set(auth(token)).send({ items }).expect(200);
+
+  it('lists who owes, lets only an admin turn it on, and sends each grahak once a day', async () => {
+    const owner = await registerShop('9555500001', 'Alert Traders');
+    const buyerId = uuidv7();
+    const noPhone = uuidv7();
+    const t = now();
+    const buyer = (id: string, name: string, phone: string) => ({ table: 'buyers', row: {
+      id, created_at: t, updated_at: t, name, phone, kind: '', credit_limit_paise: 0, vehicle: '', address: '', destination: '' } });
+    await push(owner.accessToken, [
+      buyer(buyerId, 'Raju', '9876500011'),
+      buyer(noPhone, 'Bina Phone', ''),
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1500000, business_date: today() } },
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: t, buyer_id: noPhone, amount_paise: 500000, business_date: today() } },
+      { table: 'collections', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 250000, pay_mode: 'cash',
+        payment_ref: '', business_date: today(), cash_paise: 250000, upi_paise: 0 } },
+    ]);
+
+    const preview = await http().get('/v1/shops/udhaar-alerts').set(auth(owner.accessToken)).expect(200);
+    expect(preview.body.on).toBe(false);
+    expect(preview.body.serverOn).toBe(false);
+    // ₹15,000 udhaar less ₹2,500 vasooli; the grahak without a phone can't be messaged.
+    expect(preview.body.recipients).toEqual([{ buyerId, name: 'Raju', phone: '9876500011', duePaise: 1250000 }]);
+
+    await http().post('/v1/shops/udhaar-alerts').set(auth(owner.accessToken)).send({ on: true }).expect(204);
+
+    const { UdhaarAlertsService } = await import('../src/alerts/udhaar-alerts.service');
+    const alerts = app.get(UdhaarAlertsService);
+    const sent: { to: string; params: string[] }[] = [];
+    alerts.sender = async (to, params) => { sent.push({ to, params }); return `wamid.${sent.length}`; };
+    const first = await alerts.runDaily('2026-10-01');
+    const again = await alerts.runDaily('2026-10-01');
+    expect(first.sent).toBe(1);
+    expect(again).toEqual({ sent: 0, failed: 0, skipped: 1 });
+    expect(sent).toEqual([{ to: '919876500011', params: ['Raju', 'Alert Traders', '12,500', '9555500001'] }]);
+  });
+});
+
 describe('health', () => {
   it('answers without touching the database', async () => {
     const res = await http().get('/healthz').expect(200);
