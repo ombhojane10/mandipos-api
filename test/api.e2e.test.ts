@@ -348,6 +348,8 @@ describe('udhaar alerts', () => {
     expect(first.sent).toBe(1);
     expect(again).toEqual({ sent: 0, failed: 0, skipped: 1 });
     expect(sent).toEqual([{ to: '919876500011', params: ['Raju', 'Alert Traders', '12,500', '9555500001'] }]);
+    // The test send needs the server switched on; in tests it is off, so it refuses.
+    await http().post('/v1/shops/udhaar-alerts/test').set(auth(owner.accessToken)).send({ buyerId }).expect(403);
   });
 });
 

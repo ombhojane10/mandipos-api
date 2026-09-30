@@ -93,6 +93,13 @@ export class ShopsController {
     return this.alerts.preview(p);
   }
 
+  /** Admin: send one grahak their udhaar message now, as a test. */
+  @Post('udhaar-alerts/test')
+  @HttpCode(200)
+  udhaarAlertTest(@Me() p: Principal, @Body() body: unknown) {
+    return this.alerts.sendTest(p, parse(z.object({ buyerId: UserId }), body).buyerId);
+  }
+
   @Post('udhaar-alerts')
   @HttpCode(204)
   async setUdhaarAlerts(@Me() p: Principal, @Body() body: unknown) {

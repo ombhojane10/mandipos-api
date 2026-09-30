@@ -111,6 +111,20 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
     return { on: !!shop?.udhaar_alerts, serverOn: this.serverOn(), recipients: dues };
   }
 
+  /**
+   * Admin: send one grahak their message now — to check the wording and the number before
+   * turning the morning run on. Not counted as that day's message, so tomorrow's still goes.
+   */
+  async sendTest(p: Principal, buyerId: string): Promise<{ messageId: string; duePaise: number }> {
+    await this.requireAdmin(p);
+    if (!this.serverOn()) throw new ForbiddenException('WhatsApp alerts are switched off on the server');
+    const shop = await this.db.one<{ name: string; phone: string }>(`SELECT name, phone FROM shops WHERE id = $1`, [p.shopId]);
+    const due = (await this.db.withShop(p.shopId!, (tx) => this.dues(tx))).find((d) => d.buyerId === buyerId);
+    if (!due || !shop) throw new ForbiddenException('This grahak has no udhaar, or no 10-digit phone');
+    const messageId = await this.sender(`91${due.phone}`, [due.name, shop.name, rupees(due.duePaise), shop.phone || shop.name]);
+    return { messageId, duePaise: due.duePaise };
+  }
+
   /** Admin: turn the morning message on or off for the shop. */
   async setOn(p: Principal, on: boolean) {
     await this.requireAdmin(p);
