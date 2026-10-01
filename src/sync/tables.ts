@@ -52,6 +52,9 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       // A/C code from the shop's books. Optional with no default, so an older terminal that
       // doesn't know the column leaves it as it is instead of blanking it.
       code: z.string().trim().max(20).optional(),
+      // UID of the RFID card the grahak carries (hex, as the terminal reads it); '' = none.
+      // Optional for the same reason as code: an older terminal never unlinks a card.
+      card: z.string().trim().toUpperCase().max(32).regex(/^[0-9A-F]*$/).optional(),
     }),
   },
   trucks: {

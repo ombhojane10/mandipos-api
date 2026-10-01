@@ -597,6 +597,22 @@ describe('sync', () => {
     expect(pulled.body.changes.filter((c: any) => c.table === 'buyers').pop().row).toMatchObject({ name: 'Buyer One', code: 'CBO1' });
   });
 
+  it('links an RFID card to a grahak and keeps it when an older terminal edits them', async () => {
+    const t1 = new Date(Date.now() + 180_000).toISOString();
+    const t2 = new Date(Date.now() + 240_000).toISOString();
+    const res = await push(owner.accessToken, [
+      { table: 'buyers', row: { id: buyerId, created_at: now(), updated_at: t1, name: 'Buyer One', phone: '9811111111', card: '04a1b2c3d4' } },
+      { table: 'buyers', row: { id: buyerId, created_at: now(), updated_at: t2, name: 'Buyer One', phone: '9811111111' } },
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set('Authorization', `Bearer ${owner.accessToken}`).expect(200);
+    expect(pulled.body.changes.filter((c: any) => c.table === 'buyers').pop().row).toMatchObject({ card: '04A1B2C3D4' });
+    const bad = await push(owner.accessToken, [
+      { table: 'buyers', row: { id: buyerId, created_at: now(), updated_at: new Date(Date.now() + 300_000).toISOString(), name: 'Buyer One', card: 'not hex' } },
+    ]);
+    expect(bad.body.results[0].status).toBe('rejected');
+  });
+
   it('never shows or accepts another shop’s data', async () => {
     const other = await registerShop('9800000005', 'Shop Two');
     const pulled = await http().get('/v1/sync/pull').set('Authorization', `Bearer ${other.accessToken}`).expect(200);
