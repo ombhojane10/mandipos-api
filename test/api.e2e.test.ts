@@ -576,6 +576,17 @@ describe('sync', () => {
     expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
   });
 
+  it('takes more dana on a gaadi as a second lot line of the same maal and grade', async () => {
+    const t = now();
+    const truck = uuidv7();
+    const lot = (qty: number) => ({ table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truck, brand_id: brandId, grade: '1', billed_qty: qty, received_qty: qty, rate_paise: 0 } });
+    const res = await push(owner.accessToken, [
+      { table: 'trucks', row: { id: truck, created_at: t, updated_at: t, number: 'RICKY', arrived_at: t } },
+      lot(600), lot(165),
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied']);
+  });
+
   it('keeps a grahak\'s A/C code when a terminal that predates codes edits them', async () => {
     const t = new Date(Date.now() + 120_000).toISOString();
     const res = await push(owner.accessToken, [
