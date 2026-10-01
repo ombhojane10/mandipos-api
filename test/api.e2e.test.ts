@@ -560,6 +560,22 @@ describe('sync', () => {
     expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', code: 'CBO1', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
   });
 
+  it('takes a white-katta slip, and an after-payment slip that is owed until paid', async () => {
+    const t = now();
+    const slip = (extra: Record<string, unknown>) => ({
+      table: 'bills',
+      row: {
+        id: uuidv7(), created_at: t, number: `A2/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), ...extra,
+      },
+    });
+    const res = await push(owner.accessToken, [
+      slip({ pay_mode: 'cash', total_paise: 100, paid_paise: 100, cash_paise: 100, packing: 'katta25', packs: 50 }),
+      slip({ pay_mode: 'after', total_paise: 5000, paid_paise: 0, buyer_id: buyerId, buyer_name: 'Buyer One' }),
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
+  });
+
   it('keeps a grahak\'s A/C code when a terminal that predates codes edits them', async () => {
     const t = new Date(Date.now() + 120_000).toISOString();
     const res = await push(owner.accessToken, [
