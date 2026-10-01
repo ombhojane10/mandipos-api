@@ -537,7 +537,7 @@ describe('sync', () => {
     const earlier = new Date(Date.now() - 60_000).toISOString();
     const base = { id: buyerId, created_at: now(), phone: '9811111111', kind: 'Hotel', credit_limit_paise: 2000000 };
     const res = await push(owner.accessToken, [
-      { table: 'buyers', row: { ...base, updated_at: later, name: 'Buyer One (renamed)' } },
+      { table: 'buyers', row: { ...base, updated_at: later, name: 'Buyer One (renamed)', code: 'CBO1' } },
       { table: 'buyers', row: { ...base, updated_at: earlier, name: 'stale edit' } },
     ]);
     expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'skipped']);
@@ -557,7 +557,17 @@ describe('sync', () => {
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();
-    expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
+    expect(renamed.row).toMatchObject({ name: 'Buyer One (renamed)', code: 'CBO1', shop_id: owner.me.shop.id, device_id: owner.me.device.id });
+  });
+
+  it('keeps a grahak\'s A/C code when a terminal that predates codes edits them', async () => {
+    const t = new Date(Date.now() + 120_000).toISOString();
+    const res = await push(owner.accessToken, [
+      { table: 'buyers', row: { id: buyerId, created_at: now(), updated_at: t, name: 'Buyer One', phone: '9811111111' } },
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied']);
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set('Authorization', `Bearer ${owner.accessToken}`).expect(200);
+    expect(pulled.body.changes.filter((c: any) => c.table === 'buyers').pop().row).toMatchObject({ name: 'Buyer One', code: 'CBO1' });
   });
 
   it('never shows or accepts another shop’s data', async () => {

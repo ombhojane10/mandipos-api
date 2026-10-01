@@ -49,6 +49,9 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       address: text(200), destination: text(120),
       // Taken off the counter's list without losing the slips that refer to them.
       hidden: bool.default(false),
+      // A/C code from the shop's books. Optional with no default, so an older terminal that
+      // doesn't know the column leaves it as it is instead of blanking it.
+      code: z.string().trim().max(20).optional(),
     }),
   },
   trucks: {
