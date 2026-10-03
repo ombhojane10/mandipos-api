@@ -8,7 +8,7 @@ export type DeviceInfo = { label: string; platform: string; appVersion: string }
 export type MeView = {
   user: { id: string; phone: string; name: string };
   device: { id: string; code: string | null };
-  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; address: string; bankAccounts: BankAccount[] } | null;
+  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; address: string; bankAccounts: BankAccount[]; commodity: string } | null;
 };
 
 /** How the app names a role; the table keeps the older words. */
@@ -65,7 +65,7 @@ export class AccountsService {
   }
 
   /** Registers the caller's shop (the sketch's "customer registration") and attaches this device. */
-  async createShop(p: Principal, shop: { name: string; mandi: string; shopNo: string; phad?: string; gstin: string; role: string; ownerName: string }):
+  async createShop(p: Principal, shop: { name: string; mandi: string; shopNo: string; phad?: string; gstin: string; role: string; ownerName: string; commodity?: string }):
     Promise<{ accessToken: string; me: MeView }> {
     return this.db.tx(async (tx) => {
       const existing = (await tx.query(`SELECT 1 FROM shop_members WHERE user_id = $1`, [p.userId])).rowCount;
@@ -73,9 +73,9 @@ export class AccountsService {
 
       const shopId = uuidv7();
       await tx.query(
-        `INSERT INTO shops (id, name, mandi, shop_no, phad, gstin, created_by, join_code, phone)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT phone FROM users WHERE id = $7))`,
-        [shopId, shop.name, shop.mandi, shop.shopNo, shop.phad ?? '', shop.gstin, p.userId, await this.freshCode(tx)],
+        `INSERT INTO shops (id, name, mandi, shop_no, phad, gstin, created_by, join_code, phone, commodity)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT phone FROM users WHERE id = $7), $9)`,
+        [shopId, shop.name, shop.mandi, shop.shopNo, shop.phad ?? '', shop.gstin, p.userId, await this.freshCode(tx), shop.commodity ?? 'nariyal'],
       );
       await tx.query(`INSERT INTO shop_members (shop_id, user_id, role) VALUES ($1, $2, $3)`, [shopId, p.userId, shop.role]);
       // shop_counters is tenant-scoped: row-level security needs this transaction to be the new shop.
@@ -187,6 +187,14 @@ export class AccountsService {
     });
   }
 
+  /** Admin: what the shop sells — tender coconut or amrud. */
+  async setCommodity(p: Principal, commodity: string) {
+    return this.db.tx(async (tx) => {
+      await this.requireAdmin(tx, p);
+      await tx.query(`UPDATE shops SET commodity = $2 WHERE id = $1`, [p.shopId, commodity]);
+    });
+  }
+
   /** Admin: the mobile number printed on the shop's slips. */
   /** Admin: the shop's full address and bank accounts, printed at the head of every ledger. */
   async setLedgerDetails(p: Principal, address: string, bankAccounts: BankAccount[]) {
@@ -261,10 +269,10 @@ export class AccountsService {
   private async me(tx: Tx, p: Principal): Promise<MeView> {
     const { rows } = await tx.query<{
       user_id: string; phone: string; user_name: string; device_id: string; code: string | null;
-      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null; shop_phone: string | null; address: string | null; bank_accounts: BankAccount[] | null;
+      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null; shop_phone: string | null; address: string | null; bank_accounts: BankAccount[] | null; commodity: string | null;
     }>(
       `SELECT u.id AS user_id, u.phone, u.name AS user_name, d.id AS device_id, d.code,
-              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise, s.phone AS shop_phone, s.address, s.bank_accounts
+              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise, s.phone AS shop_phone, s.address, s.bank_accounts, s.commodity
        FROM devices d JOIN users u ON u.id = d.user_id
        LEFT JOIN shops s ON s.id = d.shop_id
        LEFT JOIN shop_members m ON m.shop_id = d.shop_id AND m.user_id = d.user_id
@@ -276,7 +284,7 @@ export class AccountsService {
       user: { id: r.user_id, phone: r.phone, name: r.user_name },
       device: { id: r.device_id, code: r.code },
       shop: r.shop_id
-        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0), phone: r.shop_phone ?? '', address: r.address ?? '', bankAccounts: r.bank_accounts ?? [] }
+        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0), phone: r.shop_phone ?? '', address: r.address ?? '', bankAccounts: r.bank_accounts ?? [], commodity: r.commodity ?? 'nariyal' }
         : null,
     };
   }

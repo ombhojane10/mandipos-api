@@ -97,6 +97,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       panni_name: text(40),
       packs: z.number().int().min(0).max(100_000).default(0),
       delivery: bool.default(false), staff_name: text(60),
+      // Amrud: the per-box chungi charged to the customer, already inside total_paise.
+      chungi_paise: paise.default(0),
     }),
   },
   // Udhaar not from a slip: a grahak's balance from the old book, or credit added by hand.

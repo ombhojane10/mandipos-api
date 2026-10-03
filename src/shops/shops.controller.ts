@@ -15,6 +15,8 @@ const CreateShopBody = z.object({
   gstin: z.string().trim().toUpperCase().max(15).default(''),
   role: z.enum(['owner', 'manager', 'munim']).default('owner'),
   ownerName: z.string().trim().max(80).default(''),
+  // What the shop sells. Tender coconut is every shop so far; amrud is sold on commission.
+  commodity: z.enum(['nariyal', 'amrud']).default('nariyal'),
 });
 
 const JoinBody = z.object({ code: z.string().regex(/^\d{6}$/, 'must be the 6-digit shop code') });
@@ -121,6 +123,13 @@ export class ShopsController {
     // A row with nothing typed in it is left out rather than printed blank.
     const accounts = b.bankAccounts.filter((a) => a.holder || a.bank || a.ifsc || a.account);
     await this.accounts.setLedgerDetails(p, b.address, accounts);
+  }
+
+  /** Admin: what the shop sells; every terminal follows it on its next /v1/me. */
+  @Post('commodity')
+  @HttpCode(204)
+  async commodity(@Me() p: Principal, @Body() body: unknown) {
+    await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(['nariyal', 'amrud']) }), body).commodity);
   }
 
   /** Admin: the mobile number printed on the shop's slips. */

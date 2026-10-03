@@ -134,6 +134,46 @@ describe('team', () => {
   });
 });
 
+describe('amrud', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('keeps the commodity on the shop, admin-only to change, and syncs a slip\'s chungi', async () => {
+    // Every shop registered without saying is tender coconut.
+    const nariyal = await registerShop('9833300001', 'Nariyal Shop');
+    expect(nariyal.me.shop.commodity).toBe('nariyal');
+
+    const s = await login('9833300002');
+    const res = await http().post('/v1/shops').set(auth(s.accessToken))
+      .send({ name: 'Amrud Shop', mandi: 'Azadpur', shopNo: '9', role: 'owner', commodity: 'amrud' }).expect(201);
+    const owner = res.body.accessToken as string;
+    expect(res.body.me.shop.commodity).toBe('amrud');
+    await http().post('/v1/shops').set(auth((await login('9833300003')).accessToken))
+      .send({ name: 'X', commodity: 'seb' }).expect(400);
+
+    await http().post('/v1/shops/members').set(auth(owner)).send({ phone: '9833300004' }).expect(204);
+    const munim = await login('9833300004');
+    expect(munim.me.shop.commodity).toBe('amrud');
+    await http().post('/v1/shops/commodity').set(auth(munim.accessToken)).send({ commodity: 'nariyal' }).expect(403);
+    await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'nariyal' }).expect(204);
+    expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.commodity).toBe('nariyal');
+    await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'amrud' }).expect(204);
+
+    // 20 boxes at ₹300 plus ₹10 a box chungi: the slip owes ₹6,200, of which ₹200 is chungi.
+    const t = new Date().toISOString();
+    const brandId = uuidv7(), truckId = uuidv7(), billId = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Jhatu', sort_order: 1, shelf_days: 7 } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'ASHU', supplier: 'Ashu', arrived_at: t } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 300, received_qty: 300, rate_paise: 0 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 620000, paid_paise: 620000, cash_paise: 620000, labour_paise: 10000, chungi_paise: 20000, slip_no: 1, truck_id: truckId } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 20, rate_paise: 30000 } },
+    ] }).expect(200);
+    expect(pushed.body.results.map((r: any) => r.status)).toEqual(Array(5).fill('applied'));
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200);
+    expect(pulled.body.changes.find((c: any) => c.table === 'bills').row).toMatchObject({ total_paise: 620000, chungi_paise: 20000 });
+  });
+});
+
 describe('slip limit', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
