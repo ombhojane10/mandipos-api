@@ -653,6 +653,35 @@ describe('sync', () => {
     expect(bad.body.results[0].status).toBe('rejected');
   });
 
+  it('keeps market udhaar on a grahak and leaves it alone when an older terminal edits them', async () => {
+    const t1 = new Date(Date.now() + 360_000).toISOString();
+    const t2 = new Date(Date.now() + 420_000).toISOString();
+    const res = await push(owner.accessToken, [
+      { table: 'buyers', row: { id: buyerId, created_at: now(), updated_at: t1, name: 'Buyer One', phone: '9811111111', market_paise: 3_850_000 } },
+      { table: 'buyers', row: { id: buyerId, created_at: now(), updated_at: t2, name: 'Buyer One', phone: '9811111111' } },
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set('Authorization', `Bearer ${owner.accessToken}`).expect(200);
+    expect(pulled.body.changes.filter((c: any) => c.table === 'buyers').pop().row).toMatchObject({ market_paise: 3_850_000 });
+  });
+
+  it('shares a grahak photo across the shop, and only the shop', async () => {
+    const auth = { Authorization: `Bearer ${owner.accessToken}` };
+    await http().get(`/v1/buyers/${buyerId}/photo`).set(auth).expect(404);
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 7)]);
+    await http().put(`/v1/buyers/${buyerId}/photo`).set(auth).send({ image: Buffer.from('not a jpeg').toString('base64') }).expect(400);
+    const put = await http().put(`/v1/buyers/${buyerId}/photo`).set(auth).send({ image: jpeg.toString('base64') }).expect(200);
+    const got = await http().get(`/v1/buyers/${buyerId}/photo`).set(auth).buffer(true)
+      .parse((r, cb) => { const b: Buffer[] = []; r.on('data', (c: Buffer) => b.push(c)); r.on('end', () => cb(null, Buffer.concat(b))); })
+      .expect(200);
+    expect(Buffer.compare(got.body, jpeg)).toBe(0);
+    await http().get(`/v1/buyers/${buyerId}/photo?since=${encodeURIComponent(put.body.updatedAt)}`).set(auth).expect(304);
+    await http().put(`/v1/buyers/${uuidv7()}/photo`).set(auth).send({ image: jpeg.toString('base64') }).expect(404);
+    const other = await registerShop('9800000006', 'Shop Three');
+    await http().get(`/v1/buyers/${buyerId}/photo`).set({ Authorization: `Bearer ${other.accessToken}` }).expect(404);
+    await http().put(`/v1/buyers/${buyerId}/photo`).set({ Authorization: `Bearer ${other.accessToken}` }).send({ image: jpeg.toString('base64') }).expect(404);
+  });
+
   it('never shows or accepts another shop’s data', async () => {
     const other = await registerShop('9800000005', 'Shop Two');
     const pulled = await http().get('/v1/sync/pull').set('Authorization', `Bearer ${other.accessToken}`).expect(200);

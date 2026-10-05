@@ -55,6 +55,9 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       // UID of the RFID card the grahak carries (hex, as the terminal reads it); '' = none.
       // Optional for the same reason as code: an older terminal never unlinks a card.
       card: z.string().trim().toUpperCase().max(32).regex(/^[0-9A-F]*$/).optional(),
+      // What they owe the rest of the mandi, as the shop knows it; null = not known.
+      // Optional for the same reason as code: an older terminal never wipes it.
+      market_paise: paise.nullable().optional(),
     }),
   },
   trucks: {
