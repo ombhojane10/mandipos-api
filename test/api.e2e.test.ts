@@ -393,6 +393,33 @@ describe('udhaar alerts', () => {
   });
 });
 
+describe('app updates', () => {
+  it('tells a logged-in device the newest build of its flavor and serves exactly those bytes', async () => {
+    await http().get('/v1/app/latest?flavor=pos').expect(401);
+    const s = await login('9811100099');
+    const auth = { Authorization: `Bearer ${s.accessToken}` };
+    expect((await http().get('/v1/app/latest?flavor=pos').set(auth).expect(200)).body).toEqual({ release: null });
+
+    const apk = Buffer.from('PK\u0003\u0004 not really an apk but bytes all the same');
+    const sha = require('node:crypto').createHash('sha256').update(apk).digest('hex');
+    await owner(`INSERT INTO app_releases (flavor, version_code, version_name, sha256, size_bytes, apk) VALUES
+      ('pos', 80, '0.39.0', '${'0'.repeat(64)}', 3, '\\x000102'),
+      ('pos', 81, '0.40.0', '${sha}', ${apk.length}, '\\x${apk.toString('hex')}'),
+      ('daybook', 90, '0.9.0', '${'1'.repeat(64)}', 3, '\\x000102')`);
+
+    const latest = await http().get('/v1/app/latest?flavor=pos').set(auth).expect(200);
+    expect(latest.body.release).toMatchObject({ versionCode: 81, versionName: '0.40.0', sha256: sha, sizeBytes: apk.length });
+    await http().get('/v1/app/latest?flavor=other').set(auth).expect(400);
+
+    const got = await http().get('/v1/app/apk?flavor=pos&versionCode=81').set(auth).buffer(true)
+      .parse((res, cb) => { const parts: Buffer[] = []; res.on('data', (c: Buffer) => parts.push(c)); res.on('end', () => cb(null, Buffer.concat(parts))); })
+      .expect(200);
+    expect(got.headers['content-type']).toBe('application/vnd.android.package-archive');
+    expect(Buffer.compare(got.body as Buffer, apk)).toBe(0);
+    await http().get('/v1/app/apk?flavor=pos&versionCode=79').set(auth).expect(404);
+  });
+});
+
 describe('health', () => {
   it('answers without touching the database', async () => {
     const res = await http().get('/healthz').expect(200);

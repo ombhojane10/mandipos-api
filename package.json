@@ -12,6 +12,7 @@
     "start": "node dist/main.js",
     "dev": "tsc -p tsconfig.build.json && node --env-file=.env dist/main.js",
     "migrate": "node scripts/migrate.mjs",
+    "publish-apk": "node scripts/publish-apk.mjs",
     "test": "jest --runInBand"
   },
   "jest": {
