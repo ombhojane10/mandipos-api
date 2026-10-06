@@ -142,8 +142,6 @@ export class KycService {
         pan = { status: 'failed', note: String(err.message), pdf: null };
       }
     }
-    this.pending.delete(input.kycId);
-
     const row = await this.db.withShop(shopId, async (tx) => {
       await member(tx, p, shopId);
       const { rows } = await tx.query<KycRow>(
@@ -168,6 +166,8 @@ export class KycService {
       if (!rows[0]) throw new NotFoundException('Yeh grahak nahi mila');
       return rows[0];
     });
+    // Only now: a failed save can be retried with the same OTP while the token lasts.
+    this.pending.delete(input.kycId);
     this.log.log(`KYC saved for buyer ${buyerId} (${s.staging ? 'staging' : 'production'}, pan ${pan.status})`);
     return view(row);
   }
