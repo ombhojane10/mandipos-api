@@ -19,6 +19,18 @@ envVarGroups:
         sync: false
       - key: TWOFACTOR_OTP_TEMPLATE_NAME
         sync: false
+      # Grahak eKYC through ULIP DigiLocker (same ULIP account and Mumbai proxy as MandiPlus).
+      # A staging ULIP_BASE_URL makes every KYC a test one (no SMS, KYC_TEST_OTP).
+      - key: ULIP_BASE_URL
+        sync: false
+      - key: ULIP_USERNAME
+        sync: false
+      - key: ULIP_PASSWORD
+        sync: false
+      - key: ULIP_PROXY_URL
+        sync: false
+      - key: KYC_DATA_KEY          # seals e-Aadhaar XML, photo, PAN record; never rotate without re-sealing
+        generateValue: true
 
 services:
   - type: web

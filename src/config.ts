@@ -26,6 +26,23 @@ const schema = z
     WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
     UDHAAR_ALERT_TEMPLATE: z.string().default('udhaar_baaki_reminder_v1'),
     UDHAAR_ALERT_LANG: z.string().default('hi'),
+    /**
+     * Grahak eKYC through ULIP's DigiLocker APIs (same account as the MandiPlus backend).
+     * Unset = the eKYC screen says it is not switched on. A staging URL means test KYCs:
+     * no SMS goes out and KYC_TEST_OTP is the OTP.
+     */
+    ULIP_BASE_URL: z.string().optional(),
+    ULIP_USERNAME: z.string().optional(),
+    ULIP_PASSWORD: z.string().optional(),
+    // http://user:pass@host:3128 — the Mumbai proxy whose IP ULIP whitelists.
+    ULIP_PROXY_URL: z.string().optional(),
+    KYC_TEST_OTP: z.string().regex(/^\d{6}$/).default('123456'),
+    // Encrypts the e-Aadhaar XML, photo and PAN record at rest. Required once ULIP is set.
+    KYC_DATA_KEY: z.string().min(32).optional(),
+  })
+  .refine((c) => !c.ULIP_BASE_URL || !!c.KYC_DATA_KEY, {
+    message: 'KYC_DATA_KEY is required when ULIP_BASE_URL is set',
+    path: ['KYC_DATA_KEY'],
   })
   .refine((c) => c.APP_ENV === 'local' || c.APP_ENV === 'test' || !!c.TWOFACTOR_API_KEY, {
     message: 'TWOFACTOR_API_KEY is required in staging and production',

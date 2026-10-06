@@ -8,6 +8,9 @@ import { TokensService } from './auth/tokens.service';
 import { Db } from './db/db.service';
 import { ReleasesController } from './app/releases.controller';
 import { HealthController } from './health/health.controller';
+import { KycController } from './kyc/kyc.controller';
+import { KycService } from './kyc/kyc.service';
+import { UlipClient } from './kyc/ulip.client';
 import { PrintController } from './print/print.controller';
 import { PrintService } from './print/print.service';
 import { PhotosController } from './shops/photos.controller';
@@ -18,7 +21,7 @@ import { SyncController } from './sync/sync.controller';
 import { SyncService } from './sync/sync.service';
 
 @Module({
-  controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController],
-  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService, UdhaarAlertsService],
+  controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, KycController],
+  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient],
 })
 export class AppModule {}

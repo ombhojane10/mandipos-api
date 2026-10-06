@@ -43,6 +43,10 @@ beforeAll(async () => {
     JWT_SECRET: 'test-secret-test-secret-test-secret-123',
     OTP_HASH_SECRET: 'test-otp-secret-123',
     OTP_TEST_LOGINS: '9000000000:123456',
+    ULIP_BASE_URL: 'https://ulip.staging.invalid/ulip/v1.0.0',
+    ULIP_USERNAME: 'test',
+    ULIP_PASSWORD: 'test',
+    KYC_DATA_KEY: 'test-kyc-key-test-kyc-key-test-kyc-key',
   });
 
   const { AppModule } = await import('../src/app.module');
@@ -707,6 +711,66 @@ describe('sync', () => {
     const other = await registerShop('9800000006', 'Shop Three');
     await http().get(`/v1/buyers/${buyerId}/photo`).set({ Authorization: `Bearer ${other.accessToken}` }).expect(404);
     await http().put(`/v1/buyers/${buyerId}/photo`).set({ Authorization: `Bearer ${other.accessToken}` }).send({ image: jpeg.toString('base64') }).expect(404);
+  });
+
+  it('does a grahak eKYC: Aadhaar check, OTP, e-Aadhaar and PAN saved sealed, fingers as metadata only', async () => {
+    const { UlipClient } = await import('../src/kyc/ulip.client');
+    const calls: string[] = [];
+    // A made-up person: UIDAI masks the number, the photo is a JPEG header.
+    const photo = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32, 1)]).toString('base64');
+    const xml = `<?xml version="1.0"?><Certificate><CertificateData><KycRes code="x" ret="Y" ts="2026-10-06T10:00:00.000+05:30" ttl="2027-10-06" txn="t">` +
+      `<UidData tkn="t" uid="xxxxxxxx0019"><Poi dob="01-01-1990" gender="M" name="Ramesh Kumar"/>` +
+      `<Poa co="S/O Suresh" country="India" dist="North West Delhi" house="12" lm="" loc="Azadpur" pc="110033" state="Delhi" street="Mandi Road" vtc="Delhi"/>` +
+      `<Pht>${photo}</Pht></UidData></KycRes></CertificateData></Certificate>`;
+    app.get(UlipClient).post = async (path: string, body: Record<string, unknown>) => {
+      calls.push(path);
+      if (path === '/DIGILOCKER/01') return body.name === 'Wrong Name' ? { error: 'uid_mismatch', error_description: 'Demographic data mismatch' } : { code: 'c1', code_verifier: 'v1', code_challenge: 'h1' };
+      if (path === '/DIGILOCKER/03') return { access_token: 'tok', eaadhaar: 'Y', mobile: '9811112222' };
+      if (path === '/DIGILOCKER/05') return { eaadhaarData: xml };
+      if (path === '/DIGILOCKER/04') return body.panno === 'ABCDE1234F' ? { mime: 'application/pdf', data: Buffer.from('%PDF-1.4').toString('base64') } : { error: 'not_found', error_description: 'PAN not found' };
+      throw new Error(path);
+    };
+    const auth = { Authorization: `Bearer ${owner.accessToken}` };
+    // 2345 6789 0124 passes the Verhoeff check; the last digit changed fails it.
+    const start = { uid: '2345 6789 0124', name: 'Ramesh Kumar', dob: '01/01/1990', gender: 'M', mobile: '9811112222', pan: 'abcde1234f', consent: true,
+      fingers: [{ finger: 'RIGHT_THUMB', qScore: 81, nmPoints: 42, device: 'MFS110 1234' }] };
+
+    await http().get(`/v1/buyers/${buyerId}/kyc`).set(auth).expect(404);
+    await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, uid: '234567890125' }).expect(400);
+    await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, consent: false }).expect(400);
+    const mismatch = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, name: 'Wrong Name' }).expect(400);
+    expect(mismatch.body.message).toContain('match nahi');
+
+    const started = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send(start).expect(200);
+    expect(started.body).toMatchObject({ otpTo: '••••••2222', testOtp: '123456' });
+    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '000000' }).expect(400);
+    const other = await registerShop('9800000007', 'Shop Four');
+    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set({ Authorization: `Bearer ${other.accessToken}` }).send({ kycId: started.body.kycId, otp: '123456' }).expect(400);
+    const done = await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '123456' }).expect(200);
+    expect(done.body).toMatchObject({
+      source: 'ulip-staging', aadhaarLast4: '0019', name: 'Ramesh Kumar', dob: '01-01-1990', gender: 'M', careOf: 'S/O Suresh',
+      address: '12, Mandi Road, Azadpur, Delhi, North West Delhi - 110033', photo, pan: { last4: '234F', status: 'verified' },
+      fingers: [{ finger: 'RIGHT_THUMB', qScore: 81 }],
+    });
+    expect(calls).toEqual(['/DIGILOCKER/01', '/DIGILOCKER/01', '/DIGILOCKER/03', '/DIGILOCKER/05', '/DIGILOCKER/04']);
+    // A used session is gone.
+    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '123456' }).expect(400);
+    await http().get(`/v1/buyers/${buyerId}/kyc`).set(auth).expect(200);
+    await http().get(`/v1/buyers/${buyerId}/kyc`).set({ Authorization: `Bearer ${other.accessToken}` }).expect(404);
+
+    // At rest: no Aadhaar number, no readable XML.
+    const c = new Client({ connectionString: OWNER_URL });
+    await c.connect();
+    try {
+      const row = (await c.query(`SELECT * FROM buyer_kyc WHERE buyer_id = $1`, [buyerId])).rows[0];
+      expect(JSON.stringify(row)).not.toContain('234567890124');
+      expect(row.eaadhaar_sealed.toString('latin1')).not.toContain('Ramesh');
+    } finally { await c.end(); }
+
+    // A PAN DigiLocker doesn't know still saves the Aadhaar KYC, with the PAN marked failed.
+    const again = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, pan: 'ZZZZZ9999Z' }).expect(200);
+    const redo = await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: again.body.kycId, otp: '123456' }).expect(200);
+    expect(redo.body.pan).toMatchObject({ last4: '999Z', status: 'failed' });
   });
 
   it('never shows or accepts another shop’s data', async () => {
