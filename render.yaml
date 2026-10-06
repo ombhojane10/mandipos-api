@@ -34,6 +34,11 @@ envVarGroups:
         sync: false
       - key: SUREPASS_TOKEN
         sync: false
+      # DigiLocker through Sandbox.co.in (live keys from console > API Keys). Set = Sandbox opens new sessions.
+      - key: SANDBOX_API_KEY
+        sync: false
+      - key: SANDBOX_API_SECRET
+        sync: false
       - key: KYC_DATA_KEY          # seals e-Aadhaar XML, photo, PAN record; never rotate without re-sealing
         generateValue: true
 

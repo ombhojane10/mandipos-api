@@ -5,7 +5,9 @@ import { config } from '../config';
 import { Db } from '../db/db.service';
 import { KycRow, member, shopOf, view } from './kyc.service';
 import { seal } from './seal';
-import { SurepassAadhaar, SurepassClient, SurepassError } from './surepass.client';
+import { DigilockerProvider, ProviderError } from './digilocker.provider';
+import { SandboxDigilockerClient } from './sandbox.client';
+import { SurepassClient } from './surepass.client';
 
 export const DIGILOCKER_CONSENT =
   'The customer signed in to DigiLocker and allowed the shop to fetch their Aadhaar (and PAN, if in DigiLocker) for KYC.';
@@ -26,12 +28,13 @@ export const DigilockerCompleteBody = z.object({
   fingers: z.array(Finger).max(10).default([]),
 });
 
-type Pending = { shopId: string; buyerId: string; userId: string; deviceId: string; consentAt: Date; expires: number };
+type Pending = { shopId: string; buyerId: string; userId: string; deviceId: string; consentAt: Date; expires: number; provider: DigilockerProvider };
 
 /**
- * eKYC on DigiLocker's own sign-in page, through Surepass:
+ * eKYC on DigiLocker's own sign-in page, through a provider (Sandbox or Surepass; see
+ * KYC_DIGILOCKER_PROVIDER — Sandbox when its keys are set, else Surepass):
  *
- *   start     Surepass initialize → a hosted DigiLocker page (mobile prefilled). The terminal
+ *   start     provider session → a hosted DigiLocker page. The terminal
  *             opens it; the grahak signs in with their mobile or Aadhaar and the OTP that
  *             DigiLocker sends them, and allows sharing. DigiLocker then sends them to
  *             PUBLIC_URL/v1/kyc/digilocker/done, which the terminal watches for.
@@ -46,11 +49,18 @@ export class DigilockerKycService {
   private readonly log = new Logger('DigilockerKyc');
   private readonly pending = new Map<string, Pending>();
 
-  constructor(private readonly db: Db, private readonly surepass: SurepassClient) {}
+  constructor(private readonly db: Db, private readonly surepass: SurepassClient, private readonly sandbox: SandboxDigilockerClient) {}
+
+  /** The provider new sessions open with. */
+  private get provider(): DigilockerProvider {
+    const choice = config().KYC_DIGILOCKER_PROVIDER ?? (this.sandbox.configured ? 'sandbox' : 'surepass');
+    return choice === 'sandbox' ? this.sandbox : this.surepass;
+  }
 
   async start(p: Principal, buyerId: string, input: z.infer<typeof DigilockerStartBody>) {
     const shopId = shopOf(p);
-    if (!this.surepass.configured) throw new ServiceUnavailableException('DigiLocker eKYC is not enabled');
+    const provider = this.provider;
+    if (!provider.configured) throw new ServiceUnavailableException('DigiLocker eKYC is not enabled');
     const buyer = await this.db.withShop(shopId, async (tx) => {
       await member(tx, p, shopId);
       return (await tx.query<{ name: string; phone: string }>(`SELECT name, phone FROM buyers WHERE id = $1`, [buyerId])).rows[0];
@@ -58,12 +68,12 @@ export class DigilockerKycService {
     if (!buyer) throw new NotFoundException('Customer not synced yet. Connect to the internet and try again.');
     this.sweep();
     const mobile = input.mobile || buyer.phone.replace(/\D/g, '').slice(-10);
-    const s = await this.call(() => this.surepass.initialize({
+    const s = await this.call(() => provider.initialize({
       mobile: /^[6-9]\d{9}$/.test(mobile) ? mobile : undefined,
       redirectUrl: `${config().PUBLIC_URL.replace(/\/+$/, '')}/v1/kyc/digilocker/done`,
       state: buyerId,
     }));
-    this.pending.set(s.clientId, { shopId, buyerId, userId: p.userId, deviceId: p.deviceId, consentAt: new Date(), expires: Date.now() + PENDING_TTL_MS });
+    this.pending.set(s.clientId, { shopId, buyerId, userId: p.userId, deviceId: p.deviceId, consentAt: new Date(), expires: Date.now() + PENDING_TTL_MS, provider });
     return { clientId: s.clientId, url: s.url, doneUrl: '/v1/kyc/digilocker/done', expiresIn: s.expirySeconds };
   }
 
@@ -73,20 +83,17 @@ export class DigilockerKycService {
     const s = this.pending.get(input.clientId);
     if (!s || s.shopId !== shopId || s.buyerId !== buyerId) throw new GoneException('Session expired. Start eKYC again.');
 
-    const st = await this.call(() => this.surepass.status(input.clientId));
+    const st = await this.call(() => s.provider.status(input.clientId));
     if (st.failed) { this.pending.delete(input.clientId); throw new BadRequestException(st.error || 'DigiLocker sign-in failed. Try again.'); }
     if (!st.completed) throw new ConflictException('DigiLocker sign-in not finished yet');
     if (!st.aadhaarLinked) { this.pending.delete(input.clientId); throw new BadRequestException('Aadhaar is not linked in this customer\'s DigiLocker.'); }
 
-    const a = await this.call(() => this.surepass.downloadAadhaar(input.clientId));
-    const x = a.aadhaar_xml_data ?? {};
-    const last4 = (x.masked_aadhaar ?? '').replace(/\D/g, '').slice(-4);
-    if (!/^\d{4}$/.test(last4)) throw new HttpException('DigiLocker returned no Aadhaar. Try again.', HttpStatus.BAD_GATEWAY);
-
-    // The signed XML as DigiLocker issued it; the parsed answer if it can't be fetched.
-    const proof = a.xml_url ? await this.surepass.fetchBytes(a.xml_url).catch(() => null) : null;
-    const photo = x.profile_image ? Buffer.from(x.profile_image, 'base64') : null;
-    const pan = await this.pan(input.clientId);
+    const a = await this.call(() => s.provider.aadhaar(input.clientId));
+    if (!/^\d{4}$/.test(a.last4)) throw new HttpException('DigiLocker returned no Aadhaar. Try again.', HttpStatus.BAD_GATEWAY);
+    const pan = await s.provider.pan(input.clientId, st).catch((err: Error) => {
+      this.log.warn(`PAN fetch failed: ${err.message}`);
+      return { status: 'none' as const, number: '', note: '', file: null };
+    });
 
     const row = await this.db.withShop(shopId, async (tx) => {
       await member(tx, p, shopId);
@@ -104,12 +111,8 @@ export class DigilockerKycService {
            consent_at = EXCLUDED.consent_at, verified_by = EXCLUDED.verified_by, device_id = EXCLUDED.device_id,
            verified_at = now()
          RETURNING *`,
-        [buyerId, shopId, this.surepass.sandbox ? 'surepass-sandbox' : 'surepass', last4,
-          x.full_name || a.digilocker_metadata?.name || '', dmy(x.dob || a.digilocker_metadata?.dob || ''),
-          x.gender || a.digilocker_metadata?.gender || '', x.care_of || '', x.full_address || '', x.zip || '',
-          photo && photo.length > 3 ? seal(photo) : null,
-          seal(proof ?? Buffer.from(JSON.stringify(a), 'utf8')),
-          (a.digilocker_metadata?.mobile_number ?? '').replace(/\D/g, '').slice(-10),
+        [buyerId, shopId, s.provider.source, a.last4, a.name, a.dob, a.gender, a.careOf, a.address, a.pincode,
+          a.photo ? seal(a.photo) : null, seal(a.proof), a.mobile,
           pan.number ? pan.number.slice(-4) : null, pan.status, pan.note, pan.file ? seal(pan.file) : null,
           JSON.stringify(input.fingers), DIGILOCKER_CONSENT, s.consentAt, s.userId, s.deviceId],
       );
@@ -117,33 +120,19 @@ export class DigilockerKycService {
       return rows[0];
     });
     this.pending.delete(input.clientId);
-    this.log.log(`DigiLocker KYC saved for buyer ${buyerId} (${this.surepass.sandbox ? 'sandbox' : 'production'}, pan ${pan.status})`);
+    this.log.log(`DigiLocker KYC saved for buyer ${buyerId} (${s.provider.source}, pan ${pan.status})`);
     return view(row);
-  }
-
-  /** PAN, if DigiLocker holds it: its XML gives the number. Missing PAN is not an error. */
-  private async pan(clientId: string): Promise<{ status: 'none' | 'verified' | 'failed'; number: string; note: string; file: Buffer | null }> {
-    try {
-      const docs = await this.surepass.listDocuments(clientId);
-      const xml = docs.find((d) => d.doc_type === 'PANCR' && (d.file_type === 'xml' || d.file_id === 'pan'));
-      if (!xml) return { status: 'none', number: '', note: '', file: null };
-      const file = await this.surepass.downloadDocument(clientId, xml.file_id);
-      const number = /\b([A-Z]{5}\d{4}[A-Z])\b/.exec(file.toString('utf8'))?.[1] ?? '';
-      return number ? { status: 'verified', number, note: '', file } : { status: 'failed', number: '', note: 'PAN record unreadable', file };
-    } catch (err) {
-      this.log.warn(`PAN fetch failed: ${(err as Error).message}`);
-      return { status: 'none', number: '', note: '', file: null };
-    }
   }
 
   private async call<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (err) {
-      if (!(err instanceof SurepassError)) throw err;
-      if (err.code === 'client_not_found' || err.code === 'digilocker_client_not_found') throw new GoneException('Session expired. Start eKYC again.');
-      if (err.status === 422) throw new GoneException('This DigiLocker session was already used. Start eKYC again.');
-      if (err.status === 401 || err.status === 403) throw new ServiceUnavailableException('DigiLocker eKYC is not set up (Surepass access).');
+      if (!(err instanceof ProviderError)) throw err;
+      if (err.gone) throw new GoneException('Session expired. Start eKYC again.');
+      if (err.status === 401 || err.status === 403) throw new ServiceUnavailableException('DigiLocker eKYC is not set up (provider access).');
+      if (err.status === 402) throw new ServiceUnavailableException('DigiLocker eKYC wallet is empty. Recharge the provider wallet.');
+      if (err.status === 404) throw new BadRequestException('Aadhaar is not in this customer\'s DigiLocker.');
       throw new HttpException('DigiLocker is not responding. Try again shortly.', HttpStatus.BAD_GATEWAY);
     }
   }
@@ -153,11 +142,3 @@ export class DigilockerKycService {
     for (const [id, s] of this.pending) if (s.expires < now) this.pending.delete(id);
   }
 }
-
-/** Surepass sends YYYY-MM-DD; the KYC shows DD-MM-YYYY like UIDAI's XML. */
-function dmy(d: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
-  return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
-}
-
-export type { SurepassAadhaar };

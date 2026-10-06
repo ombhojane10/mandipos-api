@@ -45,8 +45,21 @@ const schema = z
      */
     SUREPASS_BASE_URL: z.string().default('https://sandbox.surepass.app'),
     SUREPASS_TOKEN: z.string().optional(),
+    /**
+     * The same DigiLocker eKYC through Sandbox.co.in (console.sandbox.co.in > API Keys).
+     * key_live_/secret_live_ with api.sandbox.co.in; test keys only answer saved examples.
+     */
+    SANDBOX_BASE_URL: z.string().default('https://api.sandbox.co.in'),
+    SANDBOX_API_KEY: z.string().optional(),
+    SANDBOX_API_SECRET: z.string().optional(),
+    // Which provider opens new DigiLocker sessions; unset = Sandbox when its keys are set, else Surepass.
+    KYC_DIGILOCKER_PROVIDER: z.enum(['sandbox', 'surepass']).optional(),
     // Where DigiLocker sends the grahak back; the terminal closes its page on this address.
     PUBLIC_URL: z.string().default('https://mandipos-api.onrender.com'),
+  })
+  .refine((c) => !c.SANDBOX_API_KEY || !!c.KYC_DATA_KEY, {
+    message: 'KYC_DATA_KEY is required when SANDBOX_API_KEY is set',
+    path: ['KYC_DATA_KEY'],
   })
   .refine((c) => !c.SUREPASS_TOKEN || !!c.KYC_DATA_KEY, {
     message: 'KYC_DATA_KEY is required when SUREPASS_TOKEN is set',

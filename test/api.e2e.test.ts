@@ -821,6 +821,55 @@ describe('sync', () => {
     expect(page.text).toContain('Return to the app');
   });
 
+  it('talks to Sandbox.co.in DigiLocker as documented: auth without Bearer, sign-in session, Aadhaar XML parsed, PAN only when shared', async () => {
+    const { SandboxDigilockerClient } = await import('../src/kyc/sandbox.client');
+    const photo = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16, 3)]).toString('base64');
+    const xml = `<?xml version="1.0"?><Certificate><CertificateData><KycRes code="x" ret="Y" ts="2026-10-06T10:00:00" ttl="2027" txn="t">` +
+      `<UidData tkn="t" uid="xxxxxxxx7788"><Poi dob="02-02-1980" gender="M" name="Mohan Lal"/>` +
+      `<Poa co="S/O Hari" country="India" dist="Jaipur" house="4" lm="" loc="Muhana" pc="302029" state="Rajasthan" street="Mandi Rd" vtc="Jaipur"/>` +
+      `<Pht>${photo}</Pht></UidData></KycRes></CertificateData></Certificate>`;
+    const seen: { url: string; method: string; headers: Record<string, string>; body?: any }[] = [];
+    let consented = ['aadhaar'];
+    const real = global.fetch;
+    global.fetch = (async (input: any, init: any = {}) => {
+      const url = String(input);
+      seen.push({ url, method: init.method ?? 'GET', headers: init.headers ?? {}, body: init.body ? JSON.parse(init.body) : undefined });
+      const json = (code: number, data: unknown) => new Response(JSON.stringify({ code, data, message: code >= 400 ? 'nope' : undefined }), { status: code });
+      if (url.endsWith('/authenticate')) return json(200, { access_token: 'jwt-1' });
+      if (url.endsWith('/kyc/digilocker/sessions/init')) return json(200, { session_id: 'sess-1', authorization_url: 'https://digilocker.meripehchaan.gov.in/x' });
+      if (url.endsWith('/sessions/sess-1/status')) return json(200, { status: 'succeeded', documents_consented: consented });
+      if (url.endsWith('/sessions/sess-1/documents/aadhaar')) return json(200, { files: [{ url: 'https://s3.example/a.xml', metadata: { ContentType: 'application/xml' } }] });
+      if (url.endsWith('/sessions/sess-1/documents/pan')) return json(200, { files: [{ url: 'https://s3.example/p.xml', metadata: { ContentType: 'application/xml' } }] });
+      if (url.endsWith('/sessions/sess-1/user/profile')) return json(200, { mobile: '9822223333', name: 'Mohan Lal' });
+      if (url === 'https://s3.example/a.xml') return new Response(xml, { status: 200 });
+      if (url === 'https://s3.example/p.xml') return new Response('<Certificate type="PANCR" number="PQRSX6789K"/>', { status: 200 });
+      return json(404, null);
+    }) as typeof fetch;
+    try {
+      const c = new SandboxDigilockerClient();
+      const s = await c.initialize({ redirectUrl: 'https://x/v1/kyc/digilocker/done', state: 'b1' });
+      expect(s).toMatchObject({ clientId: 'sess-1', url: 'https://digilocker.meripehchaan.gov.in/x' });
+      const init = seen.find((r) => r.url.endsWith('/sessions/init'))!;
+      expect(init.headers.Authorization).toBe('jwt-1');
+      expect(init.body).toMatchObject({ '@entity': 'in.co.sandbox.kyc.digilocker.session.request', flow: 'signin', doc_types: ['aadhaar', 'pan'], options: { pinless: true } });
+
+      const st = await c.status('sess-1');
+      expect(st).toMatchObject({ completed: true, failed: false, aadhaarLinked: true, documents: ['aadhaar'] });
+      const a = await c.aadhaar('sess-1');
+      expect(a).toMatchObject({ last4: '7788', name: 'Mohan Lal', dob: '02-02-1980', gender: 'M', careOf: 'S/O Hari', pincode: '302029', mobile: '9822223333' });
+      expect(a.photo?.toString('base64')).toBe(photo);
+      // No PAN shared: no (charged) fetch.
+      expect(await c.pan('sess-1', st)).toMatchObject({ status: 'none' });
+      expect(seen.some((r) => r.url.endsWith('/documents/pan'))).toBe(false);
+      consented = ['aadhaar', 'pan'];
+      expect(await c.pan('sess-1', await c.status('sess-1'))).toMatchObject({ status: 'verified', number: 'PQRSX6789K' });
+      // One login for all of it.
+      expect(seen.filter((r) => r.url.endsWith('/authenticate'))).toHaveLength(1);
+    } finally {
+      global.fetch = real;
+    }
+  });
+
   it('never shows or accepts another shop’s data', async () => {
     const other = await registerShop('9800000005', 'Shop Two');
     const pulled = await http().get('/v1/sync/pull').set('Authorization', `Bearer ${other.accessToken}`).expect(200);

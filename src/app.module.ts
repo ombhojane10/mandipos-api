@@ -10,6 +10,7 @@ import { ReleasesController } from './app/releases.controller';
 import { HealthController } from './health/health.controller';
 import { DigilockerReturnController, KycController } from './kyc/kyc.controller';
 import { DigilockerKycService } from './kyc/digilocker.service';
+import { SandboxDigilockerClient } from './kyc/sandbox.client';
 import { SurepassClient } from './kyc/surepass.client';
 import { KycService } from './kyc/kyc.service';
 import { UlipClient } from './kyc/ulip.client';
@@ -24,6 +25,6 @@ import { SyncService } from './sync/sync.service';
 
 @Module({
   controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, KycController, DigilockerReturnController],
-  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient],
+  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
 })
 export class AppModule {}
