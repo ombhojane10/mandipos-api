@@ -739,13 +739,13 @@ describe('sync', () => {
     await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, uid: '234567890125' }).expect(400);
     await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, consent: false }).expect(400);
     const mismatch = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, name: 'Wrong Name' }).expect(400);
-    expect(mismatch.body.message).toContain('match nahi');
+    expect(mismatch.body.message).toContain('do not match');
 
     const started = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send(start).expect(200);
     expect(started.body).toMatchObject({ otpTo: '••••••2222', testOtp: '123456' });
     await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '000000' }).expect(400);
     const other = await registerShop('9800000007', 'Shop Four');
-    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set({ Authorization: `Bearer ${other.accessToken}` }).send({ kycId: started.body.kycId, otp: '123456' }).expect(400);
+    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set({ Authorization: `Bearer ${other.accessToken}` }).send({ kycId: started.body.kycId, otp: '123456' }).expect(410);
     const done = await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '123456' }).expect(200);
     expect(done.body).toMatchObject({
       source: 'ulip-staging', aadhaarLast4: '0019', name: 'Ramesh Kumar', dob: '01-01-1990', gender: 'M', careOf: 'S/O Suresh',
@@ -754,7 +754,7 @@ describe('sync', () => {
     });
     expect(calls).toEqual(['/DIGILOCKER/01', '/DIGILOCKER/01', '/DIGILOCKER/03', '/DIGILOCKER/05', '/DIGILOCKER/04']);
     // A used session is gone.
-    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '123456' }).expect(400);
+    await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '123456' }).expect(410);
     await http().get(`/v1/buyers/${buyerId}/kyc`).set(auth).expect(200);
     await http().get(`/v1/buyers/${buyerId}/kyc`).set({ Authorization: `Bearer ${other.accessToken}` }).expect(404);
 

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, GoneException, HttpException, HttpStatus, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { OtpService } from '../auth/otp.service';
@@ -18,12 +18,12 @@ const PENDING_TTL_MS = 10 * 60_000;
 const MAX_OTP_TRIES = 5;
 
 export const StartBody = z.object({
-  uid: z.string().transform((s) => s.replace(/\D/g, '')).pipe(z.string().regex(/^[2-9]\d{11}$/, 'Aadhaar 12 ankon ka hota hai')).refine(verhoeff, 'Aadhaar number galat hai'),
+  uid: z.string().transform((s) => s.replace(/\D/g, '')).pipe(z.string().regex(/^[2-9]\d{11}$/, 'Aadhaar must be 12 digits')).refine(verhoeff, 'Invalid Aadhaar number'),
   name: z.string().trim().min(2).max(99),
-  dob: z.string().transform((s) => s.replace(/\D/g, '')).pipe(z.string().regex(/^\d{8}$/, 'Janam tithi DD/MM/YYYY')).refine(validDob, 'Janam tithi galat hai'),
+  dob: z.string().transform((s) => s.replace(/\D/g, '')).pipe(z.string().regex(/^\d{8}$/, 'Date of birth must be DD/MM/YYYY')).refine(validDob, 'Invalid date of birth'),
   gender: z.enum(['M', 'F', 'T']),
-  mobile: z.string().transform((s) => s.replace(/\D/g, '').slice(-10)).pipe(z.string().regex(/^[6-9]\d{9}$/, 'Mobile 10 ankon ka')),
-  pan: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(/^([A-Z]{5}\d{4}[A-Z])?$/, 'PAN galat hai')).optional(),
+  mobile: z.string().transform((s) => s.replace(/\D/g, '').slice(-10)).pipe(z.string().regex(/^[6-9]\d{9}$/, 'Mobile must be 10 digits')),
+  pan: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(/^([A-Z]{5}\d{4}[A-Z])?$/, 'Invalid PAN')).optional(),
   consent: z.literal(true),
   fingers: z.array(z.object({
     finger: z.string().regex(/^[A-Z_]{3,20}$/),
@@ -32,7 +32,7 @@ export const StartBody = z.object({
     device: z.string().max(80).default(''),
   })).max(10).default([]),
 });
-export const OtpBody = z.object({ kycId: z.uuid(), otp: z.string().regex(/^\d{6}$/, 'OTP 6 ankon ka') });
+export const OtpBody = z.object({ kycId: z.uuid(), otp: z.string().regex(/^\d{6}$/, 'OTP must be 6 digits') });
 
 type Pending = {
   shopId: string; buyerId: string; userId: string; deviceId: string;
@@ -73,11 +73,11 @@ export class KycService {
 
   async start(p: Principal, buyerId: string, input: z.infer<typeof StartBody>) {
     const shopId = shopOf(p);
-    if (!this.ulip.configured) throw new ServiceUnavailableException('eKYC abhi chalu nahi hai');
+    if (!this.ulip.configured) throw new ServiceUnavailableException('eKYC is not enabled');
     await this.db.withShop(shopId, async (tx) => {
       await member(tx, p, shopId);
       if (!(await tx.query(`SELECT 1 FROM buyers WHERE id = $1`, [buyerId])).rows[0]) {
-        throw new NotFoundException('Yeh grahak server par nahi mila. Internet se sync hone dein, phir try karein.');
+        throw new NotFoundException('Customer not synced yet. Connect to the internet and try again.');
       }
     });
     this.sweep();
@@ -87,13 +87,13 @@ export class KycService {
     });
     const code = str(auth.code);
     const verifier = str(auth.code_verifier);
-    if (!code || !verifier) throw new BadRequestException(refusal(auth, 'Aadhaar ki details match nahi hui. Naam, janam tithi aur ling Aadhaar jaise hi likhein.'));
+    if (!code || !verifier) throw new BadRequestException(refusal(auth, 'Details do not match Aadhaar. Check name, date of birth and gender.'));
 
     const account = await this.call('/DIGILOCKER/03', { code, code_verifier: verifier });
     const token = str(account.access_token);
-    if (!token) throw new BadRequestException(refusal(account, 'DigiLocker se jud nahi paaye. Dobara try karein.'));
+    if (!token) throw new BadRequestException(refusal(account, 'Could not connect to DigiLocker. Try again.'));
     if (str(account.eaadhaar) !== 'Y') {
-      throw new BadRequestException('Is grahak ke DigiLocker mein Aadhaar juda nahi hai. Grahak DigiLocker app mein Aadhaar jod kar aayein.');
+      throw new BadRequestException('Aadhaar is not linked in this customer\'s DigiLocker.');
     }
 
     const registered = str(account.mobile).replace(/\D/g, '').slice(-10);
@@ -113,13 +113,13 @@ export class KycService {
     const shopId = shopOf(p);
     this.sweep();
     const s = this.pending.get(input.kycId);
-    if (!s || s.shopId !== shopId || s.buyerId !== buyerId) throw new BadRequestException('Samay khatam ho gaya. eKYC dobara shuru karein.');
+    if (!s || s.shopId !== shopId || s.buyerId !== buyerId) throw new GoneException('Session expired. Start eKYC again.');
     if (++s.tries > MAX_OTP_TRIES) {
       this.pending.delete(input.kycId);
-      throw new BadRequestException('Bahut galat OTP. eKYC dobara shuru karein.');
+      throw new GoneException('Too many wrong attempts. Start eKYC again.');
     }
     if (s.staging) {
-      if (input.otp !== config().KYC_TEST_OTP) throw new BadRequestException('OTP galat hai');
+      if (input.otp !== config().KYC_TEST_OTP) throw new BadRequestException('Wrong OTP');
     } else {
       await this.otp.verify(s.otpMobile, input.otp);
     }
@@ -127,7 +127,7 @@ export class KycService {
     const doc = await this.call('/DIGILOCKER/05', { token: s.token });
     const xml = str(doc.eaadhaarData);
     const e = xml ? parseEAadhaar(xml) : null;
-    if (!e || !/^\d{4}$/.test(e.last4)) throw new BadRequestException(refusal(doc, 'DigiLocker se Aadhaar nahi mila. Dobara try karein.'));
+    if (!e || !/^\d{4}$/.test(e.last4)) throw new BadRequestException(refusal(doc, 'Could not fetch Aadhaar from DigiLocker. Try again.'));
 
     let pan: { status: 'none' | 'verified' | 'failed'; note: string; pdf: Buffer | null } = { status: 'none', note: '', pdf: null };
     if (s.pan) {
@@ -136,7 +136,7 @@ export class KycService {
         const data = str(rec.data);
         pan = data && /pdf/i.test(str(rec.mime))
           ? { status: 'verified', note: '', pdf: Buffer.from(data, 'base64') }
-          : { status: 'failed', note: refusal(rec, 'PAN DigiLocker mein nahi mila'), pdf: null };
+          : { status: 'failed', note: refusal(rec, 'PAN not found in DigiLocker'), pdf: null };
       } catch (err) {
         if (!(err instanceof HttpException)) throw err;
         pan = { status: 'failed', note: String(err.message), pdf: null };
@@ -163,7 +163,7 @@ export class KycService {
           s.pan ? s.pan.slice(-4) : null, pan.status, pan.note, pan.pdf ? seal(pan.pdf) : null,
           JSON.stringify(s.fingers), CONSENT_TEXT, s.consentAt, s.userId, s.deviceId],
       );
-      if (!rows[0]) throw new NotFoundException('Yeh grahak nahi mila');
+      if (!rows[0]) throw new NotFoundException('Customer not found');
       return rows[0];
     });
     // Only now: a failed save can be retried with the same OTP while the token lasts.
@@ -178,7 +178,7 @@ export class KycService {
       await member(tx, p, shopId);
       return (await tx.query<KycRow>(`SELECT * FROM buyer_kyc WHERE buyer_id = $1`, [buyerId])).rows[0];
     });
-    if (!row) throw new NotFoundException('eKYC nahi hui');
+    if (!row) throw new NotFoundException('No eKYC yet');
     return view(row);
   }
 
@@ -189,8 +189,8 @@ export class KycService {
     } catch (err) {
       if (!(err instanceof UlipError)) throw err;
       this.log.warn(`ULIP ${err.message}`);
-      if (err.status === 400) throw new BadRequestException(err.message.replace(/^\S+: HTTP 400\s*/, '') || 'Details sahi nahi');
-      throw new HttpException('DigiLocker abhi jawab nahi de raha. Thodi der baad try karein.', HttpStatus.BAD_GATEWAY);
+      if (err.status === 400) throw new BadRequestException(err.message.replace(/^\S+: HTTP 400\s*/, '') || 'Invalid details');
+      throw new HttpException('DigiLocker is not responding. Try again shortly.', HttpStatus.BAD_GATEWAY);
     }
   }
 
@@ -233,13 +233,13 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'n
 const maskMobile = (m: string) => (m.length >= 4 ? '•'.repeat(Math.max(0, m.length - 4)) + m.slice(-4) : m);
 
 function shopOf(p: Principal): string {
-  if (!p.shopId) throw new ForbiddenException('Pehle dukaan se judein');
+  if (!p.shopId) throw new ForbiddenException('Join a shop first');
   return p.shopId;
 }
 
 async function member(tx: Tx, p: Principal, shopId: string) {
   const r = (await tx.query(`SELECT 1 FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, p.userId])).rows[0];
-  if (!r) throw new ForbiddenException('Aap is dukaan ki team mein nahi hain');
+  if (!r) throw new ForbiddenException('Not a member of this shop');
 }
 
 function validDob(s: string): boolean {
