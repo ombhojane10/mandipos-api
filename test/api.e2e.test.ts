@@ -768,9 +768,11 @@ describe('sync', () => {
     } finally { await c.end(); }
 
     // A PAN DigiLocker doesn't know still saves the Aadhaar KYC, with the PAN marked failed.
-    const again = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, pan: 'ZZZZZ9999Z' }).expect(200);
+    // No fingers is fine too: the scanner is optional.
+    const again = await http().post(`/v1/buyers/${buyerId}/kyc`).set(auth).send({ ...start, pan: 'ZZZZZ9999Z', fingers: undefined }).expect(200);
     const redo = await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: again.body.kycId, otp: '123456' }).expect(200);
     expect(redo.body.pan).toMatchObject({ last4: '999Z', status: 'failed' });
+    expect(redo.body.fingers).toEqual([]);
   });
 
   it('never shows or accepts another shop’s data', async () => {
