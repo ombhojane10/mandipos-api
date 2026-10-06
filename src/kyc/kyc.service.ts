@@ -41,7 +41,7 @@ type Pending = {
   consentAt: Date; expires: number; tries: number;
 };
 
-type KycRow = {
+export type KycRow = {
   source: string; aadhaar_last4: string; name: string; dob: string; gender: string; care_of: string;
   address: string; pincode: string; photo_sealed: Buffer | null; otp_mobile: string; pan_last4: string | null;
   pan_status: string; pan_note: string; fingers: unknown; verified_at: Date;
@@ -200,7 +200,7 @@ export class KycService {
   }
 }
 
-function view(r: KycRow) {
+export function view(r: KycRow) {
   const photo = r.photo_sealed ? safeUnseal(r.photo_sealed) : null;
   return {
     source: r.source,
@@ -230,14 +230,14 @@ function refusal(inner: Record<string, unknown>, fallback: string): string {
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
-const maskMobile = (m: string) => (m.length >= 4 ? '•'.repeat(Math.max(0, m.length - 4)) + m.slice(-4) : m);
+export const maskMobile = (m: string) => (m.length >= 4 ? '•'.repeat(Math.max(0, m.length - 4)) + m.slice(-4) : m);
 
-function shopOf(p: Principal): string {
+export function shopOf(p: Principal): string {
   if (!p.shopId) throw new ForbiddenException('Join a shop first');
   return p.shopId;
 }
 
-async function member(tx: Tx, p: Principal, shopId: string) {
+export async function member(tx: Tx, p: Principal, shopId: string) {
   const r = (await tx.query(`SELECT 1 FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, p.userId])).rows[0];
   if (!r) throw new ForbiddenException('Not a member of this shop');
 }

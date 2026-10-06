@@ -47,6 +47,7 @@ beforeAll(async () => {
     ULIP_USERNAME: 'test',
     ULIP_PASSWORD: 'test',
     KYC_DATA_KEY: 'test-kyc-key-test-kyc-key-test-kyc-key',
+    SUREPASS_TOKEN: 'test-surepass-token',
   });
 
   const { AppModule } = await import('../src/app.module');
@@ -773,6 +774,51 @@ describe('sync', () => {
     const redo = await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: again.body.kycId, otp: '123456' }).expect(200);
     expect(redo.body.pan).toMatchObject({ last4: '999Z', status: 'failed' });
     expect(redo.body.fingers).toEqual([]);
+  });
+
+  it('does a DigiLocker eKYC through Surepass: page to open, then Aadhaar and PAN saved once signed in', async () => {
+    const { SurepassClient } = await import('../src/kyc/surepass.client');
+    const sp = app.get(SurepassClient);
+    let state = { completed: false, failed: false, aadhaarLinked: true, status: 'pending', error: '' };
+    const photo = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16, 2)]).toString('base64');
+    let downloads = 0;
+    Object.assign(sp, {
+      initialize: async (o: { mobile?: string; redirectUrl: string }) => {
+        expect(o.redirectUrl).toMatch(/\/v1\/kyc\/digilocker\/done$/);
+        return { clientId: 'digilocker_test123', url: `https://digilocker.example/?m=${o.mobile ?? ''}`, expirySeconds: 600 };
+      },
+      status: async () => state,
+      downloadAadhaar: async () => {
+        if (++downloads > 1) throw new Error('downloaded twice');
+        return {
+          digilocker_metadata: { name: 'SITA DEVI', gender: 'F', dob: '1985-03-09', mobile_number: '9811113333' },
+          aadhaar_xml_data: { full_name: 'Sita Devi', care_of: 'W/O Ram', dob: '1985-03-09', zip: '110033', profile_image: photo, gender: 'F',
+            masked_aadhaar: 'XXXXXXXX4321', full_address: 'Azadpur, Delhi 110033' },
+        };
+      },
+      listDocuments: async () => [{ file_id: 'pan', doc_type: 'PANCR', file_type: 'xml' }],
+      downloadDocument: async () => Buffer.from('<Certificate number="ABCDE1234F"><Person name="Sita Devi"/></Certificate>'),
+    });
+    const auth = { Authorization: `Bearer ${owner.accessToken}` };
+
+    await http().post(`/v1/buyers/${buyerId}/kyc/digilocker`).set(auth).send({ consent: false }).expect(400);
+    const started = await http().post(`/v1/buyers/${buyerId}/kyc/digilocker`).set(auth).send({ mobile: '98111 13333', consent: true }).expect(200);
+    expect(started.body).toMatchObject({ clientId: 'digilocker_test123', url: 'https://digilocker.example/?m=9811113333' });
+    // The grahak hasn't finished on DigiLocker yet.
+    await http().post(`/v1/buyers/${buyerId}/kyc/digilocker/complete`).set(auth).send({ clientId: 'digilocker_test123' }).expect(409);
+    await http().post(`/v1/buyers/${buyerId}/kyc/digilocker/complete`).set(auth).send({ clientId: 'digilocker_other' }).expect(410);
+
+    state = { ...state, completed: true, status: 'completed' };
+    const done = await http().post(`/v1/buyers/${buyerId}/kyc/digilocker/complete`).set(auth).send({ clientId: 'digilocker_test123', fingers: [{ finger: 'RIGHT_THUMB', qScore: 70 }] }).expect(200);
+    expect(done.body).toMatchObject({
+      source: 'surepass-sandbox', aadhaarLast4: '4321', name: 'Sita Devi', dob: '09-03-1985', gender: 'F', careOf: 'W/O Ram',
+      address: 'Azadpur, Delhi 110033', pincode: '110033', photo, otpMobile: '••••••3333', pan: { last4: '234F', status: 'verified' },
+      fingers: [{ finger: 'RIGHT_THUMB', qScore: 70 }],
+    });
+    // Used: gone, and Surepass's one-time download is never asked twice.
+    await http().post(`/v1/buyers/${buyerId}/kyc/digilocker/complete`).set(auth).send({ clientId: 'digilocker_test123' }).expect(410);
+    const page = await http().get('/v1/kyc/digilocker/done').expect(200);
+    expect(page.text).toContain('Return to the app');
   });
 
   it('never shows or accepts another shop’s data', async () => {

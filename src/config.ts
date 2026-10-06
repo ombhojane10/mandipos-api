@@ -37,8 +37,20 @@ const schema = z
     // http://user:pass@host:3128 — the Mumbai proxy whose IP ULIP whitelists.
     ULIP_PROXY_URL: z.string().optional(),
     KYC_TEST_OTP: z.string().regex(/^\d{6}$/).default('123456'),
-    // Encrypts the e-Aadhaar XML, photo and PAN record at rest. Required once ULIP is set.
+    // Encrypts the e-Aadhaar XML, photo and PAN record at rest. Required once ULIP or Surepass is set.
     KYC_DATA_KEY: z.string().min(32).optional(),
+    /**
+     * eKYC on DigiLocker's own sign-in page through Surepass (the grahak types their mobile or
+     * Aadhaar and the OTP). Unset token = not offered. A sandbox URL means test data.
+     */
+    SUREPASS_BASE_URL: z.string().default('https://sandbox.surepass.app'),
+    SUREPASS_TOKEN: z.string().optional(),
+    // Where DigiLocker sends the grahak back; the terminal closes its page on this address.
+    PUBLIC_URL: z.string().default('https://mandipos-api.onrender.com'),
+  })
+  .refine((c) => !c.SUREPASS_TOKEN || !!c.KYC_DATA_KEY, {
+    message: 'KYC_DATA_KEY is required when SUREPASS_TOKEN is set',
+    path: ['KYC_DATA_KEY'],
   })
   .refine((c) => !c.ULIP_BASE_URL || !!c.KYC_DATA_KEY, {
     message: 'KYC_DATA_KEY is required when ULIP_BASE_URL is set',

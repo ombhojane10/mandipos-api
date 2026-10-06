@@ -29,6 +29,11 @@ envVarGroups:
         sync: false
       - key: ULIP_PROXY_URL
         sync: false
+      # DigiLocker sign-in page through Surepass (mobile + OTP by the grahak). Sandbox URL = sandbox credits.
+      - key: SUREPASS_BASE_URL
+        sync: false
+      - key: SUREPASS_TOKEN
+        sync: false
       - key: KYC_DATA_KEY          # seals e-Aadhaar XML, photo, PAN record; never rotate without re-sealing
         generateValue: true
 
