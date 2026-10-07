@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Header, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AuthGuard, Me } from '../auth/auth.guard';
 import { Principal } from '../auth/tokens.service';
 import { parse } from '../common/validate';
 import { DigilockerCompleteBody, DigilockerKycService, DigilockerStartBody } from './digilocker.service';
-import { KycService, OtpBody, StartBody } from './kyc.service';
+import { FingersBody, KycService, OtpBody, StartBody } from './kyc.service';
 
 const Id = z.uuid();
 
@@ -38,6 +38,13 @@ export class KycController {
   @HttpCode(200)
   digilockerComplete(@Me() p: Principal, @Param('id') id: string, @Body() body: unknown) {
     return this.digilocker.complete(p, parse(Id, id), parse(DigilockerCompleteBody, body));
+  }
+
+  /** Fingers on a saved KYC, added or removed later; the list sent replaces the saved one. */
+  @Put(':id/kyc/fingers')
+  @HttpCode(200)
+  setFingers(@Me() p: Principal, @Param('id') id: string, @Body() body: unknown) {
+    return this.kyc.setFingers(p, parse(Id, id), parse(FingersBody, body));
   }
 
   @Get(':id/kyc')

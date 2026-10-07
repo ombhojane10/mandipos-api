@@ -32,6 +32,14 @@ export const StartBody = z.object({
     device: z.string().max(80).default(''),
   })).max(10).default([]),
 });
+export const FingersBody = z.object({
+  fingers: z.array(z.object({
+    finger: z.string().regex(/^[A-Z_]{3,20}$/),
+    qScore: z.number().int().min(0).max(100),
+    nmPoints: z.number().int().min(0).max(500).optional(),
+    device: z.string().max(80).default(''),
+  })).max(10),
+});
 export const OtpBody = z.object({ kycId: z.uuid(), otp: z.string().regex(/^\d{6}$/, 'OTP must be 6 digits') });
 
 type Pending = {
@@ -179,6 +187,19 @@ export class KycService {
       return (await tx.query<KycRow>(`SELECT * FROM buyer_kyc WHERE buyer_id = $1`, [buyerId])).rows[0];
     });
     if (!row) throw new NotFoundException('No eKYC yet');
+    return view(row);
+  }
+
+  /** Fingers added or removed after the KYC was done: the whole list replaces the saved one. */
+  async setFingers(p: Principal, buyerId: string, input: z.infer<typeof FingersBody>) {
+    const shopId = shopOf(p);
+    const row = await this.db.withShop(shopId, async (tx) => {
+      await member(tx, p, shopId);
+      return (await tx.query<KycRow>(`UPDATE buyer_kyc SET fingers = $2 WHERE buyer_id = $1 RETURNING *`,
+        [buyerId, JSON.stringify(input.fingers)])).rows[0];
+    });
+    if (!row) throw new NotFoundException('No eKYC yet');
+    this.log.log(`KYC fingers set for buyer ${buyerId}: ${input.fingers.length}`);
     return view(row);
   }
 

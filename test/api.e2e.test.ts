@@ -758,6 +758,14 @@ describe('sync', () => {
     await http().post(`/v1/buyers/${buyerId}/kyc/otp`).set(auth).send({ kycId: started.body.kycId, otp: '123456' }).expect(410);
     await http().get(`/v1/buyers/${buyerId}/kyc`).set(auth).expect(200);
     await http().get(`/v1/buyers/${buyerId}/kyc`).set({ Authorization: `Bearer ${other.accessToken}` }).expect(404);
+    // Fingers can be added or removed later; another shop can't touch them.
+    const two = [{ finger: 'RIGHT_THUMB', qScore: 81 }, { finger: 'LEFT_THUMB', qScore: 55, device: 'MFS110' }];
+    const added = await http().put(`/v1/buyers/${buyerId}/kyc/fingers`).set(auth).send({ fingers: two }).expect(200);
+    expect(added.body.fingers).toHaveLength(2);
+    const removed = await http().put(`/v1/buyers/${buyerId}/kyc/fingers`).set(auth).send({ fingers: [two[1]] }).expect(200);
+    expect(removed.body.fingers).toMatchObject([{ finger: 'LEFT_THUMB' }]);
+    await http().put(`/v1/buyers/${buyerId}/kyc/fingers`).set({ Authorization: `Bearer ${other.accessToken}` }).send({ fingers: [] }).expect(404);
+    await http().put(`/v1/buyers/${uuidv7()}/kyc/fingers`).set(auth).send({ fingers: [] }).expect(404);
 
     // At rest: no Aadhaar number, no readable XML.
     const c = new Client({ connectionString: OWNER_URL });
