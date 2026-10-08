@@ -143,11 +143,12 @@ export class ShopsController {
     await this.accounts.setPrinter(p, b.host, b.dots);
   }
 
-  /** Admin: the mobile number printed on the shop's slips. */
+  /** Admin: the numbers printed on the shop's slips — the accountant's, and dispatch's ('' = none). */
   @Post('phone')
   @HttpCode(204)
   async shopPhone(@Me() p: Principal, @Body() body: unknown) {
-    await this.accounts.setShopPhone(p, parse(z.object({ phone }), body).phone);
+    const b = parse(z.object({ phone, dispatchPhone: z.union([z.literal(''), phone]).optional() }), body);
+    await this.accounts.setShopPhone(p, b.phone, b.dispatchPhone);
   }
 
   /** Admin: a new join code; the old one stops working. */

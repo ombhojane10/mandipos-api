@@ -197,6 +197,14 @@ describe('slip limit', () => {
     await http().post('/v1/shops/phone').set(auth(munim.accessToken)).send({ phone: '9871429335' }).expect(403);
     await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335' }).expect(204);
     expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.phone).toBe('9871429335');
+    // Dispatch's number rides beside it; a call without it keeps it, '' clears it.
+    expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.dispatchPhone).toBe('');
+    await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335', dispatchPhone: '98738 37938' }).expect(204);
+    await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335' }).expect(204);
+    expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.dispatchPhone).toBe('9873837938');
+    await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335', dispatchPhone: '12345' }).expect(400);
+    await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335', dispatchPhone: '' }).expect(204);
+    expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.dispatchPhone).toBe('');
 
     // The accountant asks; they cannot approve it themselves.
     const req = await http().post('/v1/requests').set(auth(munim.accessToken))
