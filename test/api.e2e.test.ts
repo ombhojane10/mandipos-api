@@ -309,6 +309,34 @@ describe('print queue', () => {
   });
 });
 
+describe('shop printer', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('is saved once by anyone in the shop and reaches every device; the station says which printer it drives', async () => {
+    const owner = await registerShop('9855500001', 'Printer Shop');
+    const team = await http().get('/v1/shops/members').set(auth(owner.accessToken)).expect(200);
+    const munim = await login('9855500002');
+    const joined = await http().post('/v1/shops/join').set(auth(munim.accessToken)).send({ code: team.body.joinCode }).expect(200);
+    const munimToken = joined.body.accessToken ?? munim.accessToken;
+    expect(owner.me.shop.printer).toEqual({ host: '', dots: 576 });
+
+    // The accountant in the office finds it and saves it for the shop.
+    await http().post('/v1/shops/printer').set(auth(munimToken)).send({ host: '192.168.1.300x', dots: 576 }).expect(400);
+    await http().post('/v1/shops/printer').set(auth(munimToken)).send({ host: '192.168.1.48', dots: 576 }).expect(204);
+    // The owner's phone, anywhere, has it on its next /v1/me.
+    const me = await http().get('/v1/me').set(auth(owner.accessToken)).expect(200);
+    expect(me.body.shop.printer).toEqual({ host: '192.168.1.48', dots: 576 });
+    // Someone outside the shop can't touch it.
+    const outsider = await login('9855500003');
+    await http().post('/v1/shops/printer').set(auth(outsider.accessToken)).send({ host: '10.0.0.9' }).expect(403);
+
+    // The tab prints the office's slips on that WiFi printer, and says so.
+    await http().get('/v1/print/next?wait=0&name=OPD2304&widthDots=576&roll=WIFI').set(auth(owner.accessToken)).expect(204);
+    const st = (await http().get('/v1/print/station').set(auth(munimToken)).expect(200)).body.station;
+    expect(st).toMatchObject({ online: true, name: 'OPD2304', roll: 'WIFI', widthDots: 576 });
+  });
+});
+
 describe('daybook books', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
   const push = (token: string, items: unknown[]) =>

@@ -132,6 +132,17 @@ export class ShopsController {
     await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(['nariyal', 'amrud']) }), body).commodity);
   }
 
+  /** Any member: the shop's WiFi printer, which every device of the shop then prints to. */
+  @Post('printer')
+  @HttpCode(204)
+  async printer(@Me() p: Principal, @Body() body: unknown) {
+    const b = parse(z.object({
+      host: z.string().trim().regex(/^(\d{1,3}(\.\d{1,3}){3})?$/, 'an IP like 192.168.1.50'),
+      dots: z.union([z.literal(384), z.literal(576), z.literal(832)]).default(576),
+    }), body);
+    await this.accounts.setPrinter(p, b.host, b.dots);
+  }
+
   /** Admin: the mobile number printed on the shop's slips. */
   @Post('phone')
   @HttpCode(204)

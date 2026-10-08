@@ -8,7 +8,8 @@ export type PrintJob = {
   createdAt: string; finishedAt: string | null; station: string | null; mine: boolean;
 };
 
-export type Station = { online: boolean; name: string; widthDots: number; lastSeenAt: string | null; thisDevice: boolean };
+/** roll: the printer the station drives — WIFI means the shop's own WiFi printer. */
+export type Station = { online: boolean; name: string; widthDots: number; roll: string; lastSeenAt: string | null; thisDevice: boolean };
 
 /** A station that asked for work within this long is "on". Its long-poll lasts up to 25 s. */
 const ONLINE_SECONDS = 45;
@@ -87,13 +88,13 @@ export class PrintService {
   async station(p: Principal): Promise<Station | null> {
     return this.db.tx(async (tx) => {
       const shopId = await this.member(tx, p);
-      const r = (await tx.query<{ device_id: string; name: string; width_dots: number; last_poll_at: Date; online: boolean }>(
-        `SELECT device_id, name, width_dots, last_poll_at, last_poll_at > now() - make_interval(secs => $2::int) AS online
+      const r = (await tx.query<{ device_id: string; name: string; width_dots: number; roll: string; last_poll_at: Date; online: boolean }>(
+        `SELECT device_id, name, width_dots, roll, last_poll_at, last_poll_at > now() - make_interval(secs => $2::int) AS online
          FROM print_stations WHERE shop_id = $1 ORDER BY last_poll_at DESC LIMIT 1`,
         [shopId, ONLINE_SECONDS],
       )).rows[0];
       if (!r) return null;
-      return { online: r.online, name: r.name, widthDots: r.width_dots, lastSeenAt: r.last_poll_at.toISOString(), thisDevice: r.device_id === p.deviceId };
+      return { online: r.online, name: r.name, widthDots: r.width_dots, roll: r.roll, lastSeenAt: r.last_poll_at.toISOString(), thisDevice: r.device_id === p.deviceId };
     });
   }
 
@@ -106,14 +107,14 @@ export class PrintService {
    * Station: the oldest waiting slip, claimed for this device — or null once [waitSeconds]
    * pass without one. Each call also marks the station online.
    */
-  async next(p: Principal, name: string, widthDots: number, waitSeconds: number, gone: () => boolean):
+  async next(p: Principal, name: string, widthDots: number, waitSeconds: number, gone: () => boolean, roll = ''):
     Promise<{ id: string; title: string; widthDots: number; image: string; createdAt: string } | null> {
     const shopId = await this.db.tx(async (tx) => {
       const shopId = await this.member(tx, p);
       await tx.query(
-        `INSERT INTO print_stations (device_id, shop_id, name, width_dots, last_poll_at) VALUES ($1, $2, $3, $4, now())
-         ON CONFLICT (device_id) DO UPDATE SET shop_id = $2, name = $3, width_dots = $4, last_poll_at = now()`,
-        [p.deviceId, shopId, name, widthDots],
+        `INSERT INTO print_stations (device_id, shop_id, name, width_dots, roll, last_poll_at) VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (device_id) DO UPDATE SET shop_id = $2, name = $3, width_dots = $4, roll = $5, last_poll_at = now()`,
+        [p.deviceId, shopId, name, widthDots, roll],
       );
       await this.tidy(tx, shopId);
       return shopId;

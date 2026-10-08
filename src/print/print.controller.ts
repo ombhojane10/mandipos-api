@@ -16,6 +16,7 @@ const NextQuery = z.object({
   name: z.string().trim().max(60).default(''),
   widthDots: Width.default(384),
   wait: z.coerce.number().int().min(0).max(25).default(20),
+  roll: z.enum(['TERMINAL', 'SEZNIK', 'WIFI', '']).default(''),
 });
 const DoneBody = z.object({ ok: z.boolean(), error: z.string().max(500).default('') });
 const Id = z.uuid();
@@ -70,7 +71,7 @@ export class PrintController {
     // fires only when the station hangs up before we answer — then a slip must not be claimed.
     let gone = false;
     res.on('close', () => { if (!res.writableFinished) gone = true; });
-    const job = await this.print.next(p, q.name, q.widthDots, q.wait, () => gone);
+    const job = await this.print.next(p, q.name, q.widthDots, q.wait, () => gone, q.roll);
     if (gone) return;
     if (job) res.status(200).json(job);
     else res.status(204).end();
