@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Principal } from '../auth/tokens.service';
 import { config } from '../config';
 import { Db } from '../db/db.service';
+import { SyncHub } from '../sync/sync.hub';
 import { KycRow, member, shopOf, view } from './kyc.service';
 import { seal } from './seal';
 import { DigilockerProvider, ProviderError } from './digilocker.provider';
@@ -49,7 +50,7 @@ export class DigilockerKycService {
   private readonly log = new Logger('DigilockerKyc');
   private readonly pending = new Map<string, Pending>();
 
-  constructor(private readonly db: Db, private readonly surepass: SurepassClient, private readonly sandbox: SandboxDigilockerClient) {}
+  constructor(private readonly db: Db, private readonly surepass: SurepassClient, private readonly sandbox: SandboxDigilockerClient, private readonly hub: SyncHub) {}
 
   /** The provider new sessions open with. */
   private get provider(): DigilockerProvider {
@@ -121,6 +122,8 @@ export class DigilockerKycService {
     });
     this.pending.delete(input.clientId);
     this.log.log(`DigiLocker KYC saved for buyer ${buyerId} (${s.provider.source}, pan ${pan.status})`);
+    // The KYC trigger put it on the feed: tell the shop's other terminals now.
+    void this.hub.wake(shopId).catch(() => undefined);
     return view(row);
   }
 

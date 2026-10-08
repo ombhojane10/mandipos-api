@@ -903,3 +903,111 @@ describe('sync', () => {
     }
   });
 });
+
+describe('live sync', () => {
+  let a: Awaited<ReturnType<typeof registerShop>>;
+  let b: Awaited<ReturnType<typeof login>>;
+  const brandId = uuidv7();
+  const truckId = uuidv7();
+  const buyerId = uuidv7();
+
+  beforeAll(async () => {
+    a = await registerShop('9844400001', 'Live Shop');
+    b = await login('9844400001'); // the owner's second terminal, same shop
+    const t = now();
+    await push(a.accessToken, [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'V. Kota', sort_order: 1, shelf_days: 7 } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'RJ11GC3033', supplier: 'x', arrived_at: t } },
+      { table: 'buyers', row: { id: buyerId, created_at: t, updated_at: t, name: 'Wasim', phone: '', kind: '' } },
+    ]);
+  });
+
+  const push = (token: string, items: unknown[], extra: Record<string, unknown> = {}) =>
+    http().post('/v1/sync/push').set('Authorization', `Bearer ${token}`).send({ items, ...extra });
+  const pullAll = async (token: string, after = 0) => {
+    const all: any[] = [];
+    let resetSeq = 0;
+    for (;;) {
+      const res = await http().get(`/v1/sync/pull?after=${after}`).set('Authorization', `Bearer ${token}`).expect(200);
+      all.push(...res.body.changes);
+      after = res.body.lastSeq;
+      resetSeq = res.body.resetSeq;
+      if (!res.body.hasMore) return { all, lastSeq: after, resetSeq };
+    }
+  };
+  const slip = (txn: string | undefined, billId: string, slipNo: number, lineTruck: string) => {
+    const t = now();
+    return [
+      { txn, table: 'bills', row: { id: billId, created_at: t, number: `A1/2627/${String(slipNo).padStart(6, '0')}`, kind: 'kachchi', buyer_id: buyerId, buyer_name: 'Wasim', business_date: today(), pay_mode: 'cash', total_paise: 6700, paid_paise: 6700, slip_no: slipNo, truck_id: truckId } },
+      { txn, table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: lineTruck, brand_id: brandId, grade: '1', qty: 1, rate_paise: 6700 } },
+    ];
+  };
+
+  it('stores a slip whole or not at all when its rows share a txn', async () => {
+    const billId = uuidv7();
+    const res = await push(a.accessToken, slip(uuidv7(), billId, 1, uuidv7() /* no such gaadi */)).expect(200);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(res.body.results[0].error).toMatch(/same entry/);
+    // Fixed and sent again: both rows land.
+    const ok = await push(a.accessToken, slip(uuidv7(), billId, 1, truckId)).expect(200);
+    expect(ok.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
+    // An older terminal (no txn) still gets row-by-row: the bill lands without its bad line.
+    const loose = await push(a.accessToken, slip(undefined, uuidv7(), 2, uuidv7())).expect(200);
+    expect(loose.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
+  });
+
+  it('wakes a waiting terminal as soon as another one pushes', async () => {
+    const { lastSeq } = await pullAll(b.accessToken);
+    // Nothing new: an immediate answer when asked not to wait.
+    const idle = await http().get(`/v1/sync/wait?after=${lastSeq}&wait=0`).set('Authorization', `Bearer ${b.accessToken}`).expect(200);
+    expect(idle.body.lastSeq).toBe(lastSeq);
+    const started = Date.now();
+    // (supertest only sends once awaited: start the wait for real before the other terminal pushes)
+    const waiting = http().get(`/v1/sync/wait?after=${lastSeq}&wait=20`).set('Authorization', `Bearer ${b.accessToken}`).then((r) => r);
+    await new Promise((r) => setTimeout(r, 300));
+    await push(a.accessToken, [
+      { table: 'buyers', row: { id: uuidv7(), created_at: now(), updated_at: now(), name: 'Sharma', phone: '', kind: '' } },
+    ]).expect(200);
+    const res = await waiting;
+    expect(res.status).toBe(200);
+    expect(res.body.lastSeq).toBeGreaterThan(lastSeq);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('puts a grahak\'s eKYC summary on the feed — never the documents — and again when fingers change', async () => {
+    const { lastSeq } = await pullAll(a.accessToken);
+    await owner(`INSERT INTO buyer_kyc (buyer_id, shop_id, source, aadhaar_last4, name, dob, gender, address, eaadhaar_sealed, otp_mobile,
+        fingers, consent_text, consent_at, verified_by, device_id)
+      VALUES ('${buyerId}', '${a.me.shop.id}', 'ulip-staging', '1234', 'Wasim Khan', '1990-01-01', 'M', 'Gali 4, Delhi', '\\x00', '9811100000',
+        '[{"finger":"RT","qScore":70,"device":"MFS110"}]', 'ok', now(), '${a.me.user.id}', '${a.me.device.id}')`);
+    await owner(`UPDATE buyer_kyc SET fingers = '[{"finger":"RT","qScore":70},{"finger":"LT","qScore":61}]' WHERE buyer_id = '${buyerId}'`);
+    const kyc = (await pullAll(b.accessToken, lastSeq)).all.filter((c) => c.table === 'kyc');
+    expect(kyc).toHaveLength(2);
+    expect(kyc[1].row).toMatchObject({ id: buyerId, aadhaar_last4: '1234', fingers: '["RT", "LT"]' });
+    expect(JSON.stringify(kyc)).not.toMatch(/Wasim Khan|Gali 4|9811100000/);
+  });
+
+  it('tells every terminal about a row the server deleted', async () => {
+    const gone = uuidv7();
+    await push(a.accessToken, [{ table: 'buyers', row: { id: gone, created_at: now(), updated_at: now(), name: 'Typo', phone: '', kind: '' } }]).expect(200);
+    await owner(`SELECT sync_delete('${a.me.shop.id}', 'buyers', '${gone}', '${a.me.device.id}')`);
+    const { all } = await pullAll(b.accessToken);
+    expect(all.filter((c) => c.table === 'buyers' && c.row.id === gone)).toHaveLength(0);
+    expect(all.filter((c) => c.table === '_delete').pop().row).toEqual({ table: 'buyers', id: gone });
+  });
+
+  it('starts the books again: _reset first, then a snapshot, and a stale outbox is told to pull', async () => {
+    const before = await pullAll(b.accessToken);
+    await owner(`DELETE FROM bill_lines WHERE shop_id = '${a.me.shop.id}'; DELETE FROM bills WHERE shop_id = '${a.me.shop.id}';
+                 SELECT sync_reset('${a.me.shop.id}', '${a.me.device.id}')`);
+    const after = await pullAll(b.accessToken);
+    expect(after.all[0].table).toBe('_reset');
+    expect(after.resetSeq).toBe(after.all[0].seq);
+    expect(after.resetSeq).toBeGreaterThan(before.lastSeq);
+    expect(new Set(after.all.map((c) => c.table))).toEqual(new Set(['_reset', 'brands', 'buyers', 'trucks', 'kyc']));
+    // A terminal that never pulled the reset still has the old books' rows queued: refused.
+    const stale = await push(b.accessToken, slip(uuidv7(), uuidv7(), 9, truckId), { resetSeen: 0 }).expect(409);
+    expect(stale.body.code).toBe('reset');
+    await push(b.accessToken, slip(uuidv7(), uuidv7(), 9, truckId), { resetSeen: after.resetSeq }).expect(200);
+  });
+});

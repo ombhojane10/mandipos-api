@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { DatabaseError } from 'pg';
 import { Principal } from '../auth/tokens.service';
 import { Db, Tx } from '../db/db.service';
 import { IMMUTABLE_ON_UPDATE, SYNC_TABLES } from './tables';
 
-export type PushItem = { table: string; row: Record<string, unknown> };
+/** txn: the terminal's local transaction the row was written in; rows sharing one apply together or not at all. */
+export type PushItem = { table: string; row: Record<string, unknown>; txn?: string };
 /** applied: stored now · skipped: already had it (or a newer version) · rejected: invalid, will never apply */
 export type PushResult = { id: string | null; status: 'applied' | 'skipped' | 'rejected'; error?: string };
 export type Change = { seq: number; table: string; row: Record<string, unknown> };
@@ -17,32 +18,82 @@ export class SyncService {
   constructor(private readonly db: Db) {}
 
   /**
-   * Applies a device's batch in order, one savepoint per row so a bad row never blocks
-   * the rest. Every applied row is appended to `changes` with the shop's next sequence
-   * number; the per-shop lock makes those numbers commit in order, so a device pulling
-   * `after=N` can never skip a row that committed late.
+   * Applies a device's batch in order. Every applied row is appended to `changes` with the
+   * shop's next sequence number; the per-shop lock makes those numbers commit in order, so a
+   * device pulling `after=N` can never skip a row that committed late.
+   *
+   * Rows the terminal wrote in one local transaction (a slip: bill, lines, payment, delivery)
+   * carry the same `txn` and are applied as one unit: if any of them is refused, none of them
+   * is stored, so the server never holds half a slip. Rows without a txn (older terminals) are
+   * applied one by one, a bad row never blocking the rest.
+   *
+   * [resetSeen] is the newest '_reset' the terminal has applied. If the shop's books were
+   * started again after that, its outbox belongs to the old books: it must pull first.
    */
-  async push(p: Principal, shopId: string, items: PushItem[]): Promise<PushResult[]> {
+  async push(p: Principal, shopId: string, items: PushItem[], resetSeen?: number): Promise<PushResult[]> {
     return this.db.withShop(shopId, async (tx) => {
       await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [shopId]);
+      if (resetSeen !== undefined) {
+        const { rows } = await tx.query<{ reset_seq: string }>(`SELECT reset_seq FROM shop_counters WHERE shop_id = $1`, [shopId]);
+        const resetSeq = Number(rows[0]?.reset_seq ?? 0);
+        if (resetSeen < resetSeq) {
+          throw new ConflictException({ code: 'reset', resetSeq, message: 'The shop\'s books were started again: pull before pushing' });
+        }
+      }
       const results: PushResult[] = [];
       // Read fresh, not from the token: a role changed an hour ago must bind now.
       let role: string | null | undefined;
       const roleOf = async () => role !== undefined ? role : (role = (await tx.query<{ role: string }>(
         `SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, p.userId])).rows[0]?.role ?? null);
-      for (const item of items) results.push(await this.applyOne(tx, p, shopId, item, roleOf));
+      for (let i = 0; i < items.length;) {
+        const txn = typeof items[i]?.txn === 'string' && items[i].txn ? items[i].txn : null;
+        let end = i + 1;
+        if (txn) while (end < items.length && items[end]?.txn === txn) end++;
+        if (!txn || end - i === 1) {
+          results.push(await this.applyOne(tx, p, shopId, items[i], roleOf));
+        } else {
+          results.push(...await this.applyGroup(tx, p, shopId, items.slice(i, end), roleOf));
+        }
+        i = end;
+      }
       return results;
     });
   }
 
-  async pull(shopId: string, after: number, limit: number): Promise<{ changes: Change[]; lastSeq: number; hasMore: boolean }> {
+  /** All of [group] or none of it. */
+  private async applyGroup(
+    tx: Tx, p: Principal, shopId: string, group: PushItem[], roleOf: () => Promise<string | null>,
+  ): Promise<PushResult[]> {
+    await tx.query('SAVEPOINT txn');
+    const out: PushResult[] = [];
+    for (const item of group) {
+      const r = await this.applyOne(tx, p, shopId, item, roleOf);
+      out.push(r);
+      if (r.status === 'rejected') {
+        await tx.query('ROLLBACK TO SAVEPOINT txn');
+        await tx.query('RELEASE SAVEPOINT txn');
+        const why = `not saved: ${item.table} in the same entry was refused (${r.error})`;
+        const failed = out.length - 1;
+        return group.map((g, i) => i === failed ? r
+          : { id: typeof g.row?.id === 'string' ? g.row.id : null, status: 'rejected' as const, error: why });
+      }
+    }
+    await tx.query('RELEASE SAVEPOINT txn');
+    return out;
+  }
+
+  async pull(shopId: string, after: number, limit: number): Promise<{ changes: Change[]; lastSeq: number; hasMore: boolean; resetSeq: number }> {
     return this.db.withShop(shopId, async (tx) => {
       const { rows } = await tx.query<{ seq: string; table_name: string; row: Record<string, unknown> }>(
         `SELECT seq, table_name, row FROM changes WHERE shop_id = $1 AND seq > $2 ORDER BY seq LIMIT $3`,
         [shopId, after, limit + 1],
       );
+      const counters = await tx.query<{ reset_seq: string }>(`SELECT reset_seq FROM shop_counters WHERE shop_id = $1`, [shopId]);
       const page = rows.slice(0, limit).map((r) => ({ seq: Number(r.seq), table: r.table_name, row: r.row }));
-      return { changes: page, lastSeq: page.length ? page[page.length - 1].seq : after, hasMore: rows.length > limit };
+      return {
+        changes: page, lastSeq: page.length ? page[page.length - 1].seq : after, hasMore: rows.length > limit,
+        resetSeq: Number(counters.rows[0]?.reset_seq ?? 0),
+      };
     });
   }
 

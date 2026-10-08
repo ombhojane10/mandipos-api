@@ -21,10 +21,11 @@ import { RequestsController } from './requests/requests.controller';
 import { RequestsService } from './requests/requests.service';
 import { ShopsController } from './shops/shops.controller';
 import { SyncController } from './sync/sync.controller';
+import { SyncHub } from './sync/sync.hub';
 import { SyncService } from './sync/sync.service';
 
 @Module({
   controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, KycController, DigilockerReturnController],
-  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
+  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
 })
 export class AppModule {}

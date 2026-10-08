@@ -5,6 +5,7 @@ import { OtpService } from '../auth/otp.service';
 import { Principal } from '../auth/tokens.service';
 import { config } from '../config';
 import { Db, Tx } from '../db/db.service';
+import { SyncHub } from '../sync/sync.hub';
 import { parseEAadhaar } from './eaadhaar';
 import { seal, unseal } from './seal';
 import { UlipClient, UlipError } from './ulip.client';
@@ -77,7 +78,7 @@ export class KycService {
   private readonly log = new Logger('Kyc');
   private readonly pending = new Map<string, Pending>();
 
-  constructor(private readonly db: Db, private readonly ulip: UlipClient, private readonly otp: OtpService) {}
+  constructor(private readonly db: Db, private readonly ulip: UlipClient, private readonly otp: OtpService, private readonly hub: SyncHub) {}
 
   async start(p: Principal, buyerId: string, input: z.infer<typeof StartBody>) {
     const shopId = shopOf(p);
@@ -177,6 +178,8 @@ export class KycService {
     // Only now: a failed save can be retried with the same OTP while the token lasts.
     this.pending.delete(input.kycId);
     this.log.log(`KYC saved for buyer ${buyerId} (${s.staging ? 'staging' : 'production'}, pan ${pan.status})`);
+    // The KYC trigger put it on the feed: tell the shop's other terminals now.
+    void this.hub.wake(shopId).catch(() => undefined);
     return view(row);
   }
 
@@ -200,6 +203,8 @@ export class KycService {
     });
     if (!row) throw new NotFoundException('No eKYC yet');
     this.log.log(`KYC fingers set for buyer ${buyerId}: ${input.fingers.length}`);
+    // The KYC trigger put it on the feed: tell the shop's other terminals now.
+    void this.hub.wake(shopId).catch(() => undefined);
     return view(row);
   }
 
