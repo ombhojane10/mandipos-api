@@ -95,7 +95,8 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
           WHERE b.buyer_id IS NOT NULL AND b.total_paise > b.paid_paise
             AND NOT EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id)
          UNION ALL SELECT buyer_id, amount_paise FROM udhaar_entries
-         UNION ALL SELECT buyer_id, -amount_paise FROM collections
+         UNION ALL SELECT c.buyer_id, -c.amount_paise FROM collections c
+                    WHERE NOT EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id)
        ), per AS (SELECT buyer_id, SUM(amt) AS due FROM owed GROUP BY buyer_id)
        SELECT g.id, g.name, g.phone, per.due FROM per JOIN buyers g ON g.id = per.buyer_id
         WHERE per.due > 0 AND g.hidden = false AND g.phone ~ '^[6-9][0-9]{9}$'

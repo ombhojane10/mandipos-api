@@ -151,6 +151,16 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       cash_paise: paise.default(0), upi_paise: paise.default(0),
     }),
   },
+  // A collection row cancelled — outright, or because a corrected payment took its raseed
+  // number. The row stays; terminals drop a voided one from their books when they pull this.
+  collection_voids: {
+    kind: 'fact',
+    row: z.object({
+      id, created_at: at, collection_id: id,
+      receipt_no: z.number().int().positive().max(9_999_999).nullable().default(null),
+      reason: z.enum(['deleted', 'edited']).default('deleted'),
+    }),
+  },
   // Nuts taken off a gaadi without a sale: rotten ones, or a count that was entered too high.
   spoilage: {
     kind: 'fact',
