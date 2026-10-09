@@ -1011,6 +1011,14 @@ describe('live sync', () => {
     expect(loose.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
   });
 
+  it('takes jama — a negative opening balance — but never a zero one', async () => {
+    const res = await push(a.accessToken, [
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: now(), buyer_id: buyerId, amount_paise: -150000, note: 'Jama (trial balance)', business_date: today() } },
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: now(), buyer_id: buyerId, amount_paise: 0, business_date: today() } },
+    ]).expect(200);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
+  });
+
   it('wakes a waiting terminal as soon as another one pushes', async () => {
     const { lastSeq } = await pullAll(b.accessToken);
     // Nothing new: an immediate answer when asked not to wait.
@@ -1059,7 +1067,7 @@ describe('live sync', () => {
     expect(after.all[0].table).toBe('_reset');
     expect(after.resetSeq).toBe(after.all[0].seq);
     expect(after.resetSeq).toBeGreaterThan(before.lastSeq);
-    expect(new Set(after.all.map((c) => c.table))).toEqual(new Set(['_reset', 'brands', 'buyers', 'trucks', 'kyc']));
+    expect(new Set(after.all.map((c) => c.table))).toEqual(new Set(['_reset', 'brands', 'buyers', 'trucks', 'udhaar_entries', 'kyc']));
     // A terminal that never pulled the reset still has the old books' rows queued: refused.
     const stale = await push(b.accessToken, slip(uuidv7(), uuidv7(), 9, truckId), { resetSeen: 0 }).expect(409);
     expect(stale.body.code).toBe('reset');

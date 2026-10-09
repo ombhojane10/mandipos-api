@@ -107,7 +107,11 @@ export const SYNC_TABLES: Record<string, TableDef> = {
   // Udhaar not from a slip: a grahak's balance from the old book, or credit added by hand.
   udhaar_entries: {
     kind: 'fact',
-    row: z.object({ id, created_at: at, buyer_id: id, amount_paise: paise.positive(), note: text(200), business_date: day }),
+    // Negative = jama (the shop holds the grahak's money), from the credit side of the trial balance.
+    row: z.object({
+      id, created_at: at, buyer_id: id, note: text(200), business_date: day,
+      amount_paise: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).refine((v) => v !== 0, 'zero'),
+    }),
   },
   // A slip cancelled — outright, or because a corrected one took its number. The bill row
   // stays; terminals drop a voided slip from their books when they pull this.
