@@ -308,6 +308,12 @@ describe('print queue', () => {
     await http().post(`/v1/print/jobs/${two.body.id}/retry`).set(auth(home.accessToken)).expect(200);
     expect((await http().get('/v1/print/next?wait=0').set(auth(office.accessToken)).expect(200)).body.id).toBe(two.body.id);
 
+    // A device that couldn't reach the printer gives the slip back; another one prints it.
+    await http().post(`/v1/print/jobs/${two.body.id}/done`).set(auth(office.accessToken)).send({ ok: false, error: 'unreachable', requeue: true }).expect(204);
+    expect((await http().get(`/v1/print/jobs/${two.body.id}`).set(auth(home.accessToken))).body).toMatchObject({ status: 'queued', error: null });
+    expect((await http().get('/v1/print/next?wait=0&name=Phone&widthDots=576').set(auth(home.accessToken)).expect(200)).body.id).toBe(two.body.id);
+    await http().post(`/v1/print/jobs/${two.body.id}/done`).set(auth(home.accessToken)).send({ ok: true }).expect(204);
+
     // Switched off: the station is gone.
     await http().delete('/v1/print/station').set(auth(office.accessToken)).expect(204);
     // (home polled once above, which made it a station too)

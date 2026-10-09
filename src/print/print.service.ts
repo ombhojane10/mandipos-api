@@ -133,8 +133,23 @@ export class PrintService {
     return null;
   }
 
-  /** Station: how the slip it claimed went. */
-  async done(p: Principal, id: string, ok: boolean, error: string) {
+  /**
+   * Station: how the slip it claimed went. [requeue]: this device couldn't reach the printer
+   * and sent nothing — the slip goes back to the queue for a device that can, and this one
+   * stops counting as a station until it asks for work again.
+   */
+  async done(p: Principal, id: string, ok: boolean, error: string, requeue = false) {
+    if (!ok && requeue) {
+      const back = await this.db.query<{ shop_id: string }>(
+        `UPDATE print_jobs SET status = 'queued', station = NULL, claimed_at = NULL, error = NULL
+         WHERE id = $1 AND station = $2 AND status = 'printing' RETURNING shop_id`,
+        [id, p.deviceId],
+      );
+      if (!back.length) throw new BadRequestException('Yeh parchi is machine ke paas nahi thi');
+      await this.db.query(`DELETE FROM print_stations WHERE device_id = $1`, [p.deviceId]);
+      this.wake(back[0].shop_id);
+      return;
+    }
     const r = await this.db.query(
       `UPDATE print_jobs SET status = $3, error = $4, finished_at = now(),
               image = CASE WHEN $3 = 'printed' THEN NULL ELSE image END

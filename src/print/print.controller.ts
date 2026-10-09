@@ -18,7 +18,8 @@ const NextQuery = z.object({
   wait: z.coerce.number().int().min(0).max(25).default(20),
   roll: z.enum(['TERMINAL', 'SEZNIK', 'WIFI', '']).default(''),
 });
-const DoneBody = z.object({ ok: z.boolean(), error: z.string().max(500).default('') });
+/** requeue: the printer couldn't be reached and nothing was sent — give the slip back for another device. */
+const DoneBody = z.object({ ok: z.boolean(), error: z.string().max(500).default(''), requeue: z.boolean().default(false) });
 const Id = z.uuid();
 
 /** Slips sent from anywhere, printed by the shop's station in the office. */
@@ -81,6 +82,6 @@ export class PrintController {
   @HttpCode(204)
   async done(@Me() p: Principal, @Param('id') id: string, @Body() body: unknown) {
     const b = parse(DoneBody, body);
-    await this.print.done(p, parse(Id, id), b.ok, b.error);
+    await this.print.done(p, parse(Id, id), b.ok, b.error, b.requeue);
   }
 }
