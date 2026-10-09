@@ -88,7 +88,7 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       id, created_at: at,
       number: z.string().max(16).regex(/^[A-Za-z0-9/-]+$/), kind: z.enum(['kachchi', 'pakka']),
       buyer_id: id.nullable().default(null), buyer_name: z.string().max(120), business_date: day,
-      pay_mode: z.enum(['cash', 'upi', 'card', 'credit', 'mixed', 'after']), total_paise: paise, paid_paise: paise, payment_ref: text(40),
+      pay_mode: z.enum(['cash', 'upi', 'card', 'credit', 'mixed', 'after', 'free']), total_paise: paise, paid_paise: paise, payment_ref: text(40),
       // The trader's own serial, counted from 1 per shop; the night check is that none is missing.
       slip_no: z.number().int().positive().max(9_999_999).nullable().default(null),
       // The vehicle these nuts left, so a short truck can be traced back to its slips.

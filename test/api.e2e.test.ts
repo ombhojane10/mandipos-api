@@ -643,6 +643,19 @@ describe('sync', () => {
     expect(res.body.results[4].error).toMatch(/duplicate/);
   });
 
+  // Free: dana given away — ₹0, nothing paid, nothing owed.
+  it('takes a free slip', async () => {
+    const t = now();
+    const res = await push(owner.accessToken, [{
+      table: 'bills',
+      row: {
+        id: uuidv7(), created_at: t, number: `A2/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Free', business_date: today(), pay_mode: 'free', total_paise: 0, paid_paise: 0,
+      },
+    }]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied']);
+  });
+
   it('takes a 15-katta slip and a named panni', async () => {
     const t = now();
     const slip = (extra: Record<string, unknown>) => ({
@@ -686,7 +699,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'udhaar_entries', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();
