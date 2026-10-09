@@ -639,6 +639,28 @@ describe('sync', () => {
     expect(res.body.results[4].error).toMatch(/duplicate/);
   });
 
+  // A paid slip deleted: its money handed back, or kept as the grahak's advance.
+  it('takes a void that refunded the money or kept it as advance', async () => {
+    const t = now();
+    const slip = (id: string, n: number) => ({
+      table: 'bills',
+      row: {
+        id, created_at: t, number: `A2/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'upi',
+        total_paise: 100, paid_paise: 100, upi_paise: 100, slip_no: n,
+      },
+    });
+    const a = uuidv7();
+    const b = uuidv7();
+    const res = await push(owner.accessToken, [
+      slip(a, 810), slip(b, 811),
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: a, slip_no: 810, reason: 'refunded' } },
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: b, slip_no: 811, reason: 'advance' } },
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: b, slip_no: 811, reason: 'lost' } },
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied', 'rejected']);
+  });
+
   // Badlein on a collection: void its rows, then write the corrected payment under the same raseed number.
   it('lets a raseed number be used again only after the collection holding it is voided', async () => {
     const t = now();
@@ -714,7 +736,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();

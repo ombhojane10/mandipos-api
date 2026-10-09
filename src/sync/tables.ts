@@ -120,7 +120,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     row: z.object({
       id, created_at: at, bill_id: id,
       slip_no: z.number().int().positive().max(9_999_999).nullable().default(null),
-      reason: z.enum(['deleted', 'edited']).default('deleted'),
+      // A paid slip deleted with its money handed back ('refunded') or kept as advance ('advance').
+      reason: z.enum(['deleted', 'edited', 'refunded', 'advance']).default('deleted'),
     }),
   },
   bill_lines: {
