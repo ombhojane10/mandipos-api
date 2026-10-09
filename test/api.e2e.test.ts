@@ -314,12 +314,27 @@ describe('print queue', () => {
     expect((await http().get('/v1/print/next?wait=0&name=Phone&widthDots=576').set(auth(home.accessToken)).expect(200)).body.id).toBe(two.body.id);
     await http().post(`/v1/print/jobs/${two.body.id}/done`).set(auth(home.accessToken)).send({ ok: true }).expect(204);
 
+    // The office gave a slip back above, so it is sitting out: its next poll is handed nothing.
+    await http().get('/v1/print/next?wait=0&name=P052&widthDots=576').set(auth(office.accessToken)).expect(204);
+    await owner(`UPDATE print_stations SET cooldown_until = NULL`);
+
+    // An old app reports it as a plain failure with its own message: given back all the same,
+    // and the device that failed it sits out — the next poll hands it nothing.
+    const three = await http().post('/v1/print/jobs').set(auth(office.accessToken)).send({ title: 'Daybook', image: png, widthDots: 576 }).expect(201);
+    expect((await http().get('/v1/print/next?wait=0&name=Fold&widthDots=576').set(auth(home.accessToken)).expect(200)).body.id).toBe(three.body.id);
+    await http().post(`/v1/print/jobs/${three.body.id}/done`).set(auth(home.accessToken))
+      .send({ ok: false, error: 'WiFi printer (192.168.1.48) tak nahi pahunche. Printer chalu hai aur isi WiFi par hai? (SocketTimeoutException)' }).expect(204);
+    expect((await http().get(`/v1/print/jobs/${three.body.id}`).set(auth(office.accessToken))).body).toMatchObject({ status: 'queued' });
+    await http().get('/v1/print/next?wait=0&name=Fold&widthDots=576').set(auth(home.accessToken)).expect(204);
+    expect((await http().get('/v1/print/next?wait=0&name=P052&widthDots=576').set(auth(office.accessToken)).expect(200)).body.id).toBe(three.body.id);
+    await http().post(`/v1/print/jobs/${three.body.id}/done`).set(auth(office.accessToken)).send({ ok: true }).expect(204);
+
     // Switched off: the station is gone.
     await http().delete('/v1/print/station').set(auth(office.accessToken)).expect(204);
     // (home polled once above, which made it a station too)
     await http().delete('/v1/print/station').set(auth(home.accessToken)).expect(204);
     expect((await http().get('/v1/print/station').set(auth(home.accessToken))).body.station).toBeNull();
-    expect((await http().get('/v1/print/jobs').set(auth(home.accessToken))).body.jobs).toHaveLength(2);
+    expect((await http().get('/v1/print/jobs').set(auth(home.accessToken))).body.jobs).toHaveLength(3);
   });
 });
 

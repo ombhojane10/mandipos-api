@@ -17,6 +17,13 @@ const ONLINE_SECONDS = 45;
 const EXPIRE_HOURS = 12;
 /** Claimed but never confirmed: the station died mid-print, so say so rather than print twice. */
 const UNCONFIRMED_MINUTES = 2;
+/** A station that couldn't reach the printer is handed no slip for this long. */
+const COOLDOWN_MINUTES = 10;
+/**
+ * The apps' own "couldn't reach the printer" message, in each language. Apps from before the
+ * requeue flag (0.52) report it as a plain failure; read this way, their slip is given back too.
+ */
+const UNREACHABLE = /tak nahi pahunche|तक नहीं पहुँचे|couldn't reach the wifi printer/i;
 const MAX_IMAGE_BYTES = 400_000;
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
@@ -88,9 +95,12 @@ export class PrintService {
   async station(p: Principal): Promise<Station | null> {
     return this.db.tx(async (tx) => {
       const shopId = await this.member(tx, p);
+      // A station sitting out (it couldn't reach the printer) is not "on": prefer one that is.
       const r = (await tx.query<{ device_id: string; name: string; width_dots: number; roll: string; last_poll_at: Date; online: boolean }>(
-        `SELECT device_id, name, width_dots, roll, last_poll_at, last_poll_at > now() - make_interval(secs => $2::int) AS online
-         FROM print_stations WHERE shop_id = $1 ORDER BY last_poll_at DESC LIMIT 1`,
+        `SELECT device_id, name, width_dots, roll, last_poll_at,
+                last_poll_at > now() - make_interval(secs => $2::int) AND NOT COALESCE(cooldown_until > now(), false) AS online
+         FROM print_stations WHERE shop_id = $1
+         ORDER BY COALESCE(cooldown_until > now(), false), last_poll_at DESC LIMIT 1`,
         [shopId, ONLINE_SECONDS],
       )).rows[0];
       if (!r) return null;
@@ -119,11 +129,15 @@ export class PrintService {
       await this.tidy(tx, shopId);
       return shopId;
     });
+    const cooling = (await this.db.query<{ cooling: boolean }>(
+      `SELECT COALESCE(cooldown_until > now(), false) AS cooling FROM print_stations WHERE device_id = $1`, [p.deviceId],
+    ))[0]?.cooling ?? false;
 
     const deadline = Date.now() + waitSeconds * 1000;
     for (;;) {
       if (gone()) return null;
-      const job = await this.claim(shopId, p.deviceId);
+      // Sitting out: wait the poll through, claim nothing.
+      const job = cooling ? null : await this.claim(shopId, p.deviceId);
       if (job) return job;
       const left = deadline - Date.now();
       if (left <= 0) break;
@@ -139,17 +153,22 @@ export class PrintService {
    * stops counting as a station until it asks for work again.
    */
   async done(p: Principal, id: string, ok: boolean, error: string, requeue = false) {
-    if (!ok && requeue) {
+    if (!ok && (requeue || UNREACHABLE.test(error))) {
       const back = await this.db.query<{ shop_id: string }>(
         `UPDATE print_jobs SET status = 'queued', station = NULL, claimed_at = NULL, error = NULL
          WHERE id = $1 AND station = $2 AND status = 'printing' RETURNING shop_id`,
         [id, p.deviceId],
       );
       if (!back.length) throw new BadRequestException('Yeh parchi is machine ke paas nahi thi');
-      await this.db.query(`DELETE FROM print_stations WHERE device_id = $1`, [p.deviceId]);
+      // It keeps polling (an old app doesn't know to stop), but is handed nothing for a while.
+      await this.db.query(
+        `UPDATE print_stations SET cooldown_until = now() + make_interval(mins => ${COOLDOWN_MINUTES}) WHERE device_id = $1`,
+        [p.deviceId],
+      );
       this.wake(back[0].shop_id);
       return;
     }
+    if (ok) await this.db.query(`UPDATE print_stations SET cooldown_until = NULL WHERE device_id = $1`, [p.deviceId]);
     const r = await this.db.query(
       `UPDATE print_jobs SET status = $3, error = $4, finished_at = now(),
               image = CASE WHEN $3 = 'printed' THEN NULL ELSE image END
