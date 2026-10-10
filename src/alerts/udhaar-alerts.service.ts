@@ -135,7 +135,8 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
   private async requireAdmin(p: Principal) {
     if (!p.shopId) throw new ForbiddenException('Join a shop first');
     const m = await this.db.one<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [p.shopId, p.userId]);
-    if (m?.role !== 'owner') throw new ForbiddenException('Only an admin can change this');
+    // Any member may: accountants hold every power the owners do.
+    if (!m) throw new ForbiddenException('Not a member of this shop');
   }
 
   /** Cloud API template send through the MandiPlus bot's number. */

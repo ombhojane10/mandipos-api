@@ -179,26 +179,26 @@ export class AccountsService {
     });
   }
 
-  /** Admin: the most an accountant's slip may come to before it needs approval; 0 = no limit. */
+  /** Any member: the most an accountant's slip may come to before it needs approval; 0 = no limit. */
   async setSlipLimit(p: Principal, paise: number) {
     return this.db.tx(async (tx) => {
-      await this.requireAdmin(tx, p);
+      await this.requireMember(tx, p);
       await tx.query(`UPDATE shops SET slip_limit_paise = $2 WHERE id = $1`, [p.shopId, paise]);
     });
   }
 
-  /** Admin: what the shop sells — tender coconut or amrud. */
+  /** Any member: what the shop sells — tender coconut or amrud. */
   async setCommodity(p: Principal, commodity: string) {
     return this.db.tx(async (tx) => {
-      await this.requireAdmin(tx, p);
+      await this.requireMember(tx, p);
       await tx.query(`UPDATE shops SET commodity = $2 WHERE id = $1`, [p.shopId, commodity]);
     });
   }
 
-  /** Admin: the shop's full address and bank accounts, printed at the head of every ledger. */
+  /** Any member: the shop's full address and bank accounts, printed at the head of every ledger. */
   async setLedgerDetails(p: Principal, address: string, bankAccounts: BankAccount[]) {
     return this.db.tx(async (tx) => {
-      await this.requireAdmin(tx, p);
+      await this.requireMember(tx, p);
       await tx.query(`UPDATE shops SET address = $2, bank_accounts = $3 WHERE id = $1`, [p.shopId, address, JSON.stringify(bankAccounts)]);
     });
   }
@@ -215,11 +215,11 @@ export class AccountsService {
     });
   }
 
-  /** Admin: the mobile number printed on the shop's slips. */
+  /** Any member: the mobile number printed on the shop's slips. */
   /** [dispatchPhone] left undefined keeps the shop's; '' clears it. */
   async setShopPhone(p: Principal, phone: string, dispatchPhone?: string) {
     return this.db.tx(async (tx) => {
-      await this.requireAdmin(tx, p);
+      await this.requireMember(tx, p);
       await tx.query(`UPDATE shops SET phone = $2 WHERE id = $1`, [p.shopId, phone]);
       if (dispatchPhone !== undefined) await tx.query(`UPDATE shops SET dispatch_phone = $2 WHERE id = $1`, [p.shopId, dispatchPhone]);
     });
@@ -241,6 +241,14 @@ export class AccountsService {
     const r = (await tx.query<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [p.shopId, p.userId])).rows[0];
     if (!r) throw new ForbiddenException('Aap is dukaan ki team mein nahi hain');
     return fromDb(r.role);
+  }
+
+  /**
+   * Any member of the shop. The owners asked for accountants to have every power they have
+   * ("owner is not available all the times"); only who is on the team stays with an admin.
+   */
+  private async requireMember(tx: Tx, p: Principal) {
+    await this.roleOf(tx, p);
   }
 
   private async requireAdmin(tx: Tx, p: Principal) {

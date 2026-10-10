@@ -158,8 +158,8 @@ describe('amrud', () => {
     await http().post('/v1/shops/members').set(auth(owner)).send({ phone: '9833300004' }).expect(204);
     const munim = await login('9833300004');
     expect(munim.me.shop.commodity).toBe('amrud');
-    await http().post('/v1/shops/commodity').set(auth(munim.accessToken)).send({ commodity: 'nariyal' }).expect(403);
-    await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'nariyal' }).expect(204);
+    // An accountant may change it too: they hold every power the owners do.
+    await http().post('/v1/shops/commodity').set(auth(munim.accessToken)).send({ commodity: 'nariyal' }).expect(204);
     expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.commodity).toBe('nariyal');
     await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'amrud' }).expect(204);
 
@@ -188,14 +188,13 @@ describe('slip limit', () => {
     const munim = await login('9822200002');
 
     // The limit is the admin's to set, and every terminal reads it from /me.
-    await http().post('/v1/shops/slip-limit').set(auth(munim.accessToken)).send({ slipLimitPaise: 5000000 }).expect(403);
+    await http().post('/v1/shops/slip-limit').set(auth(munim.accessToken)).send({ slipLimitPaise: 100 }).expect(204);
     await http().post('/v1/shops/slip-limit').set(auth(admin.accessToken)).send({ slipLimitPaise: 5000000 }).expect(204);
     const me = await http().get('/v1/me').set(auth(munim.accessToken)).expect(200);
     expect(me.body.shop.slipLimitPaise).toBe(5000000);
-    // The slip's phone is the shop's, not whoever is logged in; only an admin changes it.
+    // The slip's phone is the shop's, not whoever is logged in; any member may change it.
     expect(me.body.shop.phone).toBe('9822200001');
-    await http().post('/v1/shops/phone').set(auth(munim.accessToken)).send({ phone: '9871429335' }).expect(403);
-    await http().post('/v1/shops/phone').set(auth(admin.accessToken)).send({ phone: '9871429335' }).expect(204);
+    await http().post('/v1/shops/phone').set(auth(munim.accessToken)).send({ phone: '9871429335' }).expect(204);
     expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.phone).toBe('9871429335');
     // Dispatch's number rides beside it; a call without it keeps it, '' clears it.
     expect((await http().get('/v1/me').set(auth(munim.accessToken))).body.shop.dispatchPhone).toBe('');
@@ -249,8 +248,7 @@ describe('ledger details', () => {
         { holder: 'GUPTA FRUIT CO.', bank: 'SBI', ifsc: 'SBIN0001234', account: '30012345678' },
       ],
     };
-    await http().post('/v1/shops/ledger-details').set(auth(munim.accessToken)).send(details).expect(403);
-    await http().post('/v1/shops/ledger-details').set(auth(admin.accessToken)).send(details).expect(204);
+    await http().post('/v1/shops/ledger-details').set(auth(munim.accessToken)).send(details).expect(204);
 
     // Every terminal reads them from /me; the empty row is dropped and IFSC is upper-cased.
     const shop = (await http().get('/v1/me').set(auth(munim.accessToken))).body.shop;
@@ -375,7 +373,7 @@ describe('daybook books', () => {
     return { table: 'daybook_entries', row: { id: uuidv7(), created_at: t, updated_at: t, direction: 'out', mode: 'cash', category: 'kharcha', amount_paise: 5000, business_date: today(), ...over } };
   };
 
-  it('lets an accountant write the galla only, and only their own lines', async () => {
+  it('lets an accountant write every book, and take back any line', async () => {
     const admin = await registerShop('9822200011', 'Books Shop');
     await http().post('/v1/shops/members').set(auth(admin.accessToken)).send({ phone: '9822200012', name: 'Rajnish' }).expect(204);
     const munim = await login('9822200012');
@@ -390,7 +388,7 @@ describe('daybook books', () => {
       entry({ mode: 'bank', category: 'bank_nikala' }),
       entry({ direction: 'in', category: 'opening', amount_paise: 1000000 }),
     ]);
-    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'rejected', 'rejected', 'rejected', 'rejected']);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied', 'applied', 'applied']);
 
     // The admin writes every book, and the opening.
     const byAdmin = await push(admin.accessToken, [
@@ -400,7 +398,7 @@ describe('daybook books', () => {
     ]);
     expect(byAdmin.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied']);
 
-    // An accountant can take back their own line, not the admin's — even one in the galla.
+    // An accountant can take back any line, the admin's too: the owner is not always there.
     const later = new Date(Date.now() + 1000).toISOString();
     const adminCash = entry({ category: 'bhada' });
     await push(admin.accessToken, [adminCash]);
@@ -408,7 +406,7 @@ describe('daybook books', () => {
       { ...own, row: { ...own.row, hidden: true, updated_at: later } },
       { ...adminCash, row: { ...adminCash.row, hidden: true, updated_at: later } },
     ]);
-    expect(hides.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
+    expect(hides.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
   });
 });
 
