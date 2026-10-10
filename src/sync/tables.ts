@@ -186,6 +186,15 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       amount_paise: paise.positive(), business_date: day, hidden: bool.default(false),
     }),
   },
+  // Mazdoori typed in by hand (041): + adds to what the palledars earned, − takes off.
+  // Earned labour, not money moved, so no book reads it.
+  labour_adjustments: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at, business_date: day, note: text(200), hidden: bool.default(false),
+      amount_paise: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).refine((v) => v !== 0, 'zero'),
+    }),
+  },
   day_closes: {
     kind: 'fact',
     row: z.object({

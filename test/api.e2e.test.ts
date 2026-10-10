@@ -659,6 +659,19 @@ describe('sync', () => {
     expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied', 'rejected']);
   });
 
+  // Mazdoori typed in by hand: + or −, and taken back by hiding it.
+  it('takes a mazdoori adjustment either way, and lets it be taken back', async () => {
+    const t = now();
+    const later = new Date(Date.now() + 1000).toISOString();
+    const row = (id: string, amount: number, extra = {}) => ({ table: 'labour_adjustments', row: {
+      id, created_at: t, updated_at: t, business_date: today(), note: 'Gaadi utaari', amount_paise: amount, ...extra } });
+    const a = uuidv7();
+    const res = await push(owner.accessToken, [row(a, 50000), row(uuidv7(), -20000), row(uuidv7(), 0)]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'rejected']);
+    const hide = await push(owner.accessToken, [row(a, 50000, { hidden: true, updated_at: later })]);
+    expect(hide.body.results[0].status).toBe('applied');
+  });
+
   // Badlein on a collection: void its rows, then write the corrected payment under the same raseed number.
   it('lets a raseed number be used again only after the collection holding it is voided', async () => {
     const t = now();
@@ -734,7 +747,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'labour_adjustments', 'labour_adjustments', 'labour_adjustments', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();
