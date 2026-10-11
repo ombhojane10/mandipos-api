@@ -597,8 +597,9 @@ describe('sync', () => {
   });
 
   // The shop's night check is "is any slip number missing?", which only means something if
-  // two terminals can never hand out the same one.
-  it('refuses a second slip with a number the shop already used', async () => {
+  // two terminals can never hold the same one. A number already taken is not refused — that
+  // slip's money and dana would stay on one machine — it is kept under the next free number.
+  it('keeps a slip whose number is already used, under the next free number', async () => {
     const t = now();
     const slip = (extra: Record<string, unknown>) => ({
       table: 'bills',
@@ -609,12 +610,56 @@ describe('sync', () => {
       },
     });
     const res = await push(owner.accessToken, [slip({ slip_no: 700 }), slip({ slip_no: 700 }), slip({ slip_no: 701 })]);
-    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected', 'applied']);
-    expect(res.body.results[1].error).toMatch(/duplicate/);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied']);
+    expect(res.body.results.map((r: any) => r.renumbered ?? null)).toEqual([null, { from: 700, to: 701 }, { from: 701, to: 702 }]);
+    // A re-send of a slip already kept changes nothing.
+    const again = await push(owner.accessToken, [{ table: 'bills', row: { ...slip({}).row, id: res.body.results[1].id, slip_no: 700 } }]);
+    expect(again.body.results[0]).toEqual({ id: res.body.results[1].id, status: 'skipped' });
+  });
+
+  // Light gone: the tab keeps making slips offline while the P5 carries on online. When the tab
+  // comes back its slips land under new numbers, and a Badlein it made offline stays one slip.
+  it('moves an offline terminal\'s clashing slip, and its edit follows it', async () => {
+    const tab = await login('9800000001');
+    const t = now();
+    const slip = (id: string, n: number) => ({
+      table: 'bills',
+      row: {
+        id, created_at: t, number: `A3/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+        kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+        total_paise: 100, paid_paise: 100, cash_paise: 100, slip_no: n,
+      },
+    });
+    const p5 = await push(owner.accessToken, [slip(uuidv7(), 850)]);
+    expect(p5.body.results[0].status).toBe('applied');
+    const original = uuidv7();
+    const copy = uuidv7();
+    const voidId = uuidv7();
+    const res = await push(tab.accessToken, [
+      slip(original, 850),
+      { table: 'bill_voids', row: { id: voidId, created_at: t, bill_id: original, slip_no: 850, reason: 'edited' } },
+      slip(copy, 850),
+      slip(uuidv7(), 851),
+    ]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied']);
+    expect(res.body.results.map((r: any) => r.renumbered ?? null)).toEqual([
+      { from: 850, to: 851 }, null, { from: 850, to: 851 }, { from: 851, to: 852 }]);
+    // The feed tells every terminal the number the server holds, the void's too.
+    const changes: any[] = [];
+    for (let after = 0, more = true; more;) {
+      const page = await http().get(`/v1/sync/pull?after=${after}&limit=500`).set('Authorization', `Bearer ${owner.accessToken}`).expect(200);
+      changes.push(...page.body.changes);
+      after = page.body.lastSeq;
+      more = page.body.hasMore;
+    }
+    const row = (id: string) => changes.find((c: any) => c.row.id === id)?.row;
+    expect([row(original).slip_no, row(original).asked_slip_no]).toEqual([851, 850]);
+    expect(row(voidId).slip_no).toBe(851);
+    expect(row(copy).slip_no).toBe(851);
   });
 
   // Badlein on a saved slip: cancel it, then write the corrected one under the same number.
-  it('lets a slip number be used again only after the slip holding it is voided', async () => {
+  it('lets a slip number be used again once the slip holding it is voided', async () => {
     const t = now();
     const slip = (id: string) => ({
       table: 'bills',
@@ -628,13 +673,12 @@ describe('sync', () => {
     const second = uuidv7();
     const res = await push(owner.accessToken, [
       slip(first),
-      slip(uuidv7()),
       { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: first, slip_no: 800, reason: 'edited' } },
       slip(second),
       slip(uuidv7()),
     ]);
-    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected', 'applied', 'applied', 'rejected']);
-    expect(res.body.results[4].error).toMatch(/duplicate/);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied']);
+    expect(res.body.results.map((r: any) => r.renumbered?.to ?? null)).toEqual([null, null, null, 853]);
   });
 
   // A paid slip deleted: its money handed back, or kept as the grahak's advance.
@@ -672,8 +716,9 @@ describe('sync', () => {
     expect(hide.body.results[0].status).toBe('applied');
   });
 
-  // Badlein on a collection: void its rows, then write the corrected payment under the same raseed number.
-  it('lets a raseed number be used again only after the collection holding it is voided', async () => {
+  // Badlein on a collection: void its rows, then write the corrected payment under the same raseed
+  // number. A raseed number someone else already holds is kept under the next free one.
+  it('reuses a raseed number once its collection is voided, and moves a clashing one', async () => {
     const t = now();
     const pay = (id: string) => ({
       table: 'collections',
@@ -685,10 +730,9 @@ describe('sync', () => {
       pay(uuidv7()),
       { table: 'collection_voids', row: { id: uuidv7(), created_at: t, collection_id: first, receipt_no: 900, reason: 'edited' } },
       pay(uuidv7()),
-      pay(uuidv7()),
     ]);
-    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'rejected', 'applied', 'applied', 'rejected']);
-    expect(res.body.results[4].error).toMatch(/duplicate/);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied']);
+    expect(res.body.results.map((r: any) => r.renumbered ?? null)).toEqual([null, { from: 900, to: 901 }, null, null]);
   });
 
   // Free: dana given away — ₹0, nothing paid, nothing owed.
@@ -747,7 +791,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'labour_adjustments', 'labour_adjustments', 'labour_adjustments', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'labour_adjustments', 'labour_adjustments', 'labour_adjustments', 'collections', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();
