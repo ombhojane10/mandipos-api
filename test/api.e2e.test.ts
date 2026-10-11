@@ -658,6 +658,77 @@ describe('sync', () => {
     expect(row(copy).slip_no).toBe(851);
   });
 
+  // Two terminals act on the same slip without seeing each other (offline, or at the same moment).
+  // The later word wins and the slip stays one slip: a second void carries on to the copy now
+  // standing in its place; with nothing standing (both deleted it) it is skipped, never refused.
+  it('lets the later of two edits, or an edit and a delete, win — one live slip, nothing stuck', async () => {
+    const tab = await login('9800000001');
+    const t = now();
+    const slip = (id: string, n: number) => ({ table: 'bills', row: {
+      id, created_at: t, number: `A4/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+      kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+      total_paise: 100, paid_paise: 100, cash_paise: 100, slip_no: n } });
+    const voidOf = (bill: string, n: number, reason = 'edited') => ({ table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: bill, slip_no: n, reason } });
+    const x = uuidv7();
+    await push(owner.accessToken, [slip(x, 870)]);
+    const p5Copy = uuidv7();
+    const tabCopy = uuidv7();
+    const first = await push(owner.accessToken, [voidOf(x, 870), slip(p5Copy, 870)]);
+    expect(first.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied']);
+    // The tab edited the same slip offline: its void finds the P5's copy standing, and its copy takes the number.
+    const second = await push(tab.accessToken, [voidOf(x, 870), slip(tabCopy, 870)]);
+    expect(second.body.results.map((r: any) => r.status)).toEqual(['skipped', 'applied']);
+    expect(second.body.results[0].passedOn).toEqual([p5Copy]);
+    expect(second.body.results[1].renumbered).toBeUndefined();
+    // Then the P5 deletes it (it knew only its own copy): the slip is gone, whoever's copy stood.
+    const del = await push(owner.accessToken, [voidOf(p5Copy, 870, 'deleted')]);
+    expect(del.body.results[0]).toMatchObject({ status: 'skipped', passedOn: [tabCopy] });
+    // And the tab deletes it too: nothing left to void, nothing refused.
+    const again = await push(tab.accessToken, [voidOf(tabCopy, 870, 'deleted')]);
+    expect(again.body.results[0].status).toBe('skipped');
+    const changes: any[] = [];
+    for (let after = 0, more = true; more;) {
+      const page = await http().get(`/v1/sync/pull?after=${after}&limit=500`).set('Authorization', `Bearer ${owner.accessToken}`).expect(200);
+      changes.push(...page.body.changes); after = page.body.lastSeq; more = page.body.hasMore;
+    }
+    const voided = new Set(changes.filter((c) => c.table === 'bill_voids').map((c) => c.row.bill_id));
+    expect([x, p5Copy, tabCopy].every((id) => voided.has(id))).toBe(true);
+  });
+
+  // A Badlein made on a terminal that still knew the slip by its old number: the copy takes the
+  // number the server holds for the slip it replaces, not a new one.
+  it('gives an edit the number its slip holds on the server, whichever terminal edits it', async () => {
+    const tab = await login('9800000001');
+    const t = now();
+    const slip = (id: string, n: number) => ({ table: 'bills', row: {
+      id, created_at: t, number: `A5/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+      kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+      total_paise: 100, paid_paise: 100, cash_paise: 100, slip_no: n } });
+    await push(owner.accessToken, [slip(uuidv7(), 880)]);
+    const x = uuidv7();
+    const moved = await push(tab.accessToken, [slip(x, 880)]);        // offline clash: kept under the next number
+    const held = moved.body.results[0].renumbered.to;
+    // A third terminal pulled the slip before it moved and edits it as #880.
+    const third = await login('9800000001');
+    const copy = uuidv7();
+    const res = await push(third.accessToken, [
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: x, slip_no: 880, reason: 'edited' } }, slip(copy, 880)]);
+    expect(res.body.results[1]).toMatchObject({ status: 'applied', renumbered: { from: 880, to: held } });
+  });
+
+  // The answer to a push got lost; the terminal sends the same rows again, an edit among them.
+  it('skips a re-sent slip whose number its corrected copy now holds', async () => {
+    const t = now();
+    const slip = (id: string) => ({ table: 'bills', row: {
+      id, created_at: t, number: `A6/2627/${String(Math.floor(Math.random() * 900000) + 100000)}`,
+      kind: 'kachchi', buyer_name: 'Walk-in', business_date: today(), pay_mode: 'cash',
+      total_paise: 100, paid_paise: 100, cash_paise: 100, slip_no: 890 } });
+    const x = uuidv7();
+    const items = [slip(x), { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: x, slip_no: 890, reason: 'edited' } }, slip(uuidv7())];
+    expect((await push(owner.accessToken, items)).body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied']);
+    expect((await push(owner.accessToken, items)).body.results.map((r: any) => r.status)).toEqual(['skipped', 'skipped', 'skipped']);
+  });
+
   // Badlein on a saved slip: cancel it, then write the corrected one under the same number.
   it('lets a slip number be used again once the slip holding it is voided', async () => {
     const t = now();
@@ -678,7 +749,7 @@ describe('sync', () => {
       slip(uuidv7()),
     ]);
     expect(res.body.results.map((r: any) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied']);
-    expect(res.body.results.map((r: any) => r.renumbered?.to ?? null)).toEqual([null, null, null, 853]);
+    expect(res.body.results.map((r: any) => r.renumbered?.from ?? null)).toEqual([null, null, null, 800]);
   });
 
   // A paid slip deleted: its money handed back, or kept as the grahak's advance.
@@ -791,7 +862,7 @@ describe('sync', () => {
       if (!res.body.hasMore) break;
     }
     expect(all.map((c) => c.seq)).toEqual(all.map((_, i) => i + 1));
-    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'labour_adjustments', 'labour_adjustments', 'labour_adjustments', 'collections', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
+    expect(all.map((c) => c.table)).toEqual(['brands', 'rates', 'trucks', 'truck_grades', 'truck_grades', 'truck_grades', 'buyers', 'bills', 'bill_lines', 'collections', 'daybook_entries', 'delivery_slips', 'receivings', 'spoilage', 'bills', 'bills', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bill_voids', 'bills', 'bill_voids', 'bills', 'bill_voids', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bill_voids', 'bills', 'bills', 'bills', 'bills', 'bill_voids', 'bill_voids', 'labour_adjustments', 'labour_adjustments', 'labour_adjustments', 'collections', 'collections', 'collection_voids', 'collections', 'bills', 'bills', 'bills', 'udhaar_entries', 'buyers']);
     // A miscount taken off a gaadi comes back as a correction, not as rotten nuts.
     expect(all.find((c) => c.table === 'spoilage').row).toMatchObject({ qty: 40, kind: 'correction' });
     const renamed = all.filter((c) => c.table === 'buyers').pop();

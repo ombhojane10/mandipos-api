@@ -1,4 +1,5 @@
 import { ConflictException, Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { DatabaseError } from 'pg';
 import { Principal } from '../auth/tokens.service';
 import { Db, Tx } from '../db/db.service';
@@ -11,7 +12,12 @@ export type PushResult = {
   id: string | null; status: 'applied' | 'skipped' | 'rejected'; error?: string;
   /** The slip (or raseed) number was already taken: kept under [to] instead of [from]. */
   renumbered?: { from: number; to: number };
+  /** A void of a row already voided elsewhere: it voided these, the rows standing in its place, instead. */
+  passedOn?: string[];
 };
+
+/** Per push: the numbers its voids freed, as the terminal knew them → as the server holds them. */
+type Freed = { bills: Map<number, number>; collections: Map<number, number> };
 
 /** Numbers the shop hands out once: a slip's number, a collection's raseed number. */
 const NUMBERED: Record<string, { col: string; asked: string; voids: string; fk: string }> = {
@@ -60,14 +66,16 @@ export class SyncService {
       let role: string | null | undefined;
       const roleOf = async () => role !== undefined ? role : (role = (await tx.query<{ role: string }>(
         `SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, p.userId])).rows[0]?.role ?? null);
+      // What the voids in this push freed: the number a terminal knew a slip by → the server's.
+      const freed: Freed = { bills: new Map(), collections: new Map() };
       for (let i = 0; i < items.length;) {
         const txn = typeof items[i]?.txn === 'string' && items[i].txn ? items[i].txn : null;
         let end = i + 1;
         if (txn) while (end < items.length && items[end]?.txn === txn) end++;
         if (!txn || end - i === 1) {
-          results.push(await this.applyOne(tx, p, shopId, items[i], roleOf));
+          results.push(await this.applyOne(tx, p, shopId, items[i], roleOf, freed));
         } else {
-          results.push(...await this.applyGroup(tx, p, shopId, items.slice(i, end), roleOf));
+          results.push(...await this.applyGroup(tx, p, shopId, items.slice(i, end), roleOf, freed));
         }
         i = end;
       }
@@ -77,12 +85,12 @@ export class SyncService {
 
   /** All of [group] or none of it. */
   private async applyGroup(
-    tx: Tx, p: Principal, shopId: string, group: PushItem[], roleOf: () => Promise<string | null>,
+    tx: Tx, p: Principal, shopId: string, group: PushItem[], roleOf: () => Promise<string | null>, freed: Freed,
   ): Promise<PushResult[]> {
     await tx.query('SAVEPOINT txn');
     const out: PushResult[] = [];
     for (const item of group) {
-      const r = await this.applyOne(tx, p, shopId, item, roleOf);
+      const r = await this.applyOne(tx, p, shopId, item, roleOf, freed);
       out.push(r);
       if (r.status === 'rejected') {
         await tx.query('ROLLBACK TO SAVEPOINT txn');
@@ -113,7 +121,7 @@ export class SyncService {
   }
 
   private async applyOne(
-    tx: Tx, p: Principal, shopId: string, item: PushItem, roleOf: () => Promise<string | null>,
+    tx: Tx, p: Principal, shopId: string, item: PushItem, roleOf: () => Promise<string | null>, freed: Freed,
   ): Promise<PushResult> {
     const rawId = typeof item?.row?.id === 'string' ? item.row.id : null;
     const def = SYNC_TABLES[item?.table];
@@ -125,32 +133,36 @@ export class SyncService {
     }
 
     const row: Record<string, unknown> = { ...parsed.data, shop_id: shopId, device_id: p.deviceId, created_by: p.userId };
-    const renumbered = await this.freeNumber(tx, shopId, p.deviceId, item.table, row);
-    const cols = Object.keys(row);
-    const values = cols.map((c) => (c === 'raw' ? JSON.stringify(row[c]) : row[c]));
-    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
     const table = item.table;
-    const onConflict = def.kind === 'fact'
-      ? 'DO NOTHING'
-      : `DO UPDATE SET ${cols.filter((c) => !IMMUTABLE_ON_UPDATE.has(c)).map((c) => `${c} = EXCLUDED.${c}`).join(', ')}
-         WHERE ${table}.updated_at < EXCLUDED.updated_at`;
+    const settled = await this.settle(tx, shopId, p.deviceId, table, row, freed);
+    if (settled.skip) {
+      // Already stored (a re-send), or a void of a row another terminal had already voided.
+      await tx.query('SAVEPOINT item');
+      try {
+        // The later word wins: it carries on to the row now standing in the voided one's place.
+        for (const target of settled.passOn ?? []) {
+          const v = VOID_OF[table];
+          const held = (await tx.query<{ n: number | null }>(
+            `SELECT ${v.col} AS n FROM ${v.parent} WHERE shop_id = $1 AND id = $2`, [shopId, target])).rows[0]?.n ?? null;
+          await this.insert(tx, p, shopId, table, def.kind, { ...row, id: randomUUID(), [v.fk]: target, [v.col]: held });
+        }
+        await tx.query('RELEASE SAVEPOINT item');
+      } catch (err) {
+        await tx.query('ROLLBACK TO SAVEPOINT item');
+        return { id: row.id as string, status: 'rejected', error: describe(err) };
+      }
+      return settled.passOn?.length
+        ? { id: row.id as string, status: 'skipped', passedOn: settled.passOn }
+        : { id: row.id as string, status: 'skipped' };
+    }
+    const renumbered = settled.renumbered;
 
     await tx.query('SAVEPOINT item');
     try {
-      const inserted = await tx.query(
-        `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) ${onConflict} RETURNING id`,
-        values,
-      );
-      if (inserted.rowCount === 0) {
+      if (!(await this.insert(tx, p, shopId, table, def.kind, row))) {
         await tx.query('RELEASE SAVEPOINT item');
         return { id: row.id as string, status: 'skipped' };
       }
-      await tx.query(
-        `WITH next AS (UPDATE shop_counters SET last_seq = last_seq + 1 WHERE shop_id = $1 RETURNING last_seq)
-         INSERT INTO changes (shop_id, seq, table_name, row_id, row, device_id)
-         SELECT $1, next.last_seq, $2, t.id, to_jsonb(t), $4 FROM next, ${table} t WHERE t.id = $3`,
-        [shopId, table, row.id, p.deviceId],
-      );
       await tx.query('RELEASE SAVEPOINT item');
       return renumbered ? { id: row.id as string, status: 'applied', renumbered } : { id: row.id as string, status: 'applied' };
     } catch (err) {
@@ -159,42 +171,111 @@ export class SyncService {
     }
   }
 
+  /** Inserts (or, for a master, updates) one row and appends it to the feed. False when nothing changed. */
+  private async insert(
+    tx: Tx, p: Principal, shopId: string, table: string, kind: 'fact' | 'master', row: Record<string, unknown>,
+  ): Promise<boolean> {
+    const cols = Object.keys(row);
+    const values = cols.map((c) => (c === 'raw' ? JSON.stringify(row[c]) : row[c]));
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+    const onConflict = kind === 'fact'
+      ? 'DO NOTHING'
+      : `DO UPDATE SET ${cols.filter((c) => !IMMUTABLE_ON_UPDATE.has(c)).map((c) => `${c} = EXCLUDED.${c}`).join(', ')}
+         WHERE ${table}.updated_at < EXCLUDED.updated_at`;
+    const inserted = await tx.query(
+      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) ${onConflict} RETURNING id`,
+      values,
+    );
+    if (inserted.rowCount === 0) return false;
+    await tx.query(
+      `WITH next AS (UPDATE shop_counters SET last_seq = last_seq + 1 WHERE shop_id = $1 RETURNING last_seq)
+       INSERT INTO changes (shop_id, seq, table_name, row_id, row, device_id)
+       SELECT $1, next.last_seq, $2, t.id, to_jsonb(t), $4 FROM next, ${table} t WHERE t.id = $3`,
+      [shopId, table, row.id, p.deviceId],
+    );
+    return true;
+  }
+
   /**
-   * Two terminals can hand out the same slip number: one offline (light gone, no wifi) numbers
-   * on from what it last saw while the other carries on online. The slip that reaches the
-   * server second is kept — never refused, or its money and dana would stay on one machine —
-   * under the shop's next free number, with the number it asked for in asked_slip_no. Pushes
-   * of one shop run one at a time (the advisory lock), so "next free" can't be handed out twice.
+   * What a numbered row, or a void of one, needs before it is stored — the cases two terminals
+   * make between them.
    *
-   * A corrected copy (Badlein) of a slip that was moved this way asks for the old number again;
-   * it takes the number its original got, so the edit stays one slip. Voids copy the number the
-   * server holds for the row they cancel. Collections' raseed numbers work the same way.
+   * Two terminals can hand out the same slip number: one offline (light gone, no wifi) numbers
+   * on from what it last saw while the other carries on; or both online press print on the same
+   * number at once. The slip that reaches the server second is kept — never refused, or its
+   * money and dana would stay on one machine — under the shop's next free number, with the
+   * number it asked for in asked_slip_no. Pushes of one shop run one at a time (the advisory
+   * lock), so "next free" can't be handed out twice. A corrected copy (Badlein) of a slip that
+   * was moved this way asks for the old number again; it takes the number its original got, so
+   * the edit stays one slip. Raseed numbers on collections work the same way.
+   *
+   * A row the server already has (a re-send after the answer was lost) is skipped untouched.
+   *
+   * A void copies the number the server holds for the row it cancels. A void of a row another
+   * terminal has already voided — both edited the same slip, or one edited and one deleted it —
+   * isn't stored a second time: the later word wins, so it voids whatever now stands in that
+   * row's place (the other terminal's corrected copy) and the slip ends up as this terminal left
+   * it, on every terminal. With nothing standing there (both deleted it) it is simply skipped.
    */
-  private async freeNumber(
-    tx: Tx, shopId: string, deviceId: string, table: string, row: Record<string, unknown>,
-  ): Promise<{ from: number; to: number } | undefined> {
+  private async settle(
+    tx: Tx, shopId: string, deviceId: string, table: string, row: Record<string, unknown>, freed: Freed,
+  ): Promise<{ skip?: boolean; passOn?: string[]; renumbered?: { from: number; to: number } }> {
     const v = VOID_OF[table];
     if (v) {
-      const { rows } = await tx.query<{ n: number | null }>(
-        `SELECT ${v.col} AS n FROM ${v.parent} WHERE shop_id = $1 AND id = $2`, [shopId, row[v.fk]]);
-      const held = rows[0]?.n;
-      if (held != null && held !== row[v.col]) row[v.col] = held;
-      return undefined;
+      const { rows } = await tx.query<{ n: number | null; known: boolean; voided: boolean }>(
+        `SELECT p.${v.col} AS n,
+                EXISTS (SELECT 1 FROM ${table} x WHERE x.shop_id = $1 AND x.id = $3) AS known,
+                EXISTS (SELECT 1 FROM ${table} x WHERE x.shop_id = $1 AND x.${v.fk} = $2) AS voided
+           FROM ${v.parent} p WHERE p.shop_id = $1 AND p.id = $2`,
+        [shopId, row[v.fk], row.id]);
+      const parent = rows[0];
+      if (!parent) return {};                  // its row never reached the server: the insert says so
+      if (parent.known) return { skip: true };
+      // A Badlein's corrected copy follows in the same push asking for the number this terminal
+      // knew the slip by; it gets the one the server holds.
+      if (parent.n != null && typeof row[v.col] === 'number') freed[v.parent as keyof Freed].set(row[v.col] as number, parent.n);
+      if (parent.n != null && parent.n !== row[v.col]) row[v.col] = parent.n;
+      if (!parent.voided) return {};
+      const live = (alias: string, voids: string, fk: string) =>
+        `NOT EXISTS (SELECT 1 FROM ${voids} z WHERE z.shop_id = ${alias}.shop_id AND z.${fk} = ${alias}.id)`;
+      const standing = table === 'bill_voids'
+        // A slip's corrected copy carries its number.
+        ? (parent.n == null ? [] : (await tx.query<{ id: string }>(
+          `SELECT b.id FROM bills b WHERE b.shop_id = $1 AND b.slip_no = $2 AND ${live('b', 'bill_voids', 'bill_id')}`,
+          [shopId, parent.n])).rows)
+        // A payment's corrected rows keep its payer and its time.
+        : (await tx.query<{ id: string }>(
+          `SELECT c.id FROM collections c JOIN collections o ON o.shop_id = c.shop_id AND o.id = $2
+            WHERE c.shop_id = $1 AND c.id <> o.id AND c.buyer_id = o.buyer_id AND c.created_at = o.created_at
+              AND ${live('c', 'collection_voids', 'collection_id')}`,
+          [shopId, row[v.fk]])).rows;
+      return { skip: true, passOn: standing.map((r) => r.id) };
     }
     const n = NUMBERED[table];
     const asked = n ? row[n.col] : null;
-    if (!n || typeof asked !== 'number') return undefined;
+    if (!n) return {};
+    const { rows: mine } = await tx.query<{ known: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM ${table} WHERE shop_id = $1 AND id = $2) AS known`, [shopId, row.id]);
+    // Already stored — a re-send after the answer got lost. Its number may since have moved,
+    // or a corrected copy may hold it now; either way there is nothing to store.
+    if (mine[0].known) return { skip: true };
+    if (typeof asked !== 'number') return {};
     const free = (k: string) => `NOT EXISTS (
       SELECT 1 FROM ${table} x WHERE x.shop_id = $1 AND x.${n.col} = ${k} AND x.id <> $2
          AND NOT EXISTS (SELECT 1 FROM ${n.voids} v WHERE v.shop_id = x.shop_id AND v.${n.fk} = x.id))`;
-    const { rows: mine } = await tx.query<{ held: number | null; known: boolean; free: boolean }>(
-      `SELECT (SELECT ${n.col} FROM ${table} WHERE shop_id = $1 AND id = $2) AS held,
-              EXISTS (SELECT 1 FROM ${table} WHERE shop_id = $1 AND id = $2) AS known, ${free('$3')} AS free`,
-      [shopId, row.id, asked]);
-    // Already stored — a re-send after the answer got lost: it carries the number it was kept
-    // under, so the number check passes and the insert is skipped, never refused.
-    if (mine[0].known) { row[n.col] = mine[0].held; return undefined; }
-    if (mine[0].free) return undefined;
+    // The corrected copy of a slip voided just before it in this push: the slip's own number.
+    const own = freed[table as keyof Freed].get(asked);
+    if (own !== undefined) {
+      const { rows: ok } = await tx.query<{ free: boolean }>(`SELECT ${free('$3')} AS free`, [shopId, row.id, own]);
+      if (ok[0].free) {
+        if (own === asked) return {};
+        row[n.col] = own;
+        row[n.asked] = asked;
+        return { renumbered: { from: asked, to: own } };
+      }
+    }
+    const { rows: open } = await tx.query<{ free: boolean }>(`SELECT ${free('$3')} AS free`, [shopId, row.id, asked]);
+    if (open[0].free) return {};
     const { rows: was } = await tx.query<{ n: number }>(
       `SELECT y.${n.col} AS n FROM ${table} y
         WHERE y.shop_id = $1 AND y.device_id = $4 AND y.${n.asked} = $3 AND ${free(`y.${n.col}`)}
@@ -206,7 +287,7 @@ export class SyncService {
       [shopId])).rows[0].n);
     row[n.col] = to;
     row[n.asked] = asked;
-    return { from: asked, to };
+    return { renumbered: { from: asked, to } };
   }
 }
 
