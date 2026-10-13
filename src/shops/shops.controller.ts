@@ -151,6 +151,14 @@ export class ShopsController {
     await this.accounts.setShopPhone(p, b.phone, b.dispatchPhone);
   }
 
+  /** Any member: the letters boxed at the head of every slip ('' = the firm name's initials). */
+  @Post('slip-code')
+  @HttpCode(204)
+  async slipCode(@Me() p: Principal, @Body() body: unknown) {
+    const b = parse(z.object({ code: z.string().trim().toUpperCase().regex(/^[A-Z0-9&]{0,6}$/, 'up to 6 letters or digits') }), body);
+    await this.accounts.setSlipCode(p, b.code);
+  }
+
   /** Admin: a new join code; the old one stops working. */
   @Post('join-code')
   @HttpCode(200)

@@ -187,6 +187,14 @@ export class AccountsService {
     });
   }
 
+  /** Any member: the slip-head letters, e.g. ATC for AL Shamsh Trading Co.; '' = initials. */
+  async setSlipCode(p: Principal, code: string) {
+    return this.db.tx(async (tx) => {
+      await this.requireMember(tx, p);
+      await tx.query(`UPDATE shops SET slip_code = $2 WHERE id = $1`, [p.shopId, code]);
+    });
+  }
+
   /** Any member: what the shop sells — tender coconut or amrud. */
   async setCommodity(p: Principal, commodity: string) {
     return this.db.tx(async (tx) => {
