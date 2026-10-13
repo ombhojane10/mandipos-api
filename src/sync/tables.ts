@@ -102,6 +102,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       delivery: bool.default(false), staff_name: text(60),
       // Amrud: the per-box chungi charged to the customer, already inside total_paise.
       chungi_paise: paise.default(0),
+      // The shop's bank account the UPI part went to ("ICICI ··4521"); '' = not said.
+      upi_bank: text(80),
     }),
   },
   // Udhaar not from a slip: a grahak's balance from the old book, or credit added by hand.
@@ -154,6 +156,7 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       // The receipt's own serial, and the split — one payment can be part cash, part UPI.
       receipt_no: z.number().int().positive().max(9_999_999).nullable().default(null),
       cash_paise: paise.default(0), upi_paise: paise.default(0),
+      upi_bank: text(80),
     }),
   },
   // A collection row cancelled — outright, or because a corrected payment took its raseed
