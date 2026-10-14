@@ -478,6 +478,27 @@ describe('app updates', () => {
     expect(Buffer.compare(got.body as Buffer, apk)).toBe(0);
     await http().get('/v1/app/apk?flavor=pos&versionCode=79').set(auth).expect(404);
   });
+
+  it('lets anyone download the newest build from the website, no login', async () => {
+    // Rows from the test above: pos 0.40.0 is newest, daybook 0.9.0.
+    const listed = await http().get('/v1/public/app').expect(200);
+    expect(listed.body.pos).toMatchObject({ versionCode: 81, versionName: '0.40.0', sizeBytes: expect.any(Number) });
+    expect(listed.body.daybook).toMatchObject({ versionCode: 90, versionName: '0.9.0' });
+    expect(Date.parse(listed.body.pos.publishedAt)).not.toBeNaN();
+
+    const binary = (res: any, cb: any) => { const parts: Buffer[] = []; res.on('data', (c: Buffer) => parts.push(c)); res.on('end', () => cb(null, Buffer.concat(parts))); };
+    const got = await http().get('/v1/public/app/download?flavor=pos').buffer(true).parse(binary).expect(200);
+    expect(got.headers['content-disposition']).toBe('attachment; filename="MandiPlus-POS-0.40.0.apk"');
+    expect((got.body as Buffer).length).toBe(listed.body.pos.sizeBytes);
+
+    // The same link moves to the next release as soon as it is published.
+    await owner(`INSERT INTO app_releases (flavor, version_code, version_name, sha256, size_bytes, apk) VALUES
+      ('pos', 82, '0.41.0', '${'2'.repeat(64)}', 4, '\\x00010203')`);
+    const next = await http().get('/v1/public/app/download?flavor=pos').buffer(true).parse(binary).expect(200);
+    expect(next.headers['content-disposition']).toContain('MandiPlus-POS-0.41.0.apk');
+    expect((next.body as Buffer).length).toBe(4);
+    await http().get('/v1/public/app/download?flavor=other').expect(400);
+  });
 });
 
 describe('health', () => {

@@ -6,7 +6,7 @@ import { AuthGuard } from './auth/auth.guard';
 import { OtpService } from './auth/otp.service';
 import { TokensService } from './auth/tokens.service';
 import { Db } from './db/db.service';
-import { ReleasesController } from './app/releases.controller';
+import { PublicReleasesController, ReleasesController, ReleasesStore } from './app/releases.controller';
 import { HealthController } from './health/health.controller';
 import { DigilockerReturnController, KycController } from './kyc/kyc.controller';
 import { DigilockerKycService } from './kyc/digilocker.service';
@@ -25,7 +25,7 @@ import { SyncHub } from './sync/sync.hub';
 import { SyncService } from './sync/sync.service';
 
 @Module({
-  controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, KycController, DigilockerReturnController],
-  providers: [Db, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
+  controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController],
+  providers: [Db, ReleasesStore, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
 })
 export class AppModule {}
