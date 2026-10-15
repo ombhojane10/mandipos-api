@@ -31,7 +31,8 @@ export class GeminiClient {
     return !!c.GEMINI_VERTEX_API_KEY && !!c.GEMINI_VERTEX_PROJECT_ID;
   }
 
-  async generate(payload: object, budgetMs = 14_000): Promise<GeminiResult> {
+  /** [fallbackPayload]: what the fallback model is sent instead, when it needs a lighter request. */
+  async generate(payload: object, fallbackPayload: object = payload, budgetMs = 14_000): Promise<GeminiResult> {
     if (!this.enabled) throw new ServiceUnavailableException('Voice is not switched on');
     const c = config();
     const deadline = Date.now() + budgetMs;
@@ -39,10 +40,10 @@ export class GeminiClient {
       return await this.hedged(c.VOICE_MODEL, payload, c.VOICE_HEDGE_MS, deadline);
     } catch (e) {
       const left = deadline - Date.now();
-      if (c.VOICE_FALLBACK_MODEL === c.VOICE_MODEL || left < 1_500) throw this.unavailable(e);
+      if (left < 1_500) throw this.unavailable(e);
       this.log.warn(`${c.VOICE_MODEL} failed (${(e as Error).message}); trying ${c.VOICE_FALLBACK_MODEL}`);
       try {
-        return await this.once(c.VOICE_FALLBACK_MODEL, payload, AbortSignal.timeout(left));
+        return await this.once(c.VOICE_FALLBACK_MODEL, fallbackPayload, AbortSignal.timeout(left));
       } catch (e2) {
         throw this.unavailable(e2);
       }

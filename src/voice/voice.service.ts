@@ -6,7 +6,7 @@ import { uuidv7 } from '../common/uuid';
 import { config } from '../config';
 import { Db } from '../db/db.service';
 import { GeminiClient } from './gemini.client';
-import { APP_GUIDE, RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, userText } from './voice.prompt';
+import { APP_GUIDE, FALLBACK_SCHEMA, RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, userText } from './voice.prompt';
 
 export const TurnBody = z
   .object({
@@ -63,7 +63,10 @@ export class VoiceService {
     let tokensIn = 0;
     let tokensOut = 0;
     try {
-      const r = await this.gemini.generate(payload);
+      // A lite fallback model is sent the loose schema; the same model keeps the strict one.
+      const lite = /lite/.test(config().VOICE_FALLBACK_MODEL);
+      const fallback = lite ? { ...payload, generationConfig: { ...payload.generationConfig, responseJsonSchema: FALLBACK_SCHEMA } } : payload;
+      const r = await this.gemini.generate(payload, fallback);
       ({ model, tokensIn, tokensOut } = r);
       reply = this.read(r.text);
     } catch (e) {

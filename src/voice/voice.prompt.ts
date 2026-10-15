@@ -108,55 +108,57 @@ const bool = { type: 'boolean' };
 const oneOf = (...values: string[]) => ({ type: 'string', enum: values });
 
 /**
- * An object whose every field must be written, as a value or as null. With optional fields the
- * model quietly skips some it heard (the payment, "delivery bhi") — measured on the eval set —
- * while having to decide each one out loud gets them right. The nulls are stripped server-side.
- */
-function all(properties: Record<string, object>, nullable = true) {
-  const props = Object.fromEntries(Object.entries(properties).map(([k, v]) => [k, nullable ? { anyOf: [v, { type: 'null' }] } : v]));
-  return { type: 'object', properties: props, required: Object.keys(properties) };
-}
-
-const line = all({ grade: oneOf('I', 'II', 'III'), qty: int, rate: num, amount: num, lot: str });
-const view = all({
-  view: oneOf('udhaar', 'udhaar_list', 'bikri', 'stock', 'gaadi', 'galla', 'mazdoori', 'supplier', 'parchi'),
-  buyer: str, gaadi: str, from: str, to: str,
-});
-
-/**
  * The one JSON object the model returns, grouped by what it is for. transcript/kind/say come
  * first so the model has written down what it heard before it fills anything in.
+ *
+ * [strict]: every field must be written, as a value or as null. With optional fields the main
+ * model quietly skipped some it heard (the payment, "delivery bhi") on the eval set; having to
+ * decide each one out loud gets them right, and the nulls are stripped server-side. The lite
+ * fallback models take 20 s+ to decode that, though, so they get the loose form.
  */
-export const RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    transcript: str,
-    kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear'),
-    say: str,
-    ...all({
-      buyer: str,
-      buyer_name: str,
-      gaadi: str,
-      gaadi_no: str,
-      pay: all({ mode: oneOf('cash', 'upi', 'udhaar', 'free', 'after', 'mixed'), cash: num, upi: num }),
-      slip: all({
-        lines: { type: 'array', items: line },
-        leak: all({ qty: int, amount: num }),
-        packing: oneOf('loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni'),
-        panni: str,
-        katta_name: str,
-        kattas: int,
-        parchune: bool,
-        delivery: bool,
-        labour: bool,
-      }),
-      expense: all({ direction: oneOf('in', 'out'), amount: num, what: str }),
-      views: { type: 'array', items: view },
-      open: oneOf('home', 'gaadiyan', 'grahak', 'hisab', 'aaya_gaya', 'vasooli', 'mazdoori', 'supplier', 'settings', 'nayi_gaadi', 'nayi_parchi', 'grahak_khata', 'gaadi_hisab'),
-    }).properties,
-  },
-  required: ['transcript', 'kind', 'say', 'buyer', 'buyer_name', 'gaadi', 'gaadi_no', 'pay', 'slip', 'expense', 'views', 'open'],
-};
+function schema(strict: boolean) {
+  const obj = (properties: Record<string, object>) => strict
+    ? {
+        type: 'object',
+        properties: Object.fromEntries(Object.entries(properties).map(([k, v]) => [k, { anyOf: [v, { type: 'null' }] }])),
+        required: Object.keys(properties),
+      }
+    : { type: 'object', properties };
+  const line = obj({ grade: oneOf('I', 'II', 'III'), qty: int, rate: num, amount: num, lot: str });
+  const view = obj({
+    view: oneOf('udhaar', 'udhaar_list', 'bikri', 'stock', 'gaadi', 'galla', 'mazdoori', 'supplier', 'parchi'),
+    buyer: str, gaadi: str, from: str, to: str,
+  });
+  const rest = obj({
+    buyer: str,
+    buyer_name: str,
+    gaadi: str,
+    gaadi_no: str,
+    pay: obj({ mode: oneOf('cash', 'upi', 'udhaar', 'free', 'after', 'mixed'), cash: num, upi: num }),
+    slip: obj({
+      lines: { type: 'array', items: line },
+      leak: obj({ qty: int, amount: num }),
+      packing: oneOf('loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni'),
+      panni: str,
+      katta_name: str,
+      kattas: int,
+      parchune: bool,
+      delivery: bool,
+      labour: bool,
+    }),
+    expense: obj({ direction: oneOf('in', 'out'), amount: num, what: str }),
+    views: { type: 'array', items: view },
+    open: oneOf('home', 'gaadiyan', 'grahak', 'hisab', 'aaya_gaya', 'vasooli', 'mazdoori', 'supplier', 'settings', 'nayi_gaadi', 'nayi_parchi', 'grahak_khata', 'gaadi_hisab'),
+  });
+  return {
+    type: 'object',
+    properties: { transcript: str, kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear'), say: str, ...rest.properties },
+    required: ['transcript', 'kind', 'say', ...(strict ? Object.keys(rest.properties) : [])],
+  };
+}
+
+export const RESPONSE_SCHEMA = schema(true);
+export const FALLBACK_SCHEMA = schema(false);
 
 const LANG_NOTE: Record<string, string> = {
   hinglish: 'Reply ("say") in Hinglish, Latin script.',
