@@ -43,6 +43,7 @@ export const ENTRIES: Record<string, readonly [string, string]> = {
   'Udhaar ke liye grahak chunein': ['Pick a customer for credit', 'उधार के लिए ग्राहक चुनें'],
   'Delivery ka pata daalein': ['Enter delivery address', 'डिलीवरी का पता डालें'],
   'Parchi #{n} save hui': ['Slip #{n} saved', 'पर्ची #{n} सेव हुई'],
+  'Parchi #{n} save hui · machine par chhapegi': ['Slip #{n} saved · printing on the machine', 'पर्ची #{n} सेव हुई · मशीन पर छपेगी'],
   'Gaadi': ['Truck', 'गाड़ी'],
   '{n} nag baaki': ['{n} pcs left', '{n} नग बाकी'],
   'Packing': ['Packing', 'पैकिंग'],

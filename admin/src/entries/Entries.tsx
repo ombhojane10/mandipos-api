@@ -198,7 +198,8 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
           labour, labourQty: labour ? labourNag : 0, labourRatePaise: rate,
           delivery: delivery ? { address, stand } : undefined, staff: staff.trim() || undefined,
           slipNo: !editing && Number(slipNo) > 0 ? Number(slipNo) : undefined,
-        }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) }) : t('Parchi #{n} save hui', { n: String(r.slipNo) })))
+        }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) })
+          : t(r.printing ? 'Parchi #{n} save hui · machine par chhapegi' : 'Parchi #{n} save hui', { n: String(r.slipNo) })))
       }}>
       <Notes notes={draft?.notes} />
       <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus={!draft} /></Field>

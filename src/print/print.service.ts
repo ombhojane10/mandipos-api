@@ -74,6 +74,20 @@ export class PrintService {
     });
   }
 
+  /**
+   * A slip made where there is no printer (the website): queued as the bill itself, for a
+   * station that draws it from its own books. Only stations that say they can ([next]'s bills)
+   * are handed one.
+   */
+  async queueBill(p: Principal, billId: string, title: string) {
+    await this.db.query(
+      `INSERT INTO print_jobs (id, shop_id, created_by, from_device, title, bill_id, width_dots)
+       VALUES ($1, $2, $3, $4, $5, $6, 384)`,
+      [uuidv7(), p.shopId, p.userId, p.deviceId, title, billId],
+    );
+    this.wake(p.shopId!);
+  }
+
   /** A failed or expired slip goes back in the queue, as it was. */
   async retry(p: Principal, id: string): Promise<PrintJob> {
     const job = await this.db.tx(async (tx) => {
@@ -81,7 +95,7 @@ export class PrintService {
       const done = await tx.query(
         `UPDATE print_jobs SET status = 'queued', created_at = now(), station = NULL, error = NULL,
                 claimed_at = NULL, finished_at = NULL
-         WHERE shop_id = $1 AND id = $2 AND status IN ('failed', 'expired') AND image IS NOT NULL`,
+         WHERE shop_id = $1 AND id = $2 AND status IN ('failed', 'expired') AND (image IS NOT NULL OR bill_id IS NOT NULL)`,
         [p.shopId, id],
       );
       if (!done.rowCount) throw new BadRequestException('Yeh parchi dobara nahi bheji ja sakti');
@@ -117,8 +131,8 @@ export class PrintService {
    * Station: the oldest waiting slip, claimed for this device — or null once [waitSeconds]
    * pass without one. Each call also marks the station online.
    */
-  async next(p: Principal, name: string, widthDots: number, waitSeconds: number, gone: () => boolean, roll = ''):
-    Promise<{ id: string; title: string; widthDots: number; image: string; createdAt: string } | null> {
+  async next(p: Principal, name: string, widthDots: number, waitSeconds: number, gone: () => boolean, roll = '', bills = false):
+    Promise<{ id: string; title: string; widthDots: number; image: string | null; billId: string | null; createdAt: string } | null> {
     const shopId = await this.db.tx(async (tx) => {
       const shopId = await this.member(tx, p);
       await tx.query(
@@ -137,7 +151,7 @@ export class PrintService {
     for (;;) {
       if (gone()) return null;
       // Sitting out: wait the poll through, claim nothing.
-      const job = cooling ? null : await this.claim(shopId, p.deviceId);
+      const job = cooling ? null : await this.claim(shopId, p.deviceId, bills);
       if (job) return job;
       const left = deadline - Date.now();
       if (left <= 0) break;
@@ -180,17 +194,20 @@ export class PrintService {
 
   // ---------------------------------------------------------------- internals
 
-  private async claim(shopId: string, deviceId: string) {
-    const r = (await this.db.query<{ id: string; title: string; width_dots: number; image: Buffer; created_at: Date }>(
+  private async claim(shopId: string, deviceId: string, bills: boolean) {
+    const r = (await this.db.query<{ id: string; title: string; width_dots: number; image: Buffer | null; bill_id: string | null; created_at: Date }>(
       `UPDATE print_jobs SET status = 'printing', station = $2, claimed_at = now()
        WHERE id = (
-         SELECT id FROM print_jobs WHERE shop_id = $1 AND status = 'queued'
+         SELECT id FROM print_jobs WHERE shop_id = $1 AND status = 'queued' AND (bill_id IS NULL OR $3)
          ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, title, width_dots, image, created_at`,
-      [shopId, deviceId],
+       RETURNING id, title, width_dots, image, bill_id, created_at`,
+      [shopId, deviceId, bills],
     ))[0];
-    return r ? { id: r.id, title: r.title, widthDots: r.width_dots, image: r.image.toString('base64'), createdAt: r.created_at.toISOString() } : null;
+    return r ? {
+      id: r.id, title: r.title, widthDots: r.width_dots, image: r.image?.toString('base64') ?? null, billId: r.bill_id,
+      createdAt: r.created_at.toISOString(),
+    } : null;
   }
 
   /** Stale slips expire, unconfirmed ones fail, and old images and rows are dropped. */

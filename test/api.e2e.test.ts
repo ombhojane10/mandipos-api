@@ -663,6 +663,12 @@ describe('shop approval and the admin portal', () => {
     }).expect(201)).body;
     expect(slip.slipNo).toBe(2);
     expect(slip.number).toMatch(/^[A-Z][0-9]\/\d{4}\/000001$/);
+    // It prints on the shop's print machine by itself: as the bill, for a station that draws it.
+    expect(slip.printing).toBe(true);
+    await http().get('/v1/print/next?wait=0&name=Old').set(auth(shop.accessToken)).expect(204);
+    const job = (await http().get('/v1/print/next?wait=0&name=P052&bills=1').set(auth(shop.accessToken)).expect(200)).body;
+    expect(job).toMatchObject({ billId: slip.billId, image: null, title: 'Order Parchi #2' });
+    await http().post(`/v1/print/jobs/${job.id}/done`).set(auth(shop.accessToken)).send({ ok: true }).expect(204);
     // A walk-in can't take udhaar, and no slip sells more than the gaadi has.
     await http().post(`${base}/entries/parchi`).set(web).send({ truckId, lines: [{ grade: '1', qty: 5, ratePaise: 2500 }], pay: 'credit', packing: 'loose' }).expect(400);
     await http().post(`${base}/entries/parchi`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 9999, ratePaise: 1 }], pay: 'cash', packing: 'loose' }).expect(422);

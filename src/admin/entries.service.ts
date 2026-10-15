@@ -3,6 +3,7 @@ import { AccountsService } from '../auth/accounts.service';
 import { Principal } from '../auth/tokens.service';
 import { uuidv7 } from '../common/uuid';
 import { Db, Tx } from '../db/db.service';
+import { PrintService } from '../print/print.service';
 import { SyncHub } from '../sync/sync.hub';
 import { PushItem, PushResult, SyncService } from '../sync/sync.service';
 import { CASH_PART, LIVE_BILLS, LIVE_COLS, UPI_PART, n } from './sql';
@@ -59,6 +60,7 @@ export type SupplierPaymentInput = { supplier: string; mode: 'cash' | 'office' |
 export class EntriesService {
   constructor(
     private readonly db: Db, private readonly sync: SyncService, private readonly hub: SyncHub, private readonly accounts: AccountsService,
+    private readonly print: PrintService,
   ) {}
 
   /** What the entry forms need: open gaadis and their maal, today's bhav, maal list, suppliers, bank accounts. */
@@ -219,7 +221,11 @@ export class EntriesService {
     } });
     const results = await this.push(p, shopId, items);
     const bill = results.find((r) => r.id === billId)!;
-    return { billId, number: pre.number, slipNo: bill.renumbered?.to ?? slipNo, buyerId, replaced: editing?.id ?? null, results };
+    const no = bill.renumbered?.to ?? slipNo;
+    // A new slip prints on the shop's print machine by itself, as one saved on a phone does;
+    // an edit prints only when asked, as in the app.
+    const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
+    return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, results };
   }
 
   // ---------------------------------------------------------------- Vasooli
