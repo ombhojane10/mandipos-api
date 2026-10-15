@@ -11,6 +11,7 @@ import { parse, phone } from '../common/validate';
 import { Db } from '../db/db.service';
 import { AdminService } from './admin.service';
 import { ReportsService, type Pot } from './reports.service';
+import { EntriesService } from './entries.service';
 
 /** Portal tokens are signed with the app's secret but for their own audience, so neither works as the other. */
 const AUDIENCE = 'mandipos-admin';
@@ -64,6 +65,35 @@ const RejectBody = z.object({ reason: z.string().trim().max(200).default('') });
 const PotQuery = Range.extend({ pot: z.enum(['galla', 'office', 'bank']).default('galla') });
 const SupplierKey = z.string().min(1).max(120);
 
+const paise = z.number().int().min(0).max(1_000_000_000_00);
+const grade = z.enum(['1', '2', '3', 'mix']);
+const DayIso = z.iso.date().optional();
+const ParchiBody = z.object({
+  buyerId: z.uuid().optional(), buyerName: z.string().trim().max(120).optional(), truckId: z.uuid(),
+  lines: z.array(z.object({ grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise })).min(1).max(20),
+  pay: z.enum(['cash', 'upi', 'credit', 'after', 'split', 'free']), cashPaise: paise.optional(), upiPaise: paise.optional(),
+  upiBank: z.string().max(80).optional(),
+  packing: z.enum(['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni']).default('loose'), panniName: z.string().max(40).optional(),
+});
+const VasooliBody = z.object({ buyerId: z.uuid(), cashPaise: paise, upiPaise: paise, upiBank: z.string().max(80).optional(), paymentRef: z.string().max(40).optional() });
+const OUT_HEADS = ['kharcha', 'mazdoori', 'bhada', 'kiraya', 'tankhwah', 'committee_di', 'bill', 'udhaar_diya', 'aur_gaya', 'handover', 'float', 'bank_jama', 'bank_nikala'] as const;
+const IN_HEADS = ['udhaar_wapas', 'committee_mili', 'aur_aaya'] as const;
+const DaybookBody = z.object({
+  direction: z.enum(['in', 'out']), category: z.enum([...OUT_HEADS, ...IN_HEADS]), mode: z.enum(['cash', 'office', 'upi', 'bank']),
+  amountPaise: paise.positive(), party: z.string().max(120).optional(), note: z.string().max(200).optional(), date: DayIso,
+}).refine((b) => (b.direction === 'out' ? (OUT_HEADS as readonly string[]) : (IN_HEADS as readonly string[])).includes(b.category), { message: 'yeh head is taraf ka nahi', path: ['category'] });
+const UdhaarBody = z.object({ buyerId: z.uuid(), amountPaise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).refine((v) => v !== 0, 'zero'), note: z.string().max(200).optional(), date: DayIso });
+const GrahakBody = z.object({
+  name: z.string().trim().min(1).max(120), phone: z.string().trim().max(15).optional(), address: z.string().max(200).optional(),
+  destination: z.string().max(120).optional(), code: z.string().max(20).optional(), vehicle: z.string().max(20).optional(),
+  openingPaise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).optional(),
+});
+const GaadiBody = z.object({
+  number: z.string().trim().min(1).max(20), supplier: z.string().trim().max(120).default(''), freightPaise: paise.optional(),
+  lots: z.array(z.object({ brandId: z.uuid().optional(), brandName: z.string().trim().max(60).optional(), grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise })).min(1).max(12),
+});
+const SupplierPayBody = z.object({ supplier: z.string().trim().min(1).max(120), mode: z.enum(['cash', 'office', 'upi', 'bank']), amountPaise: paise.positive(), note: z.string().max(200).optional(), date: DayIso });
+
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 /** Sign-in: OTP to a MandiPlus admin number, or to the owner of an approved shop. */
@@ -102,7 +132,7 @@ export class AdminAuthController {
 @Controller('v1/admin')
 @UseGuards(AdminGuard)
 export class AdminController {
-  constructor(private readonly admin: AdminService, private readonly reports: ReportsService) {}
+  constructor(private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService) {}
 
   /** Who is signed in, and which shops they may open. */
   @Get('me')
@@ -207,6 +237,49 @@ export class AdminController {
   @Get('shops/:id/stock')
   stock(@See() v: Viewer, @Param('id') id: string) {
     return this.reports.stock(mine(v, id), todayIst());
+  }
+
+  // ---------------------------------------------------------------- entries, as a terminal makes them
+
+  /** What the entry forms offer: open gaadis, today's bhav, maal, suppliers, bank accounts. */
+  @Get('shops/:id/entry-options')
+  entryOptions(@See() v: Viewer, @Param('id') id: string) {
+    return this.entries.options(mine(v, id));
+  }
+
+  @Post('shops/:id/entries/parchi')
+  parchi(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.parchi(v.phone, mine(v, id), parse(ParchiBody, body));
+  }
+
+  @Post('shops/:id/entries/vasooli')
+  vasooli(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.vasooli(v.phone, mine(v, id), parse(VasooliBody, body));
+  }
+
+  @Post('shops/:id/entries/daybook')
+  daybookEntry(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.daybook(v.phone, mine(v, id), parse(DaybookBody, body));
+  }
+
+  @Post('shops/:id/entries/udhaar')
+  udhaar(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.udhaar(v.phone, mine(v, id), parse(UdhaarBody, body));
+  }
+
+  @Post('shops/:id/entries/grahak')
+  grahak(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.grahak(v.phone, mine(v, id), parse(GrahakBody, body));
+  }
+
+  @Post('shops/:id/entries/gaadi')
+  gaadi(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.gaadi(v.phone, mine(v, id), parse(GaadiBody, body));
+  }
+
+  @Post('shops/:id/entries/supplier-payment')
+  supplierPayment(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.supplierPayment(v.phone, mine(v, id), parse(SupplierPayBody, body));
   }
 
   @Get('shops/:id/items')

@@ -17,6 +17,8 @@ import { Team } from './pages/Team'
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
+import { NewEntry } from './entries/NewEntry'
+import { openEntry } from './entries/kinds'
 
 type Session = { me: Me | null; shops: Shop[] | null; reload: () => void }
 const SessionContext = createContext<Session>({ me: null, shops: null, reload: () => {} })
@@ -98,6 +100,7 @@ export default function App() {
       const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
       if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !typing) || (e.altKey && e.code === 'KeyG')) { e.preventDefault(); setGoto(true); return }
       if (goto || document.querySelector('.scrim')) return
+      if (e.altKey && e.code === 'KeyN' && shopId) { e.preventDefault(); openEntry(); return }
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.code.startsWith('Key') && shopId) {
         const report = BY_KEY.get(e.code.slice(3))
         if (report) { e.preventDefault(); location.hash = href({ page: 'report', shopId, report }) + periodQuery(); return }
@@ -152,7 +155,7 @@ export default function App() {
                 {g.items.map((it) => (
                   <a key={it.report} href={href({ page: 'report', shopId, report: it.report }) + periodQuery()}
                     aria-current={current === it.report || (route.page === 'grahak' && it.report === 'ledger') || (route.page === 'supplier' && it.report === 'suppliers') ? 'page' : undefined}>
-                    <it.icon />{it.label}{it.key && <kbd>Alt {it.key}</kbd>}
+                    <it.icon />{it.label}
                   </a>
                 ))}
               </div>
@@ -177,8 +180,9 @@ export default function App() {
             {shop && route.page !== 'shops' && route.page !== 'market' && route.page !== 'person' && route.page !== 'requests' && <small>{[shop.name, shop.mandi].filter(Boolean).join(' · ')}</small>}
           </div>
           <span className="spacer" />
+          {shopId && <button className="new-btn top-new" onClick={() => openEntry()}>+ Nayi entry</button>}
           <button className="goto" onClick={() => setGoto(true)} aria-label="Go To">
-            <I.ISearch /><span className="label">Go To…</span><kbd>/</kbd>
+            <I.ISearch /><span className="label">Dhoondhein…</span>
           </button>
         </header>
 
@@ -196,13 +200,14 @@ export default function App() {
           <nav className="tabs" aria-label="Main">
             <a href={href({ page: 'report', shopId, report: 'dashboard' })} aria-current={current === 'dashboard' ? 'page' : undefined}><I.IHome />Home</a>
             <a href={href({ page: 'report', shopId, report: 'daybook' }) + periodQuery()} aria-current={current === 'daybook' ? 'page' : undefined}><I.IBook />Day Book</a>
+            <button className="plus" aria-label="Nayi entry" onClick={() => openEntry()}><span>+</span></button>
             <a href={href({ page: 'report', shopId, report: 'outstanding' })} aria-current={current === 'outstanding' || route.page === 'grahak' ? 'page' : undefined}><I.IUdhaar />Udhaar</a>
-            <a href={href({ page: 'report', shopId, report: 'stock' })} aria-current={current === 'stock' ? 'page' : undefined}><I.IBox />Stock</a>
             <button onClick={() => setDrawer(true)}><I.IMenu />Menu{pending > 0 && <span className="badge">{pending}</span>}</button>
           </nav>
         )}
 
         {goto && <GoTo shopId={shopId} onClose={() => setGoto(false)} />}
+        {shopId && <NewEntry key={shopId} shopId={shopId} />}
       </div>
     </SessionContext.Provider>
   )

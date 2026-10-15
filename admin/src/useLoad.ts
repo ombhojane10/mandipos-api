@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 
-/** Loads [fn] whenever [deps] change; reload() fetches again after a change. */
+/** Fired after an entry is saved, so every report on screen reads the books again. */
+export const CHANGED = 'mandipos:changed'
+export const booksChanged = () => dispatchEvent(new Event(CHANGED))
+
+/** Loads [fn] whenever [deps] change, and again whenever an entry is saved; reload() fetches on demand. */
 export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
@@ -19,5 +23,10 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]) {
   }, [load])
 
   useEffect(() => reload(), [reload])
+  useEffect(() => {
+    const on = () => { reload() }
+    addEventListener(CHANGED, on)
+    return () => removeEventListener(CHANGED, on)
+  }, [reload])
   return { data, error, loading, reload }
 }

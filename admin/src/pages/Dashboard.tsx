@@ -1,5 +1,4 @@
 import { api, type Dashboard as Dash, type DayEntry } from '../api'
-import { REPORTS } from '../App'
 import { TrendChart } from '../Chart'
 import { usePeriod } from '../hooks'
 import { count, rupees } from '../format'
@@ -8,6 +7,14 @@ import { useLoad } from '../useLoad'
 import { Ages, Change, Kpi, PeriodBar, Skeleton } from '../ui'
 import { EntryTable } from './DayBook'
 import * as I from '../icons'
+import { openEntry, type EntryKind } from '../entries/kinds'
+
+const QUICK: { kind: EntryKind; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
+  { kind: 'parchi', label: 'Nayi Parchi', sub: 'Bikri', tone: 'green', icon: I.IRupee },
+  { kind: 'vasooli', label: 'Vasooli', sub: 'Grahak se paisa', tone: 'blue', icon: I.IWallet },
+  { kind: 'kharcha', label: 'Kharcha', sub: 'Day book', tone: 'red', icon: I.ICash },
+  { kind: 'gaadi', label: 'Nayi Gaadi', sub: 'Kharid', tone: 'amber', icon: I.ITruck },
+]
 
 /** The shop at a glance, like the first page of Tally: four figures, the trend, and what happened last. */
 export function Dashboard({ shopId }: { shopId: string }) {
@@ -23,6 +30,13 @@ export function Dashboard({ shopId }: { shopId: string }) {
 
   return (
     <>
+      <div className="quick" style={{ marginBottom: 16 }}>
+        {QUICK.map((q) => (
+          <button key={q.kind} type="button" onClick={() => openEntry(q.kind)}>
+            <span className={`ic t-${q.tone}`}><q.icon /></span><span><b>{q.label}</b><small className="muted">{q.sub}</small></span>
+          </button>
+        ))}
+      </div>
       <div className="toolbar"><PeriodBar value={period} onChange={setPeriod} /></div>
       {error && <p className="error">{error}</p>}
       {!data ? <Skeleton rows={8} /> : (
@@ -41,7 +55,7 @@ export function Dashboard({ shopId }: { shopId: string }) {
           <div className="grid g2-1">
             <div className="card">
               <div className="hd"><h3>Bikri aur Kharid</h3></div>
-              <div className="bd"><TrendChart data={data.d.trend} /></div>
+              <div className="bd">{data.d.trend.some((t) => t.salesPaise || t.purchasePaise) ? <TrendChart data={data.d.trend} /> : <p className="empty">Is hafte koi bikri ya kharid nahi</p>}</div>
             </div>
             <div className="card">
               <div className="hd"><h3>Sabse zyada bika</h3><a href={to('items')}>Sab ›</a></div>
@@ -58,19 +72,10 @@ export function Dashboard({ shopId }: { shopId: string }) {
             </div>
           </div>
 
-          <div className="grid g2-1">
+          <div>
             <div className="card">
               <div className="hd"><h3>Taaza entries</h3><a href={to('daybook')}>Day Book ›</a></div>
               <EntryTable shopId={shopId} entries={data.recent} compact />
-            </div>
-            <div className="card hide-sm">
-              <div className="hd"><h3>Shortcuts</h3></div>
-              <div className="bd shortcuts">
-                {REPORTS.flatMap((g) => g.items).filter((i) => i.key && i.report !== 'dashboard').map((i) => (
-                  <a key={i.report} href={to(i.report)}><i.icon />{i.label}<kbd>Alt {i.key}</kbd></a>
-                ))}
-                <a href="#" onClick={(e) => { e.preventDefault(); dispatchEvent(new KeyboardEvent('keydown', { key: '/' })) }}><I.ISearch />Go To<kbd>/</kbd></a>
-              </div>
             </div>
           </div>
 

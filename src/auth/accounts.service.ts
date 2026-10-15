@@ -151,6 +151,28 @@ export class AccountsService {
     });
   }
 
+  /**
+   * The website's own machine in a shop, for whoever is signed in to the portal: entries made
+   * there are pushed exactly like a terminal's, under this device, so slips get their own
+   * series (e.g. A4/2627/000001) and never collide with a counter's. Made once, then reused.
+   */
+  async webDevice(phone: string, shopId: string): Promise<Principal> {
+    return this.db.tx(async (tx) => {
+      await tx.query(`INSERT INTO users (id, phone) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING`, [uuidv7(), phone]);
+      const userId = (await tx.query<{ id: string }>(`SELECT id FROM users WHERE phone = $1`, [phone])).rows[0].id;
+      let deviceId = (await tx.query<{ id: string }>(
+        `SELECT id FROM devices WHERE user_id = $1 AND shop_id = $2 AND platform = 'web' AND revoked_at IS NULL ORDER BY created_at LIMIT 1`,
+        [userId, shopId])).rows[0]?.id;
+      if (!deviceId) {
+        deviceId = uuidv7();
+        await tx.query(`INSERT INTO devices (id, user_id, label, platform, app_version) VALUES ($1, $2, 'Website', 'web', 'portal')`, [deviceId, userId]);
+        await this.attachDevice(tx, shopId, deviceId);
+      }
+      const role = (await tx.query<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, userId])).rows[0]?.role ?? null;
+      return { userId, deviceId, shopId, role };
+    });
+  }
+
   /** Joins the shop whose code this is, as an accountant, and attaches this device. */
   async joinShop(p: Principal, code: string): Promise<{ accessToken: string; me: MeView }> {
     return this.db.tx(async (tx) => {

@@ -634,6 +634,76 @@ describe('shop approval and the admin portal', () => {
     await http().get('/v1/admin/customers/nonsense').set(admin).expect(400);
   });
 
+  it('makes entries on the website exactly as a terminal would, and the terminals pull them', async () => {
+    const shop = await registerShop('9877700008', 'Web Entry Traders');
+    const id = shop.me.shop.id as string;
+    const t = new Date().toISOString(), d = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7(), raju = uuidv7();
+    await http().post('/v1/sync/push').set(auth(shop.accessToken)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Pollachi' } },
+      { table: 'buyers', row: { id: raju, created_at: t, updated_at: t, name: 'Raju Fruits', phone: '9876500001' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'TN09', supplier: 'Mani', arrived_at: t } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 500, received_qty: 500, rate_paise: 2000 } },
+      { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: d, pay_mode: 'cash', total_paise: 2500, paid_paise: 2500, cash_paise: 2500, slip_no: 1, truck_id: truckId } },
+    ] }).expect(200);
+    // The owner signs in to the website.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9877700008' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9877700008', code: OtpService.issuedForTests.get('9877700008') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+
+    const opts = (await http().get(`${base}/entry-options`).set(web).expect(200)).body;
+    expect(opts.trucks).toEqual([expect.objectContaining({ id: truckId, number: 'TN09', left: 500, brandId, brand: 'Pollachi' })]);
+    expect(opts.suppliers).toEqual(['Mani']);
+
+    // Nayi parchi: Raju, 10 nag at ₹25, half cash half udhaar, packed in katta (so mazdoori accrues).
+    const slip = (await http().post(`${base}/entries/parchi`).set(web).send({
+      buyerId: raju, truckId, lines: [{ grade: '1', qty: 10, ratePaise: 2500 }], pay: 'split', cashPaise: 12500, upiPaise: 0, packing: 'katta10',
+    }).expect(201)).body;
+    expect(slip.slipNo).toBe(2);
+    expect(slip.number).toMatch(/^[A-Z][0-9]\/\d{4}\/000001$/);
+    // A walk-in can't take udhaar, and no slip sells more than the gaadi has.
+    await http().post(`${base}/entries/parchi`).set(web).send({ truckId, lines: [{ grade: '1', qty: 5, ratePaise: 2500 }], pay: 'credit', packing: 'loose' }).expect(400);
+    await http().post(`${base}/entries/parchi`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 9999, ratePaise: 1 }], pay: 'cash', packing: 'loose' }).expect(422);
+
+    // The shop's terminal pulls the slip like any other: under the website's own device and series.
+    const pulled = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(shop.accessToken)).expect(200)).body.changes;
+    const bill = pulled.find((c: any) => c.table === 'bills' && c.row.id === slip.billId).row;
+    expect(bill).toMatchObject({ buyer_id: raju, total_paise: 25000, paid_paise: 12500, cash_paise: 12500, pay_mode: 'cash', labour_paise: 300, packs: 10, packing: 'katta10', staff_name: 'Website', slip_no: 2 });
+    expect(bill.device_id).not.toBe(shop.me.device.id);
+    expect(pulled.filter((c: any) => c.table === 'bill_lines' && c.row.bill_id === slip.billId).map((c: any) => [c.row.qty, c.row.brand_id])).toEqual([[10, brandId]]);
+
+    const vas = (await http().post(`${base}/entries/vasooli`).set(web).send({ buyerId: raju, cashPaise: 0, upiPaise: 5000 }).expect(201)).body;
+    expect(vas.receiptNo).toBe(1);
+    await http().post(`${base}/entries/udhaar`).set(web).send({ buyerId: raju, amountPaise: 1000, note: 'Purana' }).expect(201);
+    const owed = (await http().get(`${base}/outstanding`).set(web).expect(200)).body.rows.find((r: any) => r.buyerId === raju);
+    expect(owed.duePaise).toBe(12500 - 5000 + 1000);
+
+    await http().post(`${base}/entries/daybook`).set(web).send({ direction: 'out', category: 'kiraya', mode: 'cash', amountPaise: 30000, note: 'Oct' }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(web).send({ direction: 'out', category: 'aur_gaya', mode: 'cash', amountPaise: 100 }).expect(400);
+    await http().post(`${base}/entries/daybook`).set(web).send({ direction: 'in', category: 'kiraya', mode: 'cash', amountPaise: 100 }).expect(400);
+    await http().post(`${base}/entries/supplier-payment`).set(web).send({ supplier: 'MANI', mode: 'upi', amountPaise: 400000 }).expect(201);
+    const galla = (await http().get(`${base}/cashbook?pot=galla&from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(galla).toMatchObject({ inPaise: 2500 + 12500, outPaise: 30000 });
+    const mani = (await http().get(`${base}/suppliers/mani`).set(web).expect(200)).body;
+    expect(mani.totals).toMatchObject({ purchasePaise: 1000000, paidPaise: 400000, duePaise: 600000 });
+
+    const g = (await http().post(`${base}/entries/grahak`).set(web).send({ name: 'Sharma Thela', phone: '9876500002', openingPaise: 20000 }).expect(201)).body;
+    await http().post(`${base}/entries/grahak`).set(web).send({ name: 'sharma thela' }).expect(422);
+    expect((await http().get(`${base}/buyers/${g.id}`).set(web).expect(200)).body.totals.balancePaise).toBe(20000);
+
+    // Nayi gaadi: the supplier as the shop already spells him, a new maal made on the way.
+    const gaadi = (await http().post(`${base}/entries/gaadi`).set(web).send({
+      number: 'rj 14 ab 1', supplier: 'mani', freightPaise: 90000, lots: [{ brandName: 'Gujarat', grade: '1', qty: 300, ratePaise: 1800 }],
+    }).expect(201)).body;
+    const stock = (await http().get(`${base}/stock`).set(web).expect(200)).body.rows;
+    expect(stock.find((r: any) => r.truckId === gaadi.truckId)).toMatchObject({ number: 'RJ14AB1', supplier: 'Mani', received: 300, brands: 'Gujarat' });
+    expect(stock.find((r: any) => r.truckId === truckId).left).toBe(500 - 1 * 0 - 10);
+
+    // The website shows up as one machine of the shop.
+    const team = (await http().get(base).set(web).expect(200)).body;
+    expect(team.devices.filter((x: any) => x.label === 'Website')).toHaveLength(1);
+  });
+
   it('turns a request down and frees the number to register again', async () => {
     const s = await login('9877700002');
     const created = await http().post('/v1/shops').set(auth(s.accessToken)).send({ name: 'Fake Shop' }).expect(201);

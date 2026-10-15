@@ -43,7 +43,7 @@ export function GoTo({ shopId, onClose }: { shopId: string | null; onClose: () =
 
   const reports: Option[] = shopId ? REPORTS.flatMap((g) => g.items)
     .filter((i) => !query || i.label.toLowerCase().includes(query))
-    .map((i) => ({ key: `r-${i.report}`, section: 'Report', title: i.label, right: i.key ? `Alt ${i.key}` : undefined, to: href({ page: 'report', shopId, report: i.report }) + periodQuery() })) : []
+    .map((i) => ({ key: `r-${i.report}`, section: 'Report', title: i.label, to: href({ page: 'report', shopId, report: i.report }) + periodQuery() })) : []
   const shopOpts: Option[] = (shops ?? []).filter((s) => s.status === 'approved' && (!query || `${s.name} ${s.mandi}`.toLowerCase().includes(query)))
     .slice(0, 6).map((s) => ({ key: `s-${s.id}`, section: 'Dukaan', title: s.name, sub: s.mandi, to: href({ page: 'report', shopId: s.id, report: 'dashboard' }) }))
   const options = query ? [...people, ...reports, ...shopOpts] : [...reports, ...shopOpts]
