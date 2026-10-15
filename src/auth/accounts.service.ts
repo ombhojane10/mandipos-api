@@ -8,7 +8,7 @@ export type DeviceInfo = { label: string; platform: string; appVersion: string }
 export type MeView = {
   user: { id: string; phone: string; name: string };
   device: { id: string; code: string | null };
-  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; dispatchPhone: string; slipCode: string; udhaarRates: boolean; address: string; bankAccounts: BankAccount[]; commodity: string; printer: { host: string; dots: number } } | null;
+  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; dispatchPhone: string; slipCode: string; udhaarRates: boolean; slipPhones: string[]; address: string; bankAccounts: BankAccount[]; commodity: string; printer: { host: string; dots: number } } | null;
   /** The shop this number registered that MandiPlus hasn't approved yet (or turned down). */
   pendingShop: PendingShop | null;
   /** Every approved shop this number belongs to; a device switches between them. */
@@ -347,10 +347,10 @@ export class AccountsService {
   private async me(tx: Tx, p: Principal): Promise<MeView> {
     const { rows } = await tx.query<{
       user_id: string; phone: string; user_name: string; device_id: string; code: string | null;
-      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null; shop_phone: string | null; dispatch_phone: string | null; slip_code: string | null; udhaar_rates: boolean | null; address: string | null; bank_accounts: BankAccount[] | null; commodity: string | null; printer_host: string | null; printer_dots: number | null;
+      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null; shop_phone: string | null; dispatch_phone: string | null; slip_code: string | null; udhaar_rates: boolean | null; slip_phones: string[] | null; address: string | null; bank_accounts: BankAccount[] | null; commodity: string | null; printer_host: string | null; printer_dots: number | null;
     }>(
       `SELECT u.id AS user_id, u.phone, u.name AS user_name, d.id AS device_id, d.code,
-              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise, s.phone AS shop_phone, s.dispatch_phone, s.slip_code, s.udhaar_rates, s.address, s.bank_accounts, s.commodity, s.printer_host, s.printer_dots
+              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise, s.phone AS shop_phone, s.dispatch_phone, s.slip_code, s.udhaar_rates, s.slip_phones, s.address, s.bank_accounts, s.commodity, s.printer_host, s.printer_dots
        FROM devices d JOIN users u ON u.id = d.user_id
        LEFT JOIN shops s ON s.id = d.shop_id
        LEFT JOIN shop_members m ON m.shop_id = d.shop_id AND m.user_id = d.user_id
@@ -374,7 +374,7 @@ export class AccountsService {
       user: { id: r.user_id, phone: r.phone, name: r.user_name },
       device: { id: r.device_id, code: r.code },
       shop: r.shop_id
-        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0), phone: r.shop_phone ?? '', dispatchPhone: r.dispatch_phone ?? '', slipCode: r.slip_code ?? '', udhaarRates: r.udhaar_rates ?? false, address: r.address ?? '', bankAccounts: r.bank_accounts ?? [], commodity: r.commodity ?? 'nariyal', printer: { host: r.printer_host ?? '', dots: r.printer_dots ?? 576 } }
+        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0), phone: r.shop_phone ?? '', dispatchPhone: r.dispatch_phone ?? '', slipCode: r.slip_code ?? '', udhaarRates: r.udhaar_rates ?? false, slipPhones: r.slip_phones ?? [], address: r.address ?? '', bankAccounts: r.bank_accounts ?? [], commodity: r.commodity ?? 'nariyal', printer: { host: r.printer_host ?? '', dots: r.printer_dots ?? 576 } }
         : null,
     };
   }
