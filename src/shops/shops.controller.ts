@@ -47,6 +47,14 @@ export class ShopsController {
     return this.accounts.createShop(p, parse(CreateShopBody, body));
   }
 
+  /** Moves this phone to another of the caller's approved shops; returns a new session for it there. */
+  @Post('switch')
+  @HttpCode(200)
+  switch(@Me() p: Principal, @Body() body: unknown) {
+    const b = parse(z.object({ shopId: z.uuid(), deviceId: z.uuid().optional() }), body);
+    return this.accounts.switchShop(p, b.shopId, b.deviceId);
+  }
+
   /** Joins an existing shop by its 6-digit code, as an accountant. */
   @Post('join')
   @HttpCode(200)

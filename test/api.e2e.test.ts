@@ -547,6 +547,46 @@ describe('shop approval and the admin portal', () => {
     await http().post(`/v1/admin/shops/${id}/reject`).set(admin).send({}).expect(409);
   });
 
+  it('lets an owner ask for a second shop, and move a phone between them keeping each shop’s code', async () => {
+    const first = await registerShop('9877700004', 'Pehli Dukaan');
+    const phoneA = first.me.device.id as string;
+    expect(first.me.shops).toEqual([expect.objectContaining({ name: 'Pehli Dukaan', current: true })]);
+
+    // A second shop is a request too; the phone stays in the first meanwhile, and a third waits.
+    const asked = await http().post('/v1/shops').set(auth(first.accessToken)).send({ name: 'Doosri Dukaan', mandi: 'Okhla' }).expect(201);
+    expect(asked.body.me.shop.name).toBe('Pehli Dukaan');
+    expect(asked.body.me.pendingShop).toMatchObject({ name: 'Doosri Dukaan', status: 'pending' });
+    await http().post('/v1/shops').set(auth(first.accessToken)).send({ name: 'Teesri' }).expect(409);
+    const second = asked.body.me.pendingShop.id as string;
+    await http().post('/v1/shops/switch').set(auth(first.accessToken)).send({ shopId: second }).expect(403);
+
+    const admin = await adminLogin();
+    await http().post(`/v1/admin/shops/${second}/approve`).set(admin).expect(204);
+    const me = (await http().get('/v1/me').set(auth(first.accessToken))).body;
+    expect(me.shop.name).toBe('Pehli Dukaan');
+    expect(me.shops.map((x: any) => [x.name, x.current])).toEqual([['Pehli Dukaan', true], ['Doosri Dukaan', false]]);
+
+    // Into the second: a device of its own there, A1 of that shop, and its books only.
+    const moved = (await http().post('/v1/shops/switch').set(auth(first.accessToken)).send({ shopId: second }).expect(200)).body;
+    expect(moved.me.shop.name).toBe('Doosri Dukaan');
+    expect(moved.me.device.code).toBe('A1');
+    const phoneB = moved.me.device.id as string;
+    expect(phoneB).not.toBe(phoneA);
+    await http().get('/v1/sync/pull?after=0').set(auth(moved.accessToken)).expect(200);
+    // The first shop's session on this phone is over.
+    await http().post('/v1/auth/refresh').send({ refreshToken: first.refreshToken }).expect(401);
+
+    // And back, handing over the device it had there: same device, same code.
+    const back = (await http().post('/v1/shops/switch').set(auth(moved.accessToken)).send({ shopId: first.me.shop.id, deviceId: phoneA }).expect(200)).body;
+    expect(back.me.device).toEqual(first.me.device);
+    expect(back.me.shop.name).toBe('Pehli Dukaan');
+    // Someone else's device id is not taken over.
+    const stranger = await registerShop('9877700005', 'Kisi Aur Ki');
+    const sneaky = (await http().post('/v1/shops/switch').set(auth(back.accessToken)).send({ shopId: second, deviceId: stranger.me.device.id }).expect(200)).body;
+    expect(sneaky.me.device.id).not.toBe(stranger.me.device.id);
+    await http().post('/v1/shops/switch').set(auth(sneaky.accessToken)).send({ shopId: stranger.me.shop.id }).expect(403);
+  });
+
   it('turns a request down and frees the number to register again', async () => {
     const s = await login('9877700002');
     const created = await http().post('/v1/shops').set(auth(s.accessToken)).send({ name: 'Fake Shop' }).expect(201);
@@ -663,11 +703,6 @@ describe('auth', () => {
     await http().post('/v1/auth/otp').send({ phone: '9800000009' }).expect(204);
     const res = await http().post('/v1/auth/verify').send({ phone: '9800000009', code: '000000' }).expect(400);
     expect(res.body.message).toMatch(/galat/);
-  });
-
-  it('refuses a second shop for the same owner', async () => {
-    const s = await login('9800000001', firstDeviceId);
-    await http().post('/v1/shops').set('Authorization', `Bearer ${s.accessToken}`).send({ name: 'Again' }).expect(409);
   });
 
   it('puts the owner’s second terminal in the same shop as A2, and a re-login keeps its code', async () => {

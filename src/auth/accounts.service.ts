@@ -11,6 +11,8 @@ export type MeView = {
   shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; dispatchPhone: string; slipCode: string; address: string; bankAccounts: BankAccount[]; commodity: string; printer: { host: string; dots: number } } | null;
   /** The shop this number registered that MandiPlus hasn't approved yet (or turned down). */
   pendingShop: PendingShop | null;
+  /** Every approved shop this number belongs to; a device switches between them. */
+  shops: { id: string; name: string; mandi: string; role: string; current: boolean }[];
 };
 
 export type PendingShop = { id: string; name: string; mandi: string; status: 'pending' | 'rejected'; reason: string; createdAt: string };
@@ -77,8 +79,11 @@ export class AccountsService {
   async createShop(p: Principal, shop: { name: string; mandi: string; shopNo: string; phad?: string; gstin: string; role: string; ownerName: string; commodity?: string }):
     Promise<{ accessToken: string; me: MeView }> {
     return this.db.tx(async (tx) => {
-      const existing = (await tx.query(`SELECT 1 FROM shop_members WHERE user_id = $1`, [p.userId])).rowCount;
-      if (existing) throw new ConflictException('Is number se dukaan pehle se registered hai');
+      // One more shop is fine (an owner with two phads); a second request while one waits is not.
+      const waiting = (await tx.query(
+        `SELECT 1 FROM shop_members m JOIN shops s ON s.id = m.shop_id
+         WHERE m.user_id = $1 AND s.approved_at IS NULL AND s.rejected_at IS NULL`, [p.userId])).rowCount;
+      if (waiting) throw new ConflictException('Pichhli dukaan ki request abhi approve nahi hui');
 
       const shopId = uuidv7();
       await tx.query(
@@ -107,6 +112,42 @@ export class AccountsService {
       if (!attached) return this.me(tx, p);
       const principal = await this.tokens.principalFor(tx, p.userId, p.deviceId);
       return { ...(await this.me(tx, principal)), accessToken: this.tokens.signAccess(principal) };
+    });
+  }
+
+  /**
+   * Moves this phone to another of the caller's shops. Each shop gets its own device row, so
+   * the phone keeps one code and slip series per shop: [deviceId] is the one it had there
+   * before, reused when it is still this user's and still in that shop. The old device's
+   * sessions end; the device itself stays in its shop for the next switch back.
+   */
+  async switchShop(p: Principal, shopId: string, deviceId: string | undefined): Promise<Tokens & { me: MeView }> {
+    return this.db.tx(async (tx) => {
+      const member = (await tx.query(
+        `SELECT 1 FROM shop_members m JOIN shops s ON s.id = m.shop_id
+         WHERE m.shop_id = $1 AND m.user_id = $2 AND s.approved_at IS NOT NULL`, [shopId, p.userId])).rowCount;
+      if (!member) throw new ForbiddenException('Aap is dukaan mein nahi hain');
+
+      let target = p.shopId === shopId ? p.deviceId : undefined;
+      if (!target && deviceId) {
+        target = (await tx.query<{ id: string }>(
+          `SELECT id FROM devices WHERE id = $1 AND user_id = $2 AND shop_id = $3 AND revoked_at IS NULL`,
+          [deviceId, p.userId, shopId])).rows[0]?.id;
+      }
+      if (!target) {
+        const info = (await tx.query<{ label: string; platform: string; app_version: string }>(
+          `SELECT label, platform, app_version FROM devices WHERE id = $1`, [p.deviceId])).rows[0];
+        target = uuidv7();
+        await tx.query(`INSERT INTO devices (id, user_id, label, platform, app_version) VALUES ($1, $2, $3, $4, $5)`,
+          [target, p.userId, info?.label ?? '', info?.platform ?? '', info?.app_version ?? '']);
+        await this.attachDevice(tx, shopId, target);
+      }
+      if (target !== p.deviceId) {
+        await tx.query(`UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL`, [p.deviceId]);
+      }
+      const principal = await this.tokens.principalFor(tx, p.userId, target);
+      const tokens = await this.tokens.issue(tx, principal);
+      return { ...tokens, me: await this.me(tx, principal) };
     });
   }
 
@@ -317,11 +358,16 @@ export class AccountsService {
       [p.deviceId, p.userId],
     );
     const r = rows[0];
-    const pending = r.shop_id ? null : (await tx.query<{ id: string; name: string; mandi: string; rejected_at: Date | null; reject_reason: string; created_at: Date }>(
+    const shops = (await tx.query<{ id: string; name: string; mandi: string; role: string }>(
+      `SELECT s.id, s.name, s.mandi, m.role FROM shop_members m JOIN shops s ON s.id = m.shop_id
+       WHERE m.user_id = $1 AND s.approved_at IS NOT NULL ORDER BY m.created_at`, [p.userId])).rows;
+    // A shop asked for and not yet approved — or turned down — shows whether or not a shop is open.
+    const pending = (await tx.query<{ id: string; name: string; mandi: string; rejected_at: Date | null; reject_reason: string; created_at: Date }>(
       `SELECT id, name, mandi, rejected_at, reject_reason, created_at FROM shops
        WHERE created_by = $1 AND approved_at IS NULL ORDER BY created_at DESC LIMIT 1`, [p.userId],
     )).rows[0];
     return {
+      shops: shops.map((s) => ({ id: s.id, name: s.name, mandi: s.mandi, role: s.role, current: s.id === r.shop_id })),
       pendingShop: pending
         ? { id: pending.id, name: pending.name, mandi: pending.mandi, status: pending.rejected_at ? 'rejected' : 'pending', reason: pending.reject_reason, createdAt: pending.created_at.toISOString() }
         : null,
