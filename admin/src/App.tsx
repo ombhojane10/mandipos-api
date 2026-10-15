@@ -15,6 +15,7 @@ import { Stock } from './pages/Stock'
 import { Items } from './pages/Items'
 import { Team } from './pages/Team'
 import { Settings } from './pages/Settings'
+import { Bhav, GaadiHisab, Munafa, Nigrani, SalesRegister, Vasooli } from './pages/Insights'
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
@@ -40,17 +41,25 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
   { group: t('Hisab-Kitab'), items: [
     { report: 'daybook', label: t('Day Book'), key: 'D', icon: I.IBook },
     { report: 'cashbook', label: t('Cash / Bank Book'), key: 'C', icon: I.ICash },
+    { report: 'register', label: t('Bikri Register'), key: 'R', icon: I.ILedger },
+    { report: 'munafa', label: t('Munafa (P&L)'), key: 'M', icon: I.IRupee },
   ] },
   { group: t('Udhaar'), items: [
     { report: 'outstanding', label: t('Outstanding'), key: 'O', icon: I.IUdhaar },
     { report: 'ledger', label: t('Grahak Ledger'), key: 'L', icon: I.ILedger },
+    { report: 'vasooli', label: t('Vasooli'), key: 'V', icon: I.IWallet },
   ] },
   { group: t('Supplier'), items: [{ report: 'suppliers', label: t('Supplier Khata'), key: 'P', icon: I.ITruck }] },
   { group: t('Stock'), items: [
     { report: 'stock', label: t('Stock Summary'), key: 'S', icon: I.IBox },
+    { report: 'gaadis', label: t('Gaadi Hisab'), key: 'A', icon: I.ITruck },
     { report: 'items', label: t('Maal-wise Bikri'), key: 'I', icon: I.ITag },
+    { report: 'bhav', label: t('Aaj ka Bhav'), key: 'B', icon: I.ITag },
   ] },
-  { group: t('Dukaan'), items: [{ report: 'team', label: t('Team & Machine'), key: 'T', icon: I.ITeam }] },
+  { group: t('Dukaan'), items: [
+    { report: 'nigrani', label: t('Nigrani'), key: 'X', icon: I.IInbox },
+    { report: 'team', label: t('Team & Machine'), key: 'T', icon: I.ITeam },
+  ] },
 ]
 
 const LAST_SHOP = 'mandipos-shop'
@@ -287,6 +296,12 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'items': return <Items key={shopId} shopId={shopId} />
     case 'team': return <Team key={shopId} shopId={shopId} />
     case 'settings': return <Settings key={shopId} shopId={shopId} />
+    case 'register': return <SalesRegister key={shopId} shopId={shopId} />
+    case 'munafa': return <Munafa key={shopId} shopId={shopId} />
+    case 'vasooli': return <Vasooli key={shopId} shopId={shopId} />
+    case 'gaadis': return <GaadiHisab key={shopId} shopId={shopId} />
+    case 'bhav': return <Bhav key={shopId} shopId={shopId} />
+    case 'nigrani': return <Nigrani key={shopId} shopId={shopId} />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }
 }

@@ -744,6 +744,33 @@ describe('shop approval and the admin portal', () => {
     await http().post(`${base}/settings`).set(web).send({ printerDots: 500 }).expect(400);
     const other = await registerShop('9877700019', 'Someone Else');
     await http().get(`/v1/admin/shops/${other.me.shop.id}/settings`).set(web).expect(403);
+
+    // Aaj ka bhav from the website: one row per day × maal × grade, overwritten, pulled by terminals.
+    await http().post(`${base}/bhav`).set(web).send({ rates: [{ brandId, grade: '1', ratePaise: 2600 }] }).expect(200);
+    await http().post(`${base}/bhav`).set(web).send({ rates: [{ brandId, grade: '1', ratePaise: 2700 }] }).expect(200);
+    const sheet = (await http().get(`${base}/bhav`).set(web).expect(200)).body;
+    expect(sheet.brands.find((b: any) => b.id === brandId).grades[0]).toMatchObject({ grade: '1', ratePaise: 2700 });
+    const rateRows = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(shop.accessToken)).expect(200)).body.changes.filter((c: any) => c.table === 'rates');
+    expect(new Set(rateRows.map((c: any) => c.row.id)).size).toBe(1);
+    expect(rateRows.at(-1).row.rate_paise).toBe(2700);
+
+    // Every slip today went at ₹25 against a ₹27 bhav: Nigrani lists each, with what it lost.
+    const nig = (await http().get(`${base}/nigrani?from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(nig.belowBhav.find((b: any) => b.billId === katta.billId)).toMatchObject({ qty: 20, ratePaise: 2500, bhavPaise: 2700, lossPaise: 4000 });
+    expect(nig.belowBhav).toHaveLength(4);
+
+    // Gaadi hisab: TN09 cost ₹20 a nag landed; 70 nag sold at ₹25 → ₹350 munafa so far.
+    const gh = (await http().get(`${base}/gaadi-hisab`).set(web).expect(200)).body.rows.find((r: any) => r.truckId === truckId);
+    expect(gh).toMatchObject({ received: 500, sold: 70, salesPaise: 175000, landedRatePaise: 2000, profitPaise: 35000, leftValuePaise: 430 * 2000 });
+
+    // Munafa: bikri − laagat of maal sold; kharcha is kiraya plus the mazdoori earned on slips.
+    const pl = (await http().get(`${base}/munafa?from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(pl).toMatchObject({ salesPaise: 177500, cogsPaise: 140000, grossPaise: 37500, expensePaise: 30500, netPaise: 7000 });
+    expect(pl.expenses.map((e: any) => e.head).sort()).toEqual(['kiraya', 'mazdoori']);
+
+    // Bikri register: today's line carries every live slip.
+    const reg = (await http().get(`${base}/sales-register?from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(reg.days).toEqual([expect.objectContaining({ date: d, slips: 5, totalPaise: 177500 })]);
   });
 
   it('turns a request down and frees the number to register again', async () => {

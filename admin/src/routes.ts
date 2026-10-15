@@ -2,7 +2,7 @@
  * Hash routes, so a reload or a shared link lands on the same page. A shop's reports live under
  * #/s/<shop>/…, the market (admin only) under #/market, #/requests and #/shops.
  */
-export type Report = 'dashboard' | 'daybook' | 'cashbook' | 'outstanding' | 'ledger' | 'suppliers' | 'stock' | 'items' | 'team' | 'settings'
+export type Report = 'dashboard' | 'daybook' | 'cashbook' | 'outstanding' | 'ledger' | 'suppliers' | 'stock' | 'items' | 'team' | 'settings' | 'register' | 'munafa' | 'vasooli' | 'gaadis' | 'bhav' | 'nigrani'
 export type Route =
   | { page: 'home' }
   | { page: 'report'; shopId: string; report: Report }
@@ -13,7 +13,7 @@ export type Route =
   | { page: 'person'; key: string }
   | { page: 'requests' }
 
-const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings']
+const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani']
 
 export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean).map(decodeURIComponent)

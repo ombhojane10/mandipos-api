@@ -13,6 +13,7 @@ import { AdminService } from './admin.service';
 import { ReportsService, type Pot } from './reports.service';
 import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
+import { InsightsService } from './insights.service';
 
 /** Portal tokens are signed with the app's secret but for their own audience, so neither works as the other. */
 const AUDIENCE = 'mandipos-admin';
@@ -95,6 +96,7 @@ const SettingsBody = z.object({
   printerHost: z.string().trim().regex(/^(\d{1,3}(\.\d{1,3}){3})?$/, 'an IP like 192.168.1.50'),
   printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
 }).partial();
+const BhavBody = z.object({ date: DayIso, rates: z.array(z.object({ brandId: z.uuid(), grade: z.enum(['1', '2', '3']), ratePaise: paise })).min(1).max(300) });
 const VasooliBody = z.object({ buyerId: z.uuid(), cashPaise: paise, upiPaise: paise, upiBank: z.string().max(80).optional(), paymentRef: z.string().max(40).optional() });
 const OUT_HEADS = ['kharcha', 'mazdoori', 'bhada', 'kiraya', 'tankhwah', 'committee_di', 'bill', 'udhaar_diya', 'aur_gaya', 'handover', 'float', 'bank_jama', 'bank_nikala'] as const;
 const IN_HEADS = ['udhaar_wapas', 'committee_mili', 'aur_aaya'] as const;
@@ -154,7 +156,7 @@ export class AdminAuthController {
 export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
-    private readonly settings: SettingsService,
+    private readonly settings: SettingsService, private readonly insights: InsightsService,
   ) {}
 
   /** Who is signed in, and which shops they may open. */
@@ -215,6 +217,45 @@ export class AdminController {
   daybook(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
     const r = parse(Range, query);
     return this.admin.daybook(mine(v, id), r.from, r.to);
+  }
+
+  /** Tally's columnar Sales Register: a line per day. */
+  @Get('shops/:id/sales-register')
+  salesRegister(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    return this.insights.salesRegister(mine(v, id), r.from, r.to);
+  }
+
+  /** Each gaadi's landed cost against its sales: its munafa. */
+  @Get('shops/:id/gaadi-hisab')
+  gaadiHisab(@See() v: Viewer, @Param('id') id: string, @Query('view') view?: string) {
+    return this.insights.gaadiHisab(mine(v, id), view === 'past' ? 'past' : 'active');
+  }
+
+  /** The period's profit and loss. */
+  @Get('shops/:id/munafa')
+  munafa(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    return this.insights.munafa(mine(v, id), r.from, r.to);
+  }
+
+  /** Tally's exception reports: what an owner should look at. */
+  @Get('shops/:id/nigrani')
+  nigrani(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    return this.insights.nigrani(mine(v, id), r.from, r.to);
+  }
+
+  /** Aaj ka bhav: the rate sheet for a day, and setting it as a terminal does. */
+  @Get('shops/:id/bhav')
+  bhav(@See() v: Viewer, @Param('id') id: string, @Query('date') date?: string) {
+    return this.entries.bhav(mine(v, id), date ? parse(z.iso.date(), date) : undefined);
+  }
+
+  @Post('shops/:id/bhav')
+  @HttpCode(200)
+  setBhav(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.setBhav(v.phone, mine(v, id), parse(BhavBody, body));
   }
 
   /** The shop's settings, as the app's Settings screen shows them. */

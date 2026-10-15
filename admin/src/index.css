@@ -778,3 +778,35 @@ kbd { border: 1px solid var(--line); background: #fff; color: var(--ink); font-f
 .quick kbd { all: unset; color: var(--accent); text-decoration: underline; font-weight: 700; }
 .quick button b { display: inline; }
 @media (max-width: 899px), (hover: none) { .quick kbd, .btn kbd, .keypanel { display: none !important; } }
+
+/* ================================================================ vasooli, munafa, bhav */
+.tbl td.act-col { white-space: nowrap; width: 1%; }
+.btn.act { height: 22px; padding: 0 8px; font-size: 11px; display: inline-flex; align-items: center; margin-right: 4px; text-decoration: none; }
+.note { font-size: 11.5px; }
+.pl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.pl-tbl td:last-child { text-align: right; width: 1%; white-space: nowrap; padding-left: 24px; }
+.pl-tbl tfoot td { font-size: 13.5px; }
+.tbl.bhav td { vertical-align: top; }
+.tbl.bhav td.num { width: 1%; }
+.bhav-in { width: 96px; text-align: right; font-weight: 700; }
+.bhav-in.dirty { background: #fffde0; border-color: var(--accent); }
+.tbl.bhav td small { display: block; margin: 2px 0 0; text-align: right; }
+@media (max-width: 899px) {
+  .pl { grid-template-columns: minmax(0, 1fr); }
+  .tbl.fold td.act-col { display: flex; gap: 6px; }
+  .btn.act { height: 34px; font-size: 13px; }
+  .tbl.fold tbody tr:has(td.act-col) { flex-wrap: wrap; }
+  .tbl.fold td.act-col { flex-basis: 100%; justify-content: flex-end; }
+  .bhav-in { width: 72px; }
+  .tbl.bhav th, .tbl.bhav td { padding: 6px 4px; }
+}
+/* Phone-only detail stays hidden on wide screens, whatever the cell's own small styling. */
+.tbl td small.show-sm, .tbl td span.show-sm { display: none; }
+@media (max-width: 899px) {
+  .tbl td small.show-sm { display: block; }
+  .tbl td span.show-sm { display: inline; }
+}
+@media (max-width: 899px) {
+  /* Folded rows are flex lines: amounts take their own width, not the desktop's 1%. */
+  .tbl.fold td.num, .tbl.fold td.amt-col, .tbl.fold td.code-col, .tbl.fold tr > td.opt-col:first-child { width: auto; flex: none; padding-left: 0; }
+}

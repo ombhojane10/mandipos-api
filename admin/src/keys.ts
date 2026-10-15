@@ -7,6 +7,7 @@ import type { EntryKind } from './entries/kinds'
  */
 export const REPORT_KEYS: Record<string, Report> = {
   h: 'dashboard', d: 'daybook', c: 'cashbook', o: 'outstanding', l: 'ledger', p: 'suppliers', s: 'stock', i: 'items', t: 'team',
+  r: 'register', m: 'munafa', v: 'vasooli', a: 'gaadis', b: 'bhav', x: 'nigrani',
 }
 /** Inside the Nayi entry menu (N): one letter per entry. */
 export const ENTRY_KEYS: Record<string, EntryKind> = {

@@ -332,6 +332,52 @@ export class EntriesService {
     }
   }
 
+  // ---------------------------------------------------------------- Aaj ka bhav
+
+  /** The rate sheet for a day: every maal × grade 1-3, its bhav that day and the last bhav before it. */
+  async bhav(shopId: string, date?: string) {
+    const d = date ?? todayIst();
+    return this.db.withShop(shopId, async (tx) => {
+      const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands WHERE hidden = false ORDER BY sort_order, name`)).rows;
+      const today = (await tx.query<{ brand_id: string; grade: string; rate: string }>(
+        `SELECT brand_id, grade, rate_paise AS rate FROM rates WHERE business_date = $1`, [d])).rows;
+      const before = (await tx.query<{ brand_id: string; grade: string; rate: string; day: string }>(
+        `SELECT DISTINCT ON (brand_id, grade) brand_id, grade, rate_paise AS rate, business_date::text AS day FROM rates
+         WHERE business_date < $1 ORDER BY brand_id, grade, business_date DESC`, [d])).rows;
+      const at = (rows: { brand_id: string; grade: string; rate: string }[], b: string, g: string) => {
+        const r = rows.find((x) => x.brand_id === b && x.grade === g);
+        return r ? n(r.rate) : null;
+      };
+      return {
+        date: d,
+        brands: brands.map((b) => ({
+          id: b.id, name: b.name,
+          grades: (['1', '2', '3'] as const).map((g) => ({ grade: g, ratePaise: at(today, b.id, g), lastPaise: at(before, b.id, g) })),
+        })),
+      };
+    });
+  }
+
+  /** Sets the day's bhav as a terminal's rate sheet does: one row per day × maal × grade, overwritten. */
+  async setBhav(phone: string, shopId: string, input: { date?: string; rates: { brandId: string; grade: '1' | '2' | '3'; ratePaise: number }[] }) {
+    const d = input.date ?? todayIst();
+    const p = await this.device(phone, shopId);
+    const existing = await this.db.withShop(shopId, async (tx) => (await tx.query<{ id: string; brand_id: string; grade: string; created_at: Date }>(
+      `SELECT id, brand_id, grade, created_at FROM rates WHERE business_date = $1`, [d])).rows);
+    const brands = new Set(await this.db.withShop(shopId, async (tx) => (await tx.query<{ id: string }>(`SELECT id FROM brands`)).rows.map((b) => b.id)));
+    const now = new Date().toISOString();
+    const items: PushItem[] = input.rates.filter((r) => brands.has(r.brandId)).map((r) => {
+      const old = existing.find((e) => e.brand_id === r.brandId && e.grade === r.grade);
+      return { table: 'rates', txn: uuidv7(), row: {
+        id: old?.id ?? uuidv7(), created_at: old ? old.created_at.toISOString() : now, updated_at: now,
+        business_date: d, brand_id: r.brandId, grade: r.grade, rate_paise: r.ratePaise,
+      } };
+    });
+    if (!items.length) throw new BadRequestException('Koi bhav nahi');
+    await this.push(p, shopId, items);
+    return { date: d, saved: items.length };
+  }
+
   private async device(phone: string, shopId: string): Promise<Principal> {
     const p = await this.accounts.webDevice(phone, shopId);
     await this.db.query(`UPDATE devices SET last_seen_at = now() WHERE id = $1`, [p.deviceId]);
