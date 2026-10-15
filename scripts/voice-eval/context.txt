@@ -1,0 +1,13 @@
+Date: 2026-10-16 (Thursday). Commodity: nariyal (tender coconut, sold per dana).
+GAADI g1 | RJ11GC3033 | Gujarat | supplier Shyam Lal | left I:400 II:120 III:0
+GAADI g2 | HR38Z9827 | Madras | supplier Kerala Traders | left I:1250 II:300 III:80
+GAADI g3 | DD01S9510 | Andhra | supplier Raju | left I:0 II:0 III:0
+GRAHAK b1 | Ashu Parchan | code A12 | udhaar 12400
+GRAHAK b2 | Ramesh Fruits | code R7 | udhaar 3500
+GRAHAK b3 | Mohan Lal Juice Corner | code M3 | udhaar 0
+GRAHAK b4 | Suresh Kumar | code S1 | udhaar 800
+GRAHAK b5 | Rakesh Coconut Wala | code R9 | udhaar 22000
+GRAHAK b6 | Salim Bhai | code S4 | udhaar 0
+GRAHAK b7 | Ramesh Juice | code R2 | udhaar 600
+PANNI: Nariyal Pani, Jai Ho, AB, Organic
+KATTA: Green, Jaipur, White (10, 15 or 20 dana)

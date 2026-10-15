@@ -1,0 +1,22 @@
+[
+  {"id": "cash-sale", "voice": "Lekha", "speak": "कैश सेल, सौ दाना, बीस रुपये रेट, पन्नी", "expect": {"kind": "slip", "buyer": "", "slip": {"packing": "panni", "lines": [{"qty": 100, "rate": 20}]}, "pay": {"mode": "cash"}}},
+  {"id": "udhaar-half", "voice": "Lekha", "speak": "आशु को ढाई सौ दाना, साढ़े बाईस के भाव से, उधार", "expect": {"kind": "slip", "buyer": "b1", "slip": {"lines": [{"qty": 250, "rate": 22.5}]}, "pay": {"mode": "udhaar"}}},
+  {"id": "two-grades-gaadi", "voice": "Lekha", "speak": "रमेश फ्रूट्स को गुजरात वाली गाड़ी से, सौ एक नंबर बीस का, पचास दो नंबर पंद्रह का, कैश", "expect": {"kind": "slip", "buyer": "b2", "gaadi": "g1", "slip": {"lines": [{"grade": "I", "qty": 100, "rate": 20}, {"grade": "II", "qty": 50, "rate": 15}]}, "pay": {"mode": "cash"}}},
+  {"id": "collect-split", "voice": "Lekha", "speak": "सुरेश ने पांच हज़ार दिए, दो हज़ार कैश, बाकी ऑनलाइन", "expect": {"kind": "collect", "buyer": "b4", "pay": {"cash": 2000, "upi": 3000}}},
+  {"id": "expense-chai", "voice": "Lekha", "speak": "चाय के डेढ़ सौ रुपये गए", "expect": {"kind": "expense", "expense": {"direction": "out", "amount": 150}}},
+  {"id": "show-due", "voice": "Lekha", "speak": "राकेश का कितना बाकी है", "expect": {"kind": "show", "views": [{"view": "udhaar", "buyer": "b5"}]}},
+  {"id": "show-sales", "voice": "Lekha", "speak": "आज कितनी बिक्री हुई", "expect": {"kind": "show", "views": [{"view": "bikri"}]}},
+  {"id": "show-stock", "voice": "Lekha", "speak": "कितना माल बचा है", "expect": {"kind": "show", "views": [{"view": "stock"}]}},
+  {"id": "katta-delivery", "voice": "Lekha", "speak": "सलीम भाई को चालीस दाना पच्चीस का, दस वाले कट्टे में, डिलीवरी भी", "expect": {"kind": "slip", "buyer": "b6", "slip": {"packing": "katta10", "delivery": true, "lines": [{"qty": 40, "rate": 25}]}, "pay": null}},
+  {"id": "new-buyer-upi", "voice": "Lekha", "speak": "नया ग्राहक पप्पू यादव, साठ दाना अठारह का, फ़ोनपे से", "expect": {"kind": "slip", "buyer": "new", "slip": {"lines": [{"qty": 60, "rate": 18}]}, "pay": {"mode": "upi"}, "buyer_name": "Pappu Yadav"}},
+  {"id": "lump-amount", "voice": "Lekha", "speak": "मोहन को सौ दाना, दो हज़ार में", "expect": {"kind": "slip", "buyer": "b3", "slip": {"lines": [{"qty": 100, "amount": 2000}]}, "pay": null}},
+  {"id": "open-gaadi", "voice": "Lekha", "speak": "गाड़ियाँ दिखाओ", "expect": {"kind": "open", "open": "gaadiyan"}},
+  {"id": "howto", "voice": "Rishi", "speak": "Parchi delete kaise karte hain?", "expect": {"kind": "answer"}},
+  {"id": "hinglish-panni", "voice": "Rishi", "speak": "Ashu ko hundred dana, twenty rupees rate, Jai Ho panni, parchoon bhi", "expect": {"kind": "slip", "buyer": "b1", "slip": {"packing": "panni", "panni": "Jai Ho", "parchune": true, "lines": [{"qty": 100, "rate": 20}]}, "pay": null}},
+  {"id": "draft-amend", "voice": "Lekha", "speak": "रेट बाईस करो, और उधार में डाल दो", "draft": "Grahak: Ashu Parchan (b1)\nGaadi: g2\nLines: I 100 dana @ 20\nPacking: loose\nPay: cash", "expect": {"kind": "slip", "buyer": "b1", "slip": {"lines": [{"qty": 100, "rate": 22}]}, "pay": {"mode": "udhaar"}}},
+  {"id": "stock-one-gaadi", "voice": "Lekha", "speak": "मद्रास वाली गाड़ी में कितना बचा है", "expect": {"kind": "show", "views": [{"view": "stock", "gaadi": "g2"}]}},
+  {"id": "leak", "voice": "Lekha", "speak": "राकेश को पंद्रह फूटे नारियल, तीन सौ रुपये में", "expect": {"kind": "slip", "buyer": "b5", "slip": {"leak": {"qty": 15, "amount": 300}}, "pay": null}},
+  {"id": "noise", "noise": true, "expect": {"kind": "unclear"}},
+  {"id": "top-dues", "voice": "Lekha", "speak": "सबसे ज़्यादा उधार किसका है", "expect": {"kind": "show", "views": [{"view": "udhaar_list"}]}},
+  {"id": "collect-upi", "voice": "Rishi", "speak": "Rakesh se ten thousand PhonePe pe aaye", "expect": {"kind": "collect", "buyer": "b5", "pay": {"upi": 10000}}}
+]

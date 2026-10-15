@@ -39,6 +39,12 @@ envVarGroups:
         sync: false
       - key: SANDBOX_API_SECRET
         sync: false
+      # Voice assistant ("Bolo"): Gemini on Vertex AI, the same project and API key as the MandiPlus
+      # backend. Unset key = the mic says voice is not switched on. VOICE_MODEL etc. have defaults.
+      - key: GEMINI_VERTEX_API_KEY
+        sync: false
+      - key: GEMINI_VERTEX_PROJECT_ID
+        sync: false
       - key: KYC_DATA_KEY          # seals e-Aadhaar XML, photo, PAN record; never rotate without re-sealing
         generateValue: true
 

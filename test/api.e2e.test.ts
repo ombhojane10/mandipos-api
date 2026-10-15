@@ -1814,3 +1814,57 @@ describe('live sync', () => {
     await push(b.accessToken, slip(uuidv7(), uuidv7(), 9, truckId), { resetSeen: after.resetSeq }).expect(200);
   });
 });
+
+describe('voice (Bolo)', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const rows = async (sql: string) => {
+    const c = new Client({ connectionString: OWNER_URL });
+    await c.connect();
+    try { return (await c.query(sql)).rows; } finally { await c.end(); }
+  };
+  it('is off without a Vertex key, refuses an empty turn, and never reaches the model then', async () => {
+    const shop = await registerShop('9866600001', 'Voice Traders');
+    const voice = (body: object) => http().post('/v1/voice').set(auth(shop.accessToken)).send(body);
+    await voice({ context: 'GRAHAK b1 | Ashu', screen: 'home' }).expect(400);
+    await voice({ text: 'Ashu ko 100 dana', context: 'GRAHAK b1 | Ashu' }).expect(503);
+    await http().post('/v1/voice').send({ text: 'x', context: '' }).expect(401);
+  });
+
+  it('sends back a clean draft — nulls gone, an impossible number dropped — and logs the turn and its outcome', async () => {
+    const { GeminiClient } = await import('../src/voice/gemini.client');
+    const gemini = app.get(GeminiClient);
+    const real = gemini.generate.bind(gemini);
+    let asked: any = null;
+    gemini.generate = async (payload: any) => {
+      asked = payload;
+      return {
+        model: 'stub', tokensIn: 10, tokensOut: 5,
+        text: JSON.stringify({
+          transcript: 'Ashu ko 100 dana 22 ka', kind: 'slip', say: 'Ashu, 100 dana', buyer: 'b1', buyer_name: 'Ashu', gaadi: null, gaadi_no: null,
+          pay: null, slip: { lines: [{ grade: 'I', qty: 100, rate: 2.2e307, amount: null, lot: null }], leak: null, packing: null, delivery: false },
+          expense: null, views: null, open: null,
+        }),
+      };
+    };
+    try {
+      const shop = await registerShop('9866600002', 'Voice Traders Two');
+      const res = await http().post('/v1/voice').set(auth(shop.accessToken))
+        .send({ text: 'Ashu ko 100 dana 22 ka', context: 'GRAHAK b1 | Ashu | udhaar 0', screen: 'home' }).expect(200);
+      expect(res.body.reply).toEqual({ transcript: 'Ashu ko 100 dana 22 ka', kind: 'slip', say: 'Ashu, 100 dana', buyer: 'b1', buyer_name: 'Ashu', slip: { lines: [{ grade: 'I', qty: 100 }] } });
+      // The shop's data and what was typed reach the model; the system prompt stays the same for caching.
+      expect(asked.contents[0].parts[0].text).toContain('GRAHAK b1 | Ashu');
+      expect(asked.contents[0].parts).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 200));
+      const [row] = await rows(`SELECT kind, transcript, model, outcome FROM voice_turns WHERE id = '${res.body.id}'`);
+      expect(row).toMatchObject({ kind: 'slip', transcript: 'Ashu ko 100 dana 22 ka', model: 'stub', outcome: null });
+      await http().post(`/v1/voice/${res.body.id}/outcome`).set(auth(shop.accessToken)).send({ outcome: 'edited' }).expect(200);
+      expect((await rows(`SELECT outcome FROM voice_turns WHERE id = '${res.body.id}'`))[0].outcome).toBe('edited');
+      // Another shop cannot touch it.
+      const other = await registerShop('9866600003', 'Voice Traders Three');
+      await http().post(`/v1/voice/${res.body.id}/outcome`).set(auth(other.accessToken)).send({ outcome: 'saved' }).expect(404);
+    } finally {
+      gemini.generate = real;
+    }
+  });
+});
+

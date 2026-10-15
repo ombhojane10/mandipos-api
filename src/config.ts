@@ -63,6 +63,22 @@ const schema = z
     ADMIN_PHONES: z.string().default(''),
     // Web origins allowed to call the API from a browser: the admin portal. Comma-separated.
     ADMIN_ORIGINS: z.string().default('https://mandipos-admin.onrender.com'),
+    /**
+     * The voice assistant ("Bolo"): Gemini on Vertex AI, the same project and API key as the
+     * MandiPlus backend. Unset key = the app's mic says voice is not switched on.
+     */
+    GEMINI_VERTEX_API_KEY: z.string().optional(),
+    GEMINI_VERTEX_PROJECT_ID: z.string().optional(),
+    GEMINI_VERTEX_LOCATION: z.string().default('global'),
+    VOICE_MODEL: z.string().default('gemini-3.6-flash'),
+    // Asked only when the main model fails twice; faster, a little less careful with names.
+    VOICE_FALLBACK_MODEL: z.string().default('gemini-3.1-flash-lite'),
+    // A second identical call goes out when the first has not answered by then.
+    VOICE_HEDGE_MS: z.coerce.number().int().min(500).default(3000),
+    // How hard the model thinks before answering: minimal is fastest; low reads fields more carefully.
+    VOICE_THINKING: z.enum(['minimal', 'low', 'medium']).default('minimal'),
+    // Turns per shop per minute; a stuck mic or a loop cannot run up the bill.
+    VOICE_PER_MINUTE: z.coerce.number().int().min(1).default(30),
   })
   .refine((c) => !c.SANDBOX_API_KEY || !!c.KYC_DATA_KEY, {
     message: 'KYC_DATA_KEY is required when SANDBOX_API_KEY is set',
