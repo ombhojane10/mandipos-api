@@ -61,6 +61,8 @@ const schema = z
      * comma-separated 10-digit mobiles, OTP by SMS like the app. Empty = nobody.
      */
     ADMIN_PHONES: z.string().default(''),
+    // Web origins allowed to call the API from a browser: the admin portal. Comma-separated.
+    ADMIN_ORIGINS: z.string().default('https://mandipos-admin.onrender.com'),
   })
   .refine((c) => !c.SANDBOX_API_KEY || !!c.KYC_DATA_KEY, {
     message: 'KYC_DATA_KEY is required when SANDBOX_API_KEY is set',
@@ -106,6 +108,9 @@ export const sendsRealSms = () => config().APP_ENV === 'staging' || config().APP
 /** The admin portal's numbers; read on every request, so removing one locks it out at once. */
 export const adminPhones = (): string[] =>
   config().ADMIN_PHONES.split(',').map((p) => p.replace(/\D/g, '').slice(-10)).filter((p) => /^[6-9]\d{9}$/.test(p));
+
+export const adminOrigins = (): string[] =>
+  config().ADMIN_ORIGINS.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
 
 /** Fixed QA codes per phone, from OTP_TEST_LOGINS. Production carries only the demo number. */
 export function testLoginCode(phone: string): string | null {

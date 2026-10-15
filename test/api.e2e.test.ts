@@ -560,6 +560,14 @@ describe('shop approval and the admin portal', () => {
     expect((await http().get('/v1/me').set(auth(created.body.accessToken))).body.pendingShop).toMatchObject({ name: 'Real Shop', status: 'pending' });
   });
 
+  it('answers the admin portal’s browser, and no other site', async () => {
+    const ok = await http().options('/v1/admin/shops').set('Origin', 'https://mandipos-admin.onrender.com')
+      .set('Access-Control-Request-Method', 'GET').set('Access-Control-Request-Headers', 'authorization');
+    expect(ok.headers['access-control-allow-origin']).toBe('https://mandipos-admin.onrender.com');
+    const other = await http().get('/healthz').set('Origin', 'https://evil.example');
+    expect(other.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
   it('lets only listed numbers in, and never with an app token', async () => {
     await http().post('/v1/admin/auth/otp').send({ phone: '9811122233' }).expect(403);
     await http().get('/v1/admin/shops').expect(401);

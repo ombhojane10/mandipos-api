@@ -4,7 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import compression from 'compression';
 import { AppModule } from './app.module';
-import { config } from './config';
+import { adminOrigins, config } from './config';
 
 /** Shared by main() and the tests so both run the same middleware. */
 export function configure(app: INestApplication) {
@@ -14,6 +14,8 @@ export function configure(app: INestApplication) {
   express.use(compression());
   // Gzipped request bodies from the terminal are inflated by the body parser.
   express.useBodyParser('json', { limit: '1mb' });
+  // Only the admin portal calls from a browser; the terminals don't need CORS at all.
+  app.enableCors({ origin: adminOrigins(), methods: ['GET', 'POST'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 });
   app.enableShutdownHooks();
 }
 
