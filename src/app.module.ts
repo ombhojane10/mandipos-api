@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AdminAuthController, AdminController, AdminGuard } from './admin/admin.controller';
+import { AdminService } from './admin/admin.service';
 import { UdhaarAlertsService } from './alerts/udhaar-alerts.service';
 import { AccountsService } from './auth/accounts.service';
 import { AuthController } from './auth/auth.controller';
@@ -25,7 +27,7 @@ import { SyncHub } from './sync/sync.hub';
 import { SyncService } from './sync/sync.service';
 
 @Module({
-  controllers: [HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController],
-  providers: [Db, ReleasesStore, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
+  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController],
+  providers: [Db, ReleasesStore, AdminService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
 })
 export class AppModule {}

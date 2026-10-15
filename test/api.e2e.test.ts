@@ -43,6 +43,7 @@ beforeAll(async () => {
     JWT_SECRET: 'test-secret-test-secret-test-secret-123',
     OTP_HASH_SECRET: 'test-otp-secret-123',
     OTP_TEST_LOGINS: '9000000000:123456',
+    ADMIN_PHONES: '9022353647, 9022300000',
     ULIP_BASE_URL: 'https://ulip.staging.invalid/ulip/v1.0.0',
     ULIP_USERNAME: 'test',
     ULIP_PASSWORD: 'test',
@@ -76,9 +77,17 @@ async function login(phone: string, deviceId?: string) {
 
 async function registerShop(phone: string, name: string) {
   const s = await login(phone);
-  const res = await http().post('/v1/shops').set('Authorization', `Bearer ${s.accessToken}`)
-    .send({ name, mandi: 'Azadpur', shopNo: '12', role: 'owner' }).expect(201);
-  return { ...s, accessToken: res.body.accessToken as string, me: res.body.me };
+  return { ...s, ...(await createApproved(s.accessToken, { name, mandi: 'Azadpur', shopNo: '12', role: 'owner' })) };
+}
+
+/** Registers a shop and approves it the way the admin portal does; returns the token that opens it. */
+async function createApproved(token: string, body: object) {
+  const res = await http().post('/v1/shops').set('Authorization', `Bearer ${token}`).send(body).expect(201);
+  expect(res.body.me.shop).toBeNull();
+  expect(res.body.me.pendingShop).toMatchObject({ status: 'pending' });
+  await owner(`UPDATE shops SET approved_at = now() WHERE id = '${res.body.me.pendingShop.id}'`);
+  const me = await http().get('/v1/me').set('Authorization', `Bearer ${res.body.accessToken}`).expect(200);
+  return { accessToken: me.body.accessToken as string, me: me.body };
 }
 
 const now = () => new Date().toISOString();
@@ -148,10 +157,9 @@ describe('amrud', () => {
     expect(nariyal.me.shop.commodity).toBe('nariyal');
 
     const s = await login('9833300002');
-    const res = await http().post('/v1/shops').set(auth(s.accessToken))
-      .send({ name: 'Amrud Shop', mandi: 'Azadpur', shopNo: '9', role: 'owner', commodity: 'amrud' }).expect(201);
-    const owner = res.body.accessToken as string;
-    expect(res.body.me.shop.commodity).toBe('amrud');
+    const res = await createApproved(s.accessToken, { name: 'Amrud Shop', mandi: 'Azadpur', shopNo: '9', role: 'owner', commodity: 'amrud' });
+    const owner = res.accessToken;
+    expect(res.me.shop.commodity).toBe('amrud');
     await http().post('/v1/shops').set(auth((await login('9833300003')).accessToken))
       .send({ name: 'X', commodity: 'seb' }).expect(400);
 
@@ -498,6 +506,120 @@ describe('app updates', () => {
     expect(next.headers['content-disposition']).toContain('MandiPlus-POS-0.41.0.apk');
     expect((next.body as Buffer).length).toBe(4);
     await http().get('/v1/public/app/download?flavor=other').expect(400);
+  });
+});
+
+describe('shop approval and the admin portal', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  async function adminLogin(p = '9022353647') {
+    await http().post('/v1/admin/auth/otp').send({ phone: p }).expect(204);
+    const res = await http().post('/v1/admin/auth/verify').send({ phone: p, code: OtpService.issuedForTests.get(p) }).expect(200);
+    return auth(res.body.token);
+  }
+
+  it('keeps a new shop shut until an admin approves it, then the owner’s phone opens it', async () => {
+    const s = await login('9877700001');
+    const created = await http().post('/v1/shops').set(auth(s.accessToken))
+      .send({ name: 'Waiting Traders', mandi: 'Azadpur', shopNo: '7', role: 'owner' }).expect(201);
+    expect(created.body.me.shop).toBeNull();
+    expect(created.body.me.pendingShop).toMatchObject({ name: 'Waiting Traders', status: 'pending' });
+    const token = created.body.accessToken as string;
+
+    // Nothing of a shop is reachable while it waits: no sync, no team, and a re-login stays out too.
+    await http().get('/v1/sync/pull?after=0').set(auth(token)).expect(403);
+    expect((await login('9877700001')).me.shop).toBeNull();
+    // A second registration from the same number is refused while the first waits.
+    await http().post('/v1/shops').set(auth(token)).send({ name: 'Again' }).expect(409);
+
+    const admin = await adminLogin();
+    const listed = (await http().get('/v1/admin/shops').set(admin).expect(200)).body.shops;
+    expect(listed[0]).toMatchObject({ name: 'Waiting Traders', status: 'pending', owner: { phone: '9877700001' } });
+    const id = listed[0].id as string;
+    await http().get(`/v1/admin/shops/${id}/summary?from=2026-10-01&to=2026-10-02`).set(admin).expect(409);
+
+    await http().post(`/v1/admin/shops/${id}/approve`).set(admin).expect(204);
+    await http().post(`/v1/admin/shops/${id}/approve`).set(admin).expect(409);
+    const me = (await http().get('/v1/me').set(auth(token)).expect(200)).body;
+    expect(me.shop).toMatchObject({ name: 'Waiting Traders', role: 'owner' });
+    expect(me.pendingShop).toBeNull();
+    await http().get('/v1/sync/pull?after=0').set(auth(me.accessToken)).expect(200);
+    await http().post(`/v1/admin/shops/${id}/reject`).set(admin).send({}).expect(409);
+  });
+
+  it('turns a request down and frees the number to register again', async () => {
+    const s = await login('9877700002');
+    const created = await http().post('/v1/shops').set(auth(s.accessToken)).send({ name: 'Fake Shop' }).expect(201);
+    const id = created.body.me.pendingShop.id;
+    const admin = await adminLogin();
+    await http().post(`/v1/admin/shops/${id}/reject`).set(admin).send({ reason: 'Not a mandi shop' }).expect(204);
+    const me = (await http().get('/v1/me').set(auth(created.body.accessToken)).expect(200)).body;
+    expect(me.shop).toBeNull();
+    expect(me.pendingShop).toMatchObject({ status: 'rejected', reason: 'Not a mandi shop' });
+    await http().post('/v1/shops').set(auth(created.body.accessToken)).send({ name: 'Real Shop' }).expect(201);
+    expect((await http().get('/v1/me').set(auth(created.body.accessToken))).body.pendingShop).toMatchObject({ name: 'Real Shop', status: 'pending' });
+  });
+
+  it('lets only listed numbers in, and never with an app token', async () => {
+    await http().post('/v1/admin/auth/otp').send({ phone: '9811122233' }).expect(403);
+    await http().get('/v1/admin/shops').expect(401);
+    const app = await login('9022353647');
+    await http().get('/v1/admin/shops').set(auth(app.accessToken)).expect(401);
+    const admin = await adminLogin('9022300000');
+    await http().get('/v1/admin/me').set(admin).expect(200);
+  });
+
+  it('shows a shop the same figures the app does, and a grahak’s whole history', async () => {
+    const shop = await registerShop('9877700003', 'Stats Traders');
+    const t = new Date().toISOString(), d = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7(), raju = uuidv7();
+    const [paid, udhaar, voided] = [uuidv7(), uuidv7(), uuidv7()];
+    const colId = uuidv7(), deadCol = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(shop.accessToken)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Pollachi' } },
+      { table: 'buyers', row: { id: raju, created_at: t, updated_at: t, name: 'Raju Fruits', phone: '9876543210', code: 'R7' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'TN01', supplier: 'Mani', arrived_at: t } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 1000, received_qty: 1000, rate_paise: 2000 } },
+      // ₹500 cash+UPI paid in full; ₹800 on udhaar; ₹300 slip voided later.
+      { table: 'bills', row: { id: paid, created_at: t, number: 'A1/1', kind: 'kachchi', buyer_id: raju, buyer_name: 'Raju Fruits', business_date: d, pay_mode: 'mixed', total_paise: 50000, paid_paise: 50000, cash_paise: 30000, upi_paise: 20000, slip_no: 1, truck_id: truckId, labour_paise: 600 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: paid, truck_id: truckId, brand_id: brandId, grade: '1', qty: 20, rate_paise: 2500 } },
+      { table: 'bills', row: { id: udhaar, created_at: t, number: 'A1/2', kind: 'kachchi', buyer_id: raju, buyer_name: 'Raju Fruits', business_date: d, pay_mode: 'credit', total_paise: 80000, paid_paise: 0, slip_no: 2, truck_id: truckId } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: udhaar, truck_id: truckId, brand_id: brandId, grade: '1', qty: 32, rate_paise: 2500 } },
+      { table: 'bills', row: { id: voided, created_at: t, number: 'A1/3', kind: 'kachchi', buyer_id: raju, buyer_name: 'Raju Fruits', business_date: d, pay_mode: 'credit', total_paise: 30000, paid_paise: 0, slip_no: 3, truck_id: truckId } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: voided, truck_id: truckId, brand_id: brandId, grade: '1', qty: 12, rate_paise: 2500 } },
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: voided, slip_no: 3 } },
+      // ₹200 vasooli on the udhaar slip; a ₹999 payment entered by mistake and voided.
+      { table: 'collections', row: { id: colId, created_at: t, buyer_id: raju, amount_paise: 20000, pay_mode: 'upi', business_date: d, bill_id: udhaar, receipt_no: 1, upi_paise: 20000 } },
+      { table: 'collections', row: { id: deadCol, created_at: t, buyer_id: raju, amount_paise: 99900, pay_mode: 'cash', business_date: d, receipt_no: 2 } },
+      { table: 'collection_voids', row: { id: uuidv7(), created_at: t, collection_id: deadCol, receipt_no: 2 } },
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: t, buyer_id: raju, amount_paise: 10000, note: 'Purana khata', business_date: d } },
+    ] }).expect(200);
+    expect(pushed.body.results.every((r: any) => r.status === 'applied')).toBe(true);
+
+    const admin = await adminLogin();
+    const id = shop.me.shop.id;
+    const sum = (await http().get(`/v1/admin/shops/${id}/summary?from=${d}&to=${d}`).set(admin).expect(200)).body;
+    expect(sum).toMatchObject({
+      salesPaise: 130000, slips: 2, nags: 52, cashPaise: 30000, upiPaise: 20000,
+      creditLeftPaise: 60000, collectedCashPaise: 0, collectedUpiPaise: 20000, labourPaise: 600,
+      deletedSlips: 1, deletedPaise: 30000,
+      duePaise: 70000, dueBuyers: 1, stockNags: 948, openTrucks: 1,
+    });
+    expect(sum.series).toEqual([{ date: d, salesPaise: 130000, slips: 2 }]);
+    expect(sum.topBuyers[0]).toMatchObject({ name: 'Raju Fruits', salesPaise: 130000 });
+
+    const found = (await http().get(`/v1/admin/shops/${id}/buyers?q=r7`).set(admin).expect(200)).body.buyers;
+    expect(found).toEqual([expect.objectContaining({ id: raju, balancePaise: 70000, boughtPaise: 130000 })]);
+    expect((await http().get(`/v1/admin/shops/${id}/buyers?q=98765`).set(admin)).body.buyers).toHaveLength(1);
+    expect((await http().get(`/v1/admin/shops/${id}/buyers?q=nobody`).set(admin)).body.buyers).toHaveLength(0);
+
+    const g = (await http().get(`/v1/admin/shops/${id}/buyers/${raju}`).set(admin).expect(200)).body;
+    expect(g.buyer).toMatchObject({ name: 'Raju Fruits', phone: '9876543210', code: 'R7' });
+    expect(g.totals).toMatchObject({ balancePaise: 70000, boughtPaise: 130000, slips: 2, nags: 52 });
+    expect(g.history).toHaveLength(4);
+    expect(g.history.map((r: any) => r.kind).sort()).toEqual(['payment', 'slip', 'slip', 'udhaar']);
+    expect(g.history[0].balancePaise).toBe(70000);
+    expect(g.history.find((r: any) => r.id === udhaar).lines).toEqual([{ brand: 'Pollachi', grade: '1', qty: 32, ratePaise: 2500, leak: false }]);
   });
 });
 

@@ -9,7 +9,15 @@ export type MeView = {
   user: { id: string; phone: string; name: string };
   device: { id: string; code: string | null };
   shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; dispatchPhone: string; slipCode: string; address: string; bankAccounts: BankAccount[]; commodity: string; printer: { host: string; dots: number } } | null;
+  /** The shop this number registered that MandiPlus hasn't approved yet (or turned down). */
+  pendingShop: PendingShop | null;
 };
+
+export type PendingShop = { id: string; name: string; mandi: string; status: 'pending' | 'rejected'; reason: string; createdAt: string };
+
+/** Memberships that open a shop: only one MandiPlus has approved. */
+const APPROVED_MEMBERSHIP = `SELECT m.shop_id FROM shop_members m JOIN shops s ON s.id = m.shop_id
+  WHERE m.user_id = $1 AND s.approved_at IS NOT NULL ORDER BY m.created_at LIMIT 1`;
 
 /** How the app names a role; the table keeps the older words. */
 export type TeamRole = 'admin' | 'accountant';
@@ -52,9 +60,7 @@ export class AccountsService {
       // A returning owner on a new terminal joins their existing shop straight away.
       const unattached = (await tx.query<{ shop_id: string | null }>(`SELECT shop_id FROM devices WHERE id = $1`, [device.id])).rows[0].shop_id === null;
       if (unattached) {
-        const membership = (await tx.query<{ shop_id: string }>(
-          `SELECT shop_id FROM shop_members WHERE user_id = $1 ORDER BY created_at LIMIT 1`, [userId],
-        )).rows[0];
+        const membership = (await tx.query<{ shop_id: string }>(APPROVED_MEMBERSHIP, [userId])).rows[0];
         if (membership) await this.attachDevice(tx, membership.shop_id, device.id);
       }
 
@@ -64,7 +70,10 @@ export class AccountsService {
     });
   }
 
-  /** Registers the caller's shop (the sketch's "customer registration") and attaches this device. */
+  /**
+   * Registers the caller's shop as a request. The caller is its admin, but no device is attached
+   * until MandiPlus approves it in the admin portal; the next /v1/me after that opens the shop.
+   */
   async createShop(p: Principal, shop: { name: string; mandi: string; shopNo: string; phad?: string; gstin: string; role: string; ownerName: string; commodity?: string }):
     Promise<{ accessToken: string; me: MeView }> {
     return this.db.tx(async (tx) => {
@@ -82,7 +91,6 @@ export class AccountsService {
       await tx.query(`SELECT set_config('app.shop_id', $1, true)`, [shopId]);
       await tx.query(`INSERT INTO shop_counters (shop_id) VALUES ($1)`, [shopId]);
       if (shop.ownerName) await tx.query(`UPDATE users SET name = $2 WHERE id = $1 AND name = ''`, [p.userId, shop.ownerName]);
-      await this.attachDevice(tx, shopId, p.deviceId);
 
       const principal = await this.tokens.principalFor(tx, p.userId, p.deviceId);
       return { accessToken: this.tokens.signAccess(principal), me: await this.me(tx, principal) };
@@ -107,8 +115,9 @@ export class AccountsService {
     return this.db.tx(async (tx) => {
       const existing = (await tx.query(`SELECT 1 FROM shop_members WHERE user_id = $1`, [p.userId])).rowCount;
       if (existing) throw new ConflictException('Yeh number pehle se ek dukaan mein hai');
-      const shop = (await tx.query<{ id: string }>(`SELECT id FROM shops WHERE join_code = $1`, [code])).rows[0];
+      const shop = (await tx.query<{ id: string; approved_at: Date | null }>(`SELECT id, approved_at FROM shops WHERE join_code = $1`, [code])).rows[0];
       if (!shop) throw new NotFoundException('Yeh code kisi dukaan ka nahi hai');
+      if (!shop.approved_at) throw new ForbiddenException('Yeh dukaan abhi approve nahi hui');
       await tx.query(`INSERT INTO shop_members (shop_id, user_id, role) VALUES ($1, $2, 'munim')`, [shop.id, p.userId]);
       await this.attachDevice(tx, shop.id, p.deviceId);
       const principal = await this.tokens.principalFor(tx, p.userId, p.deviceId);
@@ -279,9 +288,7 @@ export class AccountsService {
   private async attachIfMember(tx: Tx, userId: string, deviceId: string): Promise<boolean> {
     const unattached = (await tx.query<{ shop_id: string | null }>(`SELECT shop_id FROM devices WHERE id = $1`, [deviceId])).rows[0]?.shop_id === null;
     if (!unattached) return false;
-    const membership = (await tx.query<{ shop_id: string }>(
-      `SELECT shop_id FROM shop_members WHERE user_id = $1 ORDER BY created_at LIMIT 1`, [userId],
-    )).rows[0];
+    const membership = (await tx.query<{ shop_id: string }>(APPROVED_MEMBERSHIP, [userId])).rows[0];
     if (!membership) return false;
     await this.attachDevice(tx, membership.shop_id, deviceId);
     return true;
@@ -310,7 +317,14 @@ export class AccountsService {
       [p.deviceId, p.userId],
     );
     const r = rows[0];
+    const pending = r.shop_id ? null : (await tx.query<{ id: string; name: string; mandi: string; rejected_at: Date | null; reject_reason: string; created_at: Date }>(
+      `SELECT id, name, mandi, rejected_at, reject_reason, created_at FROM shops
+       WHERE created_by = $1 AND approved_at IS NULL ORDER BY created_at DESC LIMIT 1`, [p.userId],
+    )).rows[0];
     return {
+      pendingShop: pending
+        ? { id: pending.id, name: pending.name, mandi: pending.mandi, status: pending.rejected_at ? 'rejected' : 'pending', reason: pending.reject_reason, createdAt: pending.created_at.toISOString() }
+        : null,
       user: { id: r.user_id, phone: r.phone, name: r.user_name },
       device: { id: r.device_id, code: r.code },
       shop: r.shop_id
