@@ -159,4 +159,5 @@ export const SHELL: Record<string, readonly [string, string]> = {
   'PDF save hui': ['PDF saved', 'PDF सेव हुई'],
   'Page {n} / {of}': ['Page {n} / {of}', 'पेज {n} / {of}'],
   'Export — dekhein, phir Print / Share / Excel': ['Export — preview, then Print / Share / Excel', 'एक्सपोर्ट — देखें, फिर प्रिंट / शेयर / एक्सेल'],
+  'Configure': ['Configure', 'सेटिंग्स'],
 }

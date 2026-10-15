@@ -10,11 +10,11 @@ import * as I from '../icons'
 import { openEntry, type EntryKind } from '../entries/kinds'
 import { t } from '../i18n'
 
-const QUICK: { kind: EntryKind; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
-  { kind: 'parchi', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
-  { kind: 'vasooli', label: t('Vasooli'), sub: t('Grahak se paisa'), tone: 'blue', icon: I.IWallet },
-  { kind: 'kharcha', label: t('Kharcha'), sub: t('Day book'), tone: 'red', icon: I.ICash },
-  { kind: 'gaadi', label: t('Nayi Gaadi'), sub: t('Kharid'), tone: 'amber', icon: I.ITruck },
+const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
+  { kind: 'parchi', key: 'F8', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
+  { kind: 'vasooli', key: 'F6', label: t('Vasooli'), sub: t('Grahak se paisa'), tone: 'blue', icon: I.IWallet },
+  { kind: 'kharcha', key: 'N K', label: t('Kharcha'), sub: t('Day book'), tone: 'red', icon: I.ICash },
+  { kind: 'gaadi', key: 'F9', label: t('Nayi Gaadi'), sub: t('Kharid'), tone: 'amber', icon: I.ITruck },
 ]
 
 /** The shop at a glance, like the first page of Tally: four figures, the trend, and what happened last. */
@@ -31,10 +31,10 @@ export function Dashboard({ shopId }: { shopId: string }) {
 
   return (
     <>
-      <div className="quick" style={{ marginBottom: 16 }}>
+      <div className="quick" style={{ marginBottom: 10 }}>
         {QUICK.map((q) => (
           <button key={q.kind} type="button" onClick={() => openEntry(q.kind)}>
-            <span className={`ic t-${q.tone}`}><q.icon /></span><span><b>{q.label}</b><small className="muted">{q.sub}</small></span>
+            <span className={`ic t-${q.tone}`}><q.icon /></span><span><kbd>{q.key}: </kbd><b>{q.label}</b></span>
           </button>
         ))}
       </div>

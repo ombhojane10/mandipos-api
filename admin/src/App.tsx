@@ -236,12 +236,15 @@ export default function App() {
             <h1>{title}</h1>
           </div>
           <span className="spacer" />
+          <span className="top-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).replace(/ (\w{3}) /, '-$1-')}</span>
           {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
           {shopId && <button className="new-btn top-new" onClick={() => openEntry()}>+ {t('Nayi entry')}</button>}
           <button className="goto" onClick={() => setGoto(true)} aria-label={t('Go To')}>
             <I.ISearch /><span className="label">{t('Dhoondhein')}…</span>
           </button>
         </header>
+
+        {shopId && <KeyPanel canExport={canExport} onGoto={() => setGoto(true)} onSettings={() => { location.hash = href({ page: 'report', shopId, report: 'settings' }) }} />}
 
         <main className="main">
           {route.page === 'report' && <ReportPage shopId={route.shopId} report={route.report} />}
@@ -309,4 +312,29 @@ function moveRow(e: KeyboardEvent, el: HTMLElement | null, dir: 1 | -1) {
   const i = rows.indexOf(el as HTMLElement)
   const next = i < 0 ? rows[dir === 1 ? Math.max(0, lastRow.get(pagePath()) ?? 0) : rows.length - 1] : rows[Math.min(rows.length - 1, Math.max(0, i + dir))]
   next.focus(); next.scrollIntoView({ block: 'nearest' })
+}
+
+/**
+ * Tally's button bar down the right: every action with its key, so the mouse and the keyboard
+ * find the same thing. Shown on wide screens; phones keep the bottom tabs.
+ */
+function KeyPanel({ canExport, onGoto, onSettings }: { canExport: boolean; onGoto: () => void; onSettings: () => void }) {
+  const keys: { k: string; label: string; run: () => void; off?: boolean }[] = [
+    { k: 'F2', label: t('Period'), run: () => periodKey('open') },
+    { k: 'G', label: t('Go To'), run: onGoto },
+    { k: 'N', label: t('Nayi entry'), run: () => openEntry() },
+    { k: 'F8', label: t('Parchi'), run: () => openEntry('parchi') },
+    { k: 'F6', label: t('Vasooli'), run: () => openEntry('vasooli') },
+    { k: 'F9', label: t('Gaadi'), run: () => openEntry('gaadi') },
+    { k: 'E', label: t('Export'), run: openExport, off: !canExport },
+    { k: 'F12', label: t('Configure'), run: onSettings },
+    { k: '?', label: t('Shortcuts'), run: openHelp },
+  ]
+  return (
+    <nav className="keypanel" aria-label={t('Shortcuts')}>
+      {keys.map((b) => (
+        <button key={b.k} type="button" disabled={b.off} onClick={b.run}><kbd>{b.k}</kbd>: {b.label}</button>
+      ))}
+    </nav>
+  )
 }

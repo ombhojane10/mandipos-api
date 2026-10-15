@@ -16,8 +16,8 @@ export function Sheet({ title, onClose, onSave, saving, error, saveLabel = t('Sa
         <div className="sheet-bd">{children}</div>
         {error && <p className="error" role="alert" style={{ padding: '0 20px' }}>{error}</p>}
         <div className="sheet-ft">
-          <button type="button" className="btn ghost" disabled={saving} onClick={onClose}>{t('Rehne dein')}</button>
-          <button type="submit" className="btn primary" disabled={saving}>{saving ? '…' : saveLabel}</button>
+          <button type="button" className="btn ghost" disabled={saving} onClick={onClose}><kbd>Esc: </kbd>{t('Rehne dein')}</button>
+          <button type="submit" className="btn primary" disabled={saving}>{saving ? '…' : <><kbd>Ctrl+↵: </kbd>{saveLabel}</>}</button>
         </div>
       </form>
     </div>

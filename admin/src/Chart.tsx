@@ -4,8 +4,8 @@ import { t } from './i18n'
 
 type Point = { date: string; salesPaise: number; purchasePaise: number }
 
-const SALES = '#16a34a'
-const BUYS = '#2563eb'
+const SALES = '#2a6b73'
+const BUYS = '#c9a227'
 
 /**
  * Bikri and Kharid by day: grouped bars from one baseline, rounded tops, a legend because there
