@@ -108,3 +108,38 @@ export type DayEntry = {
   amountPaise: number; cashPaise: number; upiPaise: number; udhaarPaise: number
   payMode: string; staff: string; voided: string | null; note?: string; mode?: string
 }
+
+export type Me = { phone: string; admin: boolean; shopIds: string[] | null }
+export type Buckets = { d0_7: number; d8_30: number; d31: number }
+export type Dashboard = {
+  from: string; to: string
+  now: { salesPaise: number; slips: number; purchasePaise: number; gaadis: number }
+  before: { salesPaise: number; slips: number; purchasePaise: number; gaadis: number }
+  trend: { date: string; salesPaise: number; purchasePaise: number }[]
+  receivables: Buckets & { duePaise: number; count: number }
+  payables: Buckets & { duePaise: number; count: number }
+  cash: { galla: number; office: number; bank: number }
+  items: ItemRow[]
+}
+export type ItemRow = { brand: string; nags: number; amountPaise: number; slips: number; ratePaise: number }
+export type CashBook = {
+  pot: 'galla' | 'office' | 'bank'; from: string; to: string; openingPaise: number; inPaise: number; outPaise: number; closingPaise: number
+  lines: { id: string; date: string; at: string; kind: 'bikri' | 'vasooli' | 'in' | 'out'; title: string; party: string; note: string; inPaise: number; outPaise: number; auto: boolean; balancePaise: number }[]
+}
+export type Outstanding = {
+  totals: Buckets & { duePaise: number; count: number }
+  rows: (Buckets & { buyerId: string; name: string; phone: string; code: string; duePaise: number; oldestDays: number | null; lastSlipOn: string | null; lastPaidAt: string | null })[]
+}
+export type Suppliers = {
+  totals: Buckets & { duePaise: number; count: number }
+  rows: (Buckets & { key: string; name: string; gaadis: number; openGaadis: number; purchasePaise: number; paidPaise: number; duePaise: number; lastAt: string | null })[]
+}
+export type SupplierKhata = {
+  key: string; name: string
+  totals: { purchasePaise: number; paidPaise: number; duePaise: number; gaadis: number; dana: number }
+  history: { id: string; at: string; date: string; kind: 'gaadi' | 'payment'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; balancePaise: number; open: boolean; sold: number; left: number }[]
+}
+export type Stock = {
+  totals: { left: number; valuePaise: number; gaadis: number; stale: number }
+  rows: { truckId: string; number: string; supplier: string; brands: string; arrivedOn: string; ageDays: number; stale: boolean; received: number; sold: number; spoiled: number; left: number; valuePaise: number }[]
+}

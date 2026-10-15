@@ -1,0 +1,21 @@
+/** Line icons, 24×24, stroke = currentColor. */
+const P = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+const svg = (d: React.ReactNode) => () => <svg viewBox="0 0 24 24" aria-hidden {...P}>{d}</svg>
+
+export const IHome = svg(<><path d="M3 11 12 4l9 7" /><path d="M5 10v10h14V10" /></>)
+export const IBook = svg(<><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z" /><path d="M5 17a3 3 0 0 1 3-3h11" /></>)
+export const ICash = svg(<><rect x="3" y="6" width="18" height="12" rx="2" /><circle cx="12" cy="12" r="2.5" /><path d="M7 9.5v5M17 9.5v5" /></>)
+export const IUdhaar = svg(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M18 8v6M15 11h6" /></>)
+export const ILedger = svg(<><path d="M6 3h12v18H6z" /><path d="M9 8h6M9 12h6M9 16h3" /></>)
+export const ITruck = svg(<><path d="M3 6h11v10H3z" /><path d="M14 9h4l3 3v4h-7" /><circle cx="7" cy="17.5" r="1.8" /><circle cx="17" cy="17.5" r="1.8" /></>)
+export const IBox = svg(<><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z" /><path d="m3 7.5 9 4.5 9-4.5M12 12v9" /></>)
+export const ITag = svg(<><path d="M3 12V4h8l9 9-8 8z" /><circle cx="7.5" cy="8.5" r="1.3" /></>)
+export const ITeam = svg(<><circle cx="9" cy="8" r="3.2" /><path d="M3 19a6 6 0 0 1 12 0" /><path d="M16 5.5a3 3 0 0 1 0 5.8M18 13.5a6 6 0 0 1 3 5.5" /></>)
+export const IStore = svg(<><path d="M4 9h16l-1.5-5h-13z" /><path d="M5 9v11h14V9" /><path d="M10 20v-6h4v6" /></>)
+export const ISearch = svg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>)
+export const IInbox = svg(<><path d="M3 13h5l1.5 3h5L16 13h5" /><path d="M5 5h14l2 8v6H3v-6z" /></>)
+export const IMenu = svg(<><path d="M4 7h16M4 12h16M4 17h16" /></>)
+export const IRupee = svg(<><path d="M7 5h10M7 9h10M7 5c5 0 6 4 0 8l7 6" /></>)
+export const ICart = svg(<><path d="M3 4h2l2.5 11h10L20 7H6.5" /><circle cx="9" cy="19" r="1.4" /><circle cx="17" cy="19" r="1.4" /></>)
+export const IWallet = svg(<><path d="M4 7h14a2 2 0 0 1 2 2v9H4z" /><path d="M4 7V5h12v2" /><path d="M16 12.5h4" /></>)
+export const IPeople = svg(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.5a6.5 6.5 0 0 1 3.5 5.5" /></>)

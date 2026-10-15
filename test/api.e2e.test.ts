@@ -655,8 +655,8 @@ describe('shop approval and the admin portal', () => {
     expect(other.headers['access-control-allow-origin']).toBeUndefined();
   });
 
-  it('lets only listed numbers in, and never with an app token', async () => {
-    await http().post('/v1/admin/auth/otp').send({ phone: '9811122233' }).expect(403);
+  it('lets in admins and shop owners only, and never with an app token', async () => {
+    await http().post('/v1/admin/auth/otp').send({ phone: '9811199998' }).expect(403);
     await http().get('/v1/admin/shops').expect(401);
     const app = await login('9022353647');
     await http().get('/v1/admin/shops').set(auth(app.accessToken)).expect(401);
@@ -729,6 +729,46 @@ describe('shop approval and the admin portal', () => {
     const pays = book.filter((e: any) => e.kind === 'payment');
     expect(pays.map((e: any) => [e.amountPaise, e.voided])).toEqual(expect.arrayContaining([[20000, null], [99900, 'deleted']]));
     expect(pays.find((e: any) => e.id === colId)).toMatchObject({ upiPaise: 20000, party: 'Raju Fruits' });
+
+    // Tally's reports, each matching the app's own sums.
+    const dash = (await http().get(`/v1/admin/shops/${id}/dashboard?from=${d}&to=${d}`).set(admin).expect(200)).body;
+    expect(dash.now).toMatchObject({ salesPaise: 130000, slips: 2, purchasePaise: 2000000, gaadis: 1 });
+    expect(dash.receivables).toMatchObject({ duePaise: 70000, count: 1, d0_7: 70000, d8_30: 0, d31: 0 });
+    expect(dash.payables).toMatchObject({ duePaise: 2000000, count: 1 });
+    expect(dash.cash).toEqual({ galla: 30000, office: 0, bank: 40000 });
+    expect(dash.trend).toHaveLength(7);
+    expect(dash.trend.at(-1)).toEqual({ date: d, salesPaise: 130000, purchasePaise: 2000000 });
+    expect(dash.items).toEqual([{ brand: 'Pollachi', nags: 52, amountPaise: 130000, slips: 2, ratePaise: 2500 }]);
+
+    const galla = (await http().get(`/v1/admin/shops/${id}/cashbook?pot=galla&from=${d}&to=${d}`).set(admin).expect(200)).body;
+    expect(galla).toMatchObject({ openingPaise: 0, inPaise: 30000, outPaise: 0, closingPaise: 30000 });
+    const bank = (await http().get(`/v1/admin/shops/${id}/cashbook?pot=bank&from=${d}&to=${d}`).set(admin).expect(200)).body;
+    expect(bank.lines.map((l: any) => [l.kind, l.inPaise])).toEqual([['bikri', 20000], ['vasooli', 20000]]);
+
+    const out = (await http().get(`/v1/admin/shops/${id}/outstanding`).set(admin).expect(200)).body;
+    expect(out.rows).toEqual([expect.objectContaining({ buyerId: raju, duePaise: 70000, d0_7: 70000, oldestDays: 0 })]);
+
+    const sup = (await http().get(`/v1/admin/shops/${id}/suppliers`).set(admin).expect(200)).body;
+    expect(sup.rows).toEqual([expect.objectContaining({ key: 'mani', name: 'Mani', gaadis: 1, purchasePaise: 2000000, paidPaise: 0, duePaise: 2000000 })]);
+    const mani = (await http().get(`/v1/admin/shops/${id}/suppliers/mani`).set(admin).expect(200)).body;
+    expect(mani.history[0]).toMatchObject({ kind: 'gaadi', title: 'Gaadi TN01', creditPaise: 2000000, balancePaise: 2000000, left: 948 });
+
+    const stock = (await http().get(`/v1/admin/shops/${id}/stock`).set(admin).expect(200)).body;
+    expect(stock.rows).toEqual([expect.objectContaining({ number: 'TN01', received: 1000, sold: 52, left: 948, valuePaise: 1896000 })]);
+
+    // The shop's owner signs in too, and sees only their own shop — never the market or another's books.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9877700003' }).expect(204);
+    const ownerTok = (await http().post('/v1/admin/auth/verify').send({ phone: '9877700003', code: OtpService.issuedForTests.get('9877700003') }).expect(200)).body.token;
+    const asOwner = auth(ownerTok);
+    expect((await http().get('/v1/admin/me').set(asOwner).expect(200)).body).toMatchObject({ admin: false, shopIds: [id] });
+    expect((await http().get('/v1/admin/shops').set(asOwner).expect(200)).body.shops.map((s: any) => s.id)).toEqual([id]);
+    await http().get(`/v1/admin/shops/${id}/dashboard?from=${d}&to=${d}`).set(asOwner).expect(200);
+    const someoneElse = (await http().get('/v1/admin/shops').set(admin)).body.shops.find((s: any) => s.id !== id && s.status === 'approved').id;
+    await http().get(`/v1/admin/shops/${someoneElse}/daybook?from=${d}&to=${d}`).set(asOwner).expect(403);
+    await http().get('/v1/admin/customers').set(asOwner).expect(403);
+    await http().post(`/v1/admin/shops/${someoneElse}/approve`).set(asOwner).expect(403);
+    // A number with no shop gets no OTP at all.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9811199999' }).expect(403);
 
     const market = (await http().get('/v1/admin/customers').set(admin).expect(200)).body.market;
     expect(market.duePaise).toBeGreaterThanOrEqual(70000);

@@ -1,48 +1,101 @@
 import { useState, type ReactNode } from 'react'
 import { addDays, count, dayHeader, rate, rupees, shortDate, spanDays, todayIst } from './format'
-import { PRESETS, periodLabel, preset, type Period } from './period'
+import { PRESETS, periodLabel, type Period } from './period'
+import type { Buckets } from './api'
 
-/** A balance in words as well as colour: "₹38,700 baaki" (they owe) / "₹500 jama" (shop holds theirs). */
-export function Bal({ paise, plain }: { paise: number; plain?: boolean }) {
-  if (paise > 0) return <span className={`money${plain ? '' : ' due'}`}>{rupees(paise)} <small className="inline">baaki</small></span>
-  if (paise < 0) return <span className={`money${plain ? '' : ' jama'}`}>{rupees(-paise)} <small className="inline">jama</small></span>
-  return <span className="muted">Clear</span>
+/**
+ * An amount that is owed, in words as well as colour. [who] says whose side it is on:
+ * grahak → "baaki" (they owe the shop) / "jama" (shop holds theirs);
+ * supplier → "dena" (shop owes him) / "advance"; cash → a plain balance.
+ */
+export function Bal({ paise, who = 'grahak', plain }: { paise: number; who?: 'grahak' | 'supplier' | 'cash'; plain?: boolean }) {
+  if (who === 'cash') return <span className={`money${paise < 0 ? ' due' : ''}`}>{paise < 0 ? '−' : ''}{rupees(Math.abs(paise))}</span>
+  if (paise === 0) return <span className="muted">Clear</span>
+  const pos = paise > 0
+  const word = who === 'grahak' ? (pos ? 'baaki' : 'jama') : (pos ? 'dena' : 'advance')
+  const cls = plain ? '' : pos ? (who === 'grahak' ? ' due' : ' due') : ' jama'
+  return <span className={`money b${cls}`}>{rupees(Math.abs(paise))} <small className="inline">{word}</small></span>
+}
+
+export function Kpi({ icon, tone, label, value, sub, to }: { icon: ReactNode; tone: 'green' | 'blue' | 'amber' | 'red'; label: string; value: ReactNode; sub?: ReactNode; to?: string }) {
+  const body = (
+    <>
+      <span className={`ic t-${tone}`}>{icon}</span>
+      <span style={{ minWidth: 0 }}>
+        <span className="lb">{label}</span>
+        <span className="v" style={{ display: 'block' }}>{value}</span>
+        {sub && <span className="s">{sub}</span>}
+      </span>
+    </>
+  )
+  return to ? <a className="card kpi" href={to}>{body}</a> : <div className="card kpi">{body}</div>
+}
+
+export function Change({ now, before }: { now: number; before: number }) {
+  if (!before) return now ? <span className="muted">Pichhla ₹0</span> : <span className="muted">—</span>
+  const pct = Math.round(((now - before) / before) * 100)
+  if (pct === 0) return <span className="muted">Pichhle jitna</span>
+  return <span className={pct > 0 ? 'up' : 'down'}>{pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% <span className="muted" style={{ fontWeight: 400 }}>pichhle se</span></span>
+}
+
+/** 0–7 / 8–30 / 30+ din: a bar, then the three amounts. */
+export function Ages({ b, total }: { b: Buckets; total: number }) {
+  const pct = (v: number) => (total > 0 ? `${(v / total) * 100}%` : '0')
+  return (
+    <>
+      <div className="agebar" aria-hidden>
+        <span className="a0" style={{ width: pct(b.d0_7) }} /><span className="a1" style={{ width: pct(b.d8_30) }} /><span className="a2" style={{ width: pct(b.d31) }} />
+      </div>
+      <div className="ages">
+        <div><span className="dot a0" /><span>0–7 din</span><span className="money">{rupees(b.d0_7)}</span></div>
+        <div><span className="dot a1" /><span>8–30 din</span><span className="money">{rupees(b.d8_30)}</span></div>
+        <div><span className="dot a2" /><span>30+ din</span><span className={`money${b.d31 ? ' due b' : ''}`}>{rupees(b.d31)}</span></div>
+      </div>
+    </>
+  )
 }
 
 export function Crumb({ to, children }: { to: string; children: ReactNode }) {
   return <a className="crumb" href={to}>‹ {children}</a>
 }
 
-export function Rows({ n = 6 }: { n?: number }) {
-  return <div className="list">{Array.from({ length: n }, (_, i) => <div key={i} className="skrow"><div className="sk" style={{ width: `${40 + ((i * 17) % 45)}%` }} /></div>)}</div>
+export function Skeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="card" style={{ padding: 16, display: 'grid', gap: 14 }}>
+      {Array.from({ length: rows }, (_, i) => <div key={i} className="sk" style={{ width: `${45 + ((i * 17) % 45)}%` }} />)}
+    </div>
+  )
 }
 
-/**
- * ‹ period › with presets, like Tally's Day Book in the browser: the arrows step by the
- * period's own length, the label opens a date picker for one day, F2 lands here.
- */
+/** ‹ period › with presets: arrows step by the period's own length, the label opens a date picker. F2 lands here. */
 export function PeriodBar({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
   const len = spanDays(value.from, value.to)
   const today = todayIst()
   const step = (dir: number) => onChange({ key: 'custom', from: addDays(value.from, dir * len), to: addDays(value.to, dir * len) })
   return (
-    <div className="period">
+    <>
+      <div className="seg period" role="group" aria-label="Period">
+        {PRESETS.map((p) => (
+          <button key={p.key} aria-pressed={value.key === p.key} onClick={() => onChange(presetOf(p.key))}>{p.label}</button>
+        ))}
+      </div>
       <div className="stepper">
         <button aria-label="Pichhla" onClick={() => step(-1)}>‹</button>
         <label>
           {periodLabel(value)}
-          <input type="date" aria-label="Tarikh chunein" id="period-date" max={today} value={value.to}
+          <input type="date" aria-label="Tarikh chunein" max={today} value={value.to}
             onChange={(e) => e.target.value && onChange({ key: 'custom', from: e.target.value, to: e.target.value })} />
         </label>
         <button aria-label="Agla" disabled={value.to >= today} onClick={() => step(1)}>›</button>
       </div>
-      <div className="chips">
-        {PRESETS.map((p) => (
-          <button key={p.key} className="chip" aria-pressed={value.key === p.key} onClick={() => onChange(preset(p.key))}>{p.label}</button>
-        ))}
-      </div>
-    </div>
+    </>
   )
+}
+function presetOf(key: string): Period {
+  const today = todayIst()
+  const p = PRESETS.find((x) => x.key === key) ?? PRESETS[0]
+  const to = addDays(today, -p.back)
+  return { key: p.key, from: addDays(to, 1 - p.days), to }
 }
 
 export type LedgerRow = {
@@ -51,87 +104,95 @@ export type LedgerRow = {
   lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
 }
 
+const WORDS = {
+  grahak: { dr: 'Udhaar (Dr)', cr: 'Jama (Cr)', drPhone: 'udhaar', crPhone: 'jama' },
+  supplier: { dr: 'Diya (Dr)', cr: 'Kharid (Cr)', drPhone: 'diya', crPhone: 'kharid' },
+}
+
 /**
- * Tally's Ledger Vouchers: Date · Particulars · (Dukaan) · Nag · Udhaar (Dr) · Jama (Cr) · Baaki,
- * newest first, closing balance on top. On a phone each entry folds into two lines under a
- * sticky date header. Enter or a tap on a parchi shows what was in it; "Poori detail" opens all.
+ * Tally's Ledger Vouchers: Tarikh · Vivaran · (Dukaan) · Nag · Dr · Cr · Baaki, newest first,
+ * closing balance on top. On a phone each entry folds into one row: what happened on the left,
+ * the amount and running balance on the right. A parchi opens to show its maal.
  */
-export function Ledger({ rows, withShop, closingPaise }: { rows: LedgerRow[]; withShop?: boolean; closingPaise: number }) {
-  const [all, setAll] = useState(false)
+export function Ledger({ rows, withShop, closingPaise, who = 'grahak' }: { rows: LedgerRow[]; withShop?: boolean; closingPaise: number; who?: 'grahak' | 'supplier' }) {
   const [open, setOpen] = useState<Set<string>>(new Set())
+  const [all, setAll] = useState(false)
+  const w = WORDS[who]
   const hasLines = rows.some((r) => r.lines?.length)
   const totals = rows.reduce((t, r) => ({ dr: t.dr + r.debitPaise, cr: t.cr + r.creditPaise }), { dr: 0, cr: 0 })
+  const cols = withShop ? 7 : 6
   let lastDay = ''
   return (
-    <>
-      {hasLines && (
-        <label className="toggle" style={{ marginBottom: 8 }}>
-          <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Poori detail
-        </label>
-      )}
-      <div className={`ledger${withShop ? ' with-shop' : ''}`}>
-        <div className="lhead">
-          <span>Tarikh</span><span>Vivaran</span><span className="l-shop">Dukaan</span><span className="num">Nag</span>
-          <span className="num">Udhaar (Dr)</span><span className="num">Jama (Cr)</span><span className="num">Baaki</span>
-        </div>
-        <div className="ltotal">
-          <span className="l-date" /><span className="l-part">Abhi ka baaki</span><span className="l-shop" /><span className="l-nag" />
-          <span className="num l-dr money">{rupees(totals.dr)}</span><span className="num l-cr money">{rupees(totals.cr)}</span>
-          <span className="num l-bal"><Bal paise={closingPaise} /></span>
-        </div>
-        {rows.map((r) => {
-          const lines = r.lines ?? []
-          const isOpen = all || open.has(r.id)
-          const toggle = () => { if (!lines.length) return; const s = new Set(open); if (s.has(r.id)) s.delete(r.id); else s.add(r.id); setOpen(s) }
-          const header = r.date !== lastDay ? <div className="lday">{dayHeader(r.date)}</div> : null
-          lastDay = r.date
-          const meta = [r.shop, r.detail, r.nags ? `${count(r.nags)} nag` : ''].filter(Boolean).join(' · ')
-          return (
-            <div key={`${r.shop ?? ''}-${r.id}`}>
-              {header}
-              <div
-                className={`lrow${r.void ? ' void' : ''}`} data-row tabIndex={0}
-                role={lines.length ? 'button' : undefined} aria-expanded={lines.length ? isOpen : undefined}
-                onClick={toggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}
-              >
-                <span className="l-date muted">{shortDate(r.date)}</span>
-                <span className="l-part"><b>{r.title}</b><small>{r.detail}</small></span>
-                <span className="l-shop">{r.shop}</span>
-                <span className="num l-nag muted">{r.nags ? count(r.nags) : ''}</span>
-                <span className="num l-dr money">{r.debitPaise ? rupees(r.debitPaise) : ''}</span>
-                <span className="num l-cr money">{r.creditPaise ? rupees(r.creditPaise) : ''}</span>
-                <span className="l-amt money">{phoneAmount(r)}</span>
-                <span className="l-meta">{meta}</span>
-                <span className="num l-bal"><Bal paise={r.balancePaise} plain /></span>
-              </div>
-              {isOpen && lines.length > 0 && (
-                <div className="lines">
-                  {lines.map((l, i) => (
-                    <div key={i}>
-                      <span>{l.brand || 'Maal'} · Grade {l.grade}{l.leak ? ' · Leak' : ''}</span>
-                      <span className="num">{count(l.qty)} × {rate(l.ratePaise)}</span>
-                      <span className="num">{rupees(l.qty * l.ratePaise)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        })}
+    <div className="card">
+      <div className="hd">
+        <h3>Khata</h3>
+        {hasLines && <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+          <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Poori detail</label>}
+      </div>
+      <div className="wrap-x">
+        <table className="tbl fold">
+          <thead>
+            <tr>
+              <th>Tarikh</th><th>Vivaran</th>{withShop && <th>Dukaan</th>}<th className="num">Nag</th>
+              <th className="num">{w.dr}</th><th className="num">{w.cr}</th><th className="num">Baaki</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="opt-col" /><td className="main-col"><b>Abhi ka baaki</b></td>{withShop && <td className="opt-col" />}<td className="opt-col" />
+              <td className="num money opt-col">{rupees(totals.dr)}</td><td className="num money opt-col">{rupees(totals.cr)}</td>
+              <td className="num amt-col"><Bal paise={closingPaise} who={who} /></td>
+            </tr>
+            {rows.map((r) => {
+              const lines = r.lines ?? []
+              const isOpen = all || open.has(r.id)
+              const toggle = () => { if (!lines.length) return; const s = new Set(open); if (s.has(r.id)) s.delete(r.id); else s.add(r.id); setOpen(s) }
+              const header = r.date !== lastDay ? <tr className="day show-day"><td colSpan={cols}>{dayHeader(r.date)}</td></tr> : null
+              lastDay = r.date
+              const net = r.debitPaise - r.creditPaise
+              return (
+                <FragmentRows key={`${r.shop ?? ''}-${r.id}`}>
+                  {header}
+                  <tr data-row tabIndex={0} className={r.void ? 'void' : undefined} onClick={toggle}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}>
+                    <td className="opt-col muted">{shortDate(r.date)}</td>
+                    <td className="main-col">
+                      <span className="name b">{r.title}</span>
+                      <small>{[withShop && r.shop, r.detail, r.nags ? `${count(r.nags)} nag` : ''].filter(Boolean).join(' · ')}</small>
+                    </td>
+                    {withShop && <td className="opt-col muted">{r.shop}</td>}
+                    <td className="num opt-col muted">{r.nags ? count(r.nags) : ''}</td>
+                    <td className="num money opt-col">{r.debitPaise ? rupees(r.debitPaise) : ''}</td>
+                    <td className="num money opt-col">{r.creditPaise ? rupees(r.creditPaise) : ''}</td>
+                    <td className="num amt-col">
+                      <span className="sm-block money b">
+                        {net === 0 ? <>{rupees(r.debitPaise)} <small className="inline">nakad</small></>
+                          : net > 0 ? <>+{rupees(net)} <small className="inline">{w.drPhone}</small></>
+                          : <>−{rupees(-net)} <small className="inline">{w.crPhone}</small></>}
+                      </span>
+                      <span className="money"><Bal paise={r.balancePaise} who={who} plain /></span>
+                    </td>
+                  </tr>
+                  {isOpen && lines.length > 0 && (
+                    <tr className="open-lines"><td colSpan={cols}>
+                      {lines.map((l, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 16, padding: '2px 0' }}>
+                          <span style={{ flex: 1 }}>{l.brand || 'Maal'} · Grade {l.grade}{l.leak ? ' · Leak' : ''}</span>
+                          <span className="money">{count(l.qty)} × {rate(l.ratePaise)}</span>
+                          <span className="money" style={{ minWidth: 90, textAlign: 'right' }}>{rupees(l.qty * l.ratePaise)}</span>
+                        </div>
+                      ))}
+                    </td></tr>
+                  )}
+                </FragmentRows>
+              )
+            })}
+          </tbody>
+        </table>
         {rows.length === 0 && <p className="empty">Koi entry nahi</p>}
       </div>
-    </>
+    </div>
   )
 }
 
-/** One amount for a phone row: what this entry did to the balance, in words. */
-function phoneAmount(r: LedgerRow): ReactNode {
-  if (r.debitPaise && r.creditPaise) {
-    const net = r.debitPaise - r.creditPaise
-    if (net === 0) return <span>{rupees(r.debitPaise)} <small className="inline">nakad</small></span>
-    return <span className={net > 0 ? 'due' : 'jama'}>{rupees(Math.abs(net))} <small className="inline">{net > 0 ? 'udhaar' : 'jama'}</small></span>
-  }
-  if (r.debitPaise) return <span className="due">+{rupees(r.debitPaise)} <small className="inline">udhaar</small></span>
-  if (r.creditPaise) return <span className="jama">−{rupees(r.creditPaise)} <small className="inline">jama</small></span>
-  return null
-}
+function FragmentRows({ children }: { children: ReactNode }) { return <>{children}</> }

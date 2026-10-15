@@ -29,7 +29,7 @@ export function Login({ onDone }: { onDone: (token: string) => void }) {
 
   return (
     <div className="login">
-      <form className="login-card" onSubmit={submit}>
+      <form className="card login-card" onSubmit={submit}>
         <h1>Mandi<span style={{ color: 'var(--accent)' }}>Plus</span> POS</h1>
         <p className="muted">{sent ? `${phone} par aaya OTP daalein` : 'Apne mobile number se login karein'}</p>
         {!sent ? (
