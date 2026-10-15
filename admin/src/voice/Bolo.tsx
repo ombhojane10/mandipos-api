@@ -5,6 +5,7 @@ import { href, type Report } from '../routes'
 import { openEntry, type EntryKind, type VoiceDraft } from '../entries/kinds'
 import { VoiceCard, type Card } from './Cards'
 import { MicIcon } from './MicIcon'
+import { hush, sayCard, speak } from './speak'
 import { toBase64, useRecorder } from './useRecorder'
 
 type Reply = { transcript: string; kind: string; say: string }
@@ -40,6 +41,7 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
   const rec = useRecorder(onLevel, () => send.current())
 
   const listen = useCallback(async () => {
+    hush()
     setPhase('listening'); setTurn(null); setTitle('')
     sending.current = false
     try { await rec.start() } catch {
@@ -74,6 +76,9 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
         return
       }
       setTurn(r)
+      // Read out, as the terminal does: the answer, or each card's figure from the books.
+      if (r.cards?.length) speak(r.cards.map(sayCard).join('। '))
+      else if (r.reply.kind === 'answer') speak(r.reply.say)
       setTitle(r.reply.kind === 'answer' ? t('Jawaab') : r.reply.say || t('Samajh nahi aaya, phir boliye'))
       setPhase(r.reply.kind === 'unclear' ? 'error' : 'answer')
     } catch (e) {
@@ -86,10 +91,10 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
     // The server reads the books while the person talks; the turn then does not wait for them.
     void api(`/v1/admin/shops/${shopId}/voice/warm`, { method: 'POST' }).catch(() => {})
     void listen()
-    return () => { inFlight.current?.abort(); rec.close() }
+    return () => { inFlight.current?.abort(); rec.close(); hush() }
   }, [shopId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const close = () => { inFlight.current?.abort(); rec.close(); onClose() }
+  const close = () => { inFlight.current?.abort(); rec.close(); hush(); onClose() }
 
   return (
     <div className="scrim sheet-scrim" onClick={close} onKeyDown={(e) => {
