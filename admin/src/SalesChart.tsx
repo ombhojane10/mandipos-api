@@ -19,7 +19,7 @@ export function SalesChart({ series }: { series: { date: string; salesPaise: num
   return (
     <div className="chart">
       <p className="chart-read">
-        <b>{rupees(d.salesPaise)}</b> <span className="muted">{shortDate(d.date)} · {d.slips} slips{hover === null ? ' · best day' : ''}</span>
+        <b>{rupees(d.salesPaise)}</b> <span className="muted">{shortDate(d.date)} · {d.slips} parchi{hover === null ? ' · sabse zyada' : ''}</span>
       </p>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Daily sales" onMouseLeave={() => setHover(null)}>
         <line x1="0" x2={W} y1={H - BOTTOM} y2={H - BOTTOM} className="axis" />

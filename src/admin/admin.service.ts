@@ -241,14 +241,14 @@ export class AdminService {
           const paid = n(b.paid_paise);
           return {
             id: b.id, at: b.created_at.toISOString(), date: day(b.business_date), kind: 'slip',
-            title: `Slip ${b.slip_no ?? b.number}`,
-            detail: paid > 0 ? `Paid ${mode(n(b.cash_paise), n(b.upi_paise))}` : b.pay_mode === 'free' ? 'Free' : 'Udhaar',
+            title: `Parchi ${b.slip_no ?? b.number}`,
+            detail: paid > 0 ? (paid >= n(b.total_paise) ? `Nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}` : `Kuch nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}`) : b.pay_mode === 'free' ? 'Free' : 'Udhaar',
             nags: ls.reduce((s, l) => s + l.qty, 0), debitPaise: n(b.total_paise), creditPaise: paid, lines: ls,
           };
         }),
         ...cols.map((c): Row => ({
           id: c.id, at: c.created_at.toISOString(), date: day(c.business_date), kind: 'payment',
-          title: c.receipt_no ? `Payment #${c.receipt_no}` : 'Payment', detail: mode(n(c.cash), n(c.upi)),
+          title: c.receipt_no ? `Vasooli · Raseed ${c.receipt_no}` : 'Vasooli', detail: mode(n(c.cash), n(c.upi)),
           nags: 0, debitPaise: 0, creditPaise: n(c.amount_paise),
         })),
         ...entries.map((e): Row => {
@@ -367,6 +367,69 @@ export class AdminService {
       traders: traders.sort((a, b) => b.balancePaise - a.balancePaise),
       history,
     };
+  }
+
+  /** What the whole market is owed right now: the sum over every shop, and how many people owe it. */
+  async marketDues() {
+    const people = new Set<string>();
+    let duePaise = 0;
+    for (const s of await this.openShops()) {
+      const rows = await this.db.withShop(s.id, async (tx) => (await tx.query<{ id: string; phone: string; bal: string }>(
+        `SELECT g.id, g.phone, x.bal FROM (${BALANCES}) x JOIN buyers g ON g.id = x.buyer_id WHERE x.bal > 0`)).rows);
+      for (const r of rows) {
+        duePaise += n(r.bal);
+        people.add(MOBILE.test(r.phone) ? r.phone : `${s.id}~${r.id}`);
+      }
+    }
+    return { duePaise, debtors: people.size };
+  }
+
+  /**
+   * The shop's Day Book for business dates [from, to]: every slip (cancelled ones too, marked),
+   * every payment taken and every daybook line, newest first. Tally's most-read report.
+   */
+  async daybook(shopId: string, from: string, to: string) {
+    if (from > to) throw new BadRequestException('from must be on or before to');
+    await this.requireApproved(shopId);
+    return this.db.withShop(shopId, async (tx) => {
+      const slips = (await tx.query<{ id: string; at: Date; day: string; slip_no: number | null; number: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; nags: string; void_reason: string | null; staff: string }>(
+        `SELECT b.id, b.created_at AS at, b.business_date::text AS day, b.slip_no, b.number, b.buyer_id, b.buyer_name, b.pay_mode,
+                b.total_paise AS total, b.paid_paise AS paid, b.cash_paise AS cash, b.upi_paise AS upi, b.staff_name AS staff,
+                (SELECT COALESCE(SUM(qty), 0) FROM bill_lines l WHERE l.bill_id = b.id) AS nags,
+                (SELECT v.reason FROM bill_voids v WHERE v.bill_id = b.id LIMIT 1) AS void_reason
+         FROM bills b WHERE b.business_date BETWEEN $1 AND $2 ORDER BY b.created_at DESC LIMIT 1000`, [from, to])).rows;
+      const pays = (await tx.query<{ id: string; at: Date; day: string; buyer_id: string; name: string | null; amount: string; cash: string; upi: string; receipt_no: number | null; voided: boolean }>(
+        `SELECT c.id, c.created_at AS at, c.business_date::text AS day, c.buyer_id, g.name, c.amount_paise AS amount,
+                ${CASH_PART} AS cash, ${UPI_PART} AS upi,
+                c.receipt_no, EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id) AS voided
+         FROM collections c LEFT JOIN buyers g ON g.id = c.buyer_id
+         WHERE c.business_date BETWEEN $1 AND $2 ORDER BY c.created_at DESC LIMIT 1000`, [from, to])).rows;
+      const book = (await tx.query<{ id: string; at: Date; day: string; direction: string; mode: string; category: string; party: string; note: string; amount: string }>(
+        `SELECT id, created_at AS at, business_date::text AS day, direction, mode, category, party_name AS party, note, amount_paise AS amount
+         FROM daybook_entries WHERE hidden = false AND category <> 'opening' AND business_date BETWEEN $1 AND $2
+         ORDER BY created_at DESC LIMIT 1000`, [from, to])).rows;
+
+      const entries = [
+        ...slips.map((b) => ({
+          kind: 'slip' as const, id: b.id, at: b.at.toISOString(), date: b.day,
+          title: `Parchi ${b.slip_no ?? b.number}`, party: b.buyer_name, buyerId: b.buyer_id, nags: n(b.nags),
+          amountPaise: n(b.total), cashPaise: n(b.cash), upiPaise: n(b.upi), udhaarPaise: Math.max(0, n(b.total) - n(b.paid)),
+          payMode: b.pay_mode, staff: b.staff, voided: b.void_reason,
+        })),
+        ...pays.map((c) => ({
+          kind: 'payment' as const, id: c.id, at: c.at.toISOString(), date: c.day,
+          title: c.receipt_no ? `Raseed ${c.receipt_no}` : 'Vasooli', party: c.name ?? '', buyerId: c.buyer_id, nags: 0,
+          amountPaise: n(c.amount), cashPaise: n(c.cash), upiPaise: n(c.upi), udhaarPaise: 0,
+          payMode: '', staff: '', voided: c.voided ? 'deleted' : null,
+        })),
+        ...book.map((e) => ({
+          kind: (e.direction === 'in' ? 'in' : 'out') as 'in' | 'out', id: e.id, at: e.at.toISOString(), date: e.day,
+          title: e.category, party: e.party, buyerId: null, nags: 0, note: e.note, mode: e.mode,
+          amountPaise: n(e.amount), cashPaise: 0, upiPaise: 0, udhaarPaise: 0, payMode: '', staff: '', voided: null,
+        })),
+      ].sort((a, b) => b.at.localeCompare(a.at));
+      return { from, to, entries };
+    });
   }
 
   private openShops() {

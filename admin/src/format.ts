@@ -42,3 +42,21 @@ export function ago(iso: string | null): string {
 }
 
 export const phone = (p: string) => (p.length === 10 ? `${p.slice(0, 5)} ${p.slice(5)}` : p)
+
+/** 3:42 pm */
+export function time(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toLowerCase()
+}
+
+/** Wed, 15 Oct — the date headers of a ledger on a phone. */
+export function dayHeader(day: string): string {
+  const today = todayIst()
+  if (day === today) return 'Aaj'
+  if (day === addDays(today, -1)) return 'Kal'
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+/** Days between two business dates, inclusive. */
+export function spanDays(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1
+}

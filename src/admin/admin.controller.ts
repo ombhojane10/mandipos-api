@@ -120,13 +120,21 @@ export class AdminController {
   /** Grahak across every shop, matched by mobile; empty q = the market's biggest debtors. */
   @Get('customers')
   async customers(@Query('q') q?: string) {
-    return { customers: await this.admin.customers((q ?? '').trim().slice(0, 60)) };
+    const query = (q ?? '').trim().slice(0, 60);
+    return { customers: await this.admin.customers(query), market: query ? null : await this.admin.marketDues() };
   }
 
   /** One person: a 10-digit mobile, or "shopId~buyerId" for a grahak with none. */
   @Get('customers/:key')
   customer(@Param('key') key: string) {
     return this.admin.customer(parse(CustomerKey, key));
+  }
+
+  /** Every slip, payment and daybook line of business dates [from, to]. */
+  @Get('shops/:id/daybook')
+  daybook(@Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    return this.admin.daybook(parse(Id, id), r.from, r.to);
   }
 
   @Get('shops/:id/buyers')

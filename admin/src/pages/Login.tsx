@@ -30,8 +30,8 @@ export function Login({ onDone }: { onDone: (token: string) => void }) {
   return (
     <div className="login">
       <form className="login-card" onSubmit={submit}>
-        <h1>POS Admin</h1>
-        <p className="muted">{sent ? `Enter the OTP sent to ${phone}` : 'Sign in with your mobile number'}</p>
+        <h1>Mandi<span style={{ color: 'var(--accent)' }}>Plus</span> POS</h1>
+        <p className="muted">{sent ? `${phone} par aaya OTP daalein` : 'Apne mobile number se login karein'}</p>
         {!sent ? (
           <input
             className="field" inputMode="numeric" autoComplete="tel" placeholder="Mobile number" autoFocus
@@ -44,10 +44,10 @@ export function Login({ onDone }: { onDone: (token: string) => void }) {
           />
         )}
         {error && <p className="error" role="alert">{error}</p>}
-        <button className="primary" disabled={busy || (!sent ? phone.length !== 10 : code.length < 4)}>
-          {busy ? '…' : sent ? 'Sign in' : 'Send OTP'}
+        <button className="btn primary" disabled={busy || (!sent ? phone.length !== 10 : code.length < 4)}>
+          {busy ? '…' : sent ? 'Login' : 'OTP bhejein'}
         </button>
-        {sent && <button type="button" className="ghost" onClick={() => { setSent(false); setCode(''); setError('') }}>Change number</button>}
+        {sent && <button type="button" className="btn ghost" onClick={() => { setSent(false); setCode(''); setError('') }}>Number badlein</button>}
       </form>
     </div>
   )

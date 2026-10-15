@@ -101,3 +101,10 @@ export type Person = {
   }[]
   history: (HistoryRow & { shopId: string; shopName: string })[]
 }
+
+export type DayEntry = {
+  kind: 'slip' | 'payment' | 'in' | 'out'; id: string; at: string; date: string
+  title: string; party: string; buyerId: string | null; nags: number
+  amountPaise: number; cashPaise: number; upiPaise: number; udhaarPaise: number
+  payMode: string; staff: string; voided: string | null; note?: string; mode?: string
+}

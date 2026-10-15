@@ -718,6 +718,22 @@ describe('shop approval and the admin portal', () => {
     expect(g.history.map((r: any) => r.kind).sort()).toEqual(['payment', 'slip', 'slip', 'udhaar']);
     expect(g.history[0].balancePaise).toBe(70000);
     expect(g.history.find((r: any) => r.id === udhaar).lines).toEqual([{ brand: 'Pollachi', grade: '1', qty: 32, ratePaise: 2500, leak: false }]);
+
+    // The Day Book lists everything, the cancelled slip and payment marked rather than hidden.
+    const book = (await http().get(`/v1/admin/shops/${id}/daybook?from=${d}&to=${d}`).set(admin).expect(200)).body.entries;
+    const slips = book.filter((e: any) => e.kind === 'slip');
+    expect(slips).toHaveLength(3);
+    expect(slips.find((e: any) => e.id === voided).voided).toBe('deleted');
+    expect(slips.find((e: any) => e.id === paid)).toMatchObject({ amountPaise: 50000, cashPaise: 30000, upiPaise: 20000, udhaarPaise: 0, nags: 20, party: 'Raju Fruits' });
+    expect(slips.find((e: any) => e.id === udhaar)).toMatchObject({ udhaarPaise: 80000, nags: 32 });
+    const pays = book.filter((e: any) => e.kind === 'payment');
+    expect(pays.map((e: any) => [e.amountPaise, e.voided])).toEqual(expect.arrayContaining([[20000, null], [99900, 'deleted']]));
+    expect(pays.find((e: any) => e.id === colId)).toMatchObject({ upiPaise: 20000, party: 'Raju Fruits' });
+
+    const market = (await http().get('/v1/admin/customers').set(admin).expect(200)).body.market;
+    expect(market.duePaise).toBeGreaterThanOrEqual(70000);
+    expect(market.debtors).toBeGreaterThanOrEqual(1);
+    expect((await http().get('/v1/admin/customers?q=raju').set(admin)).body.market).toBeNull();
   });
 });
 

@@ -1,47 +1,69 @@
 import { useEffect, useState } from 'react'
 import { api, type MarketCustomer } from '../api'
 import { href } from '../routes'
-import { date, phone } from '../format'
+import { count, phone, rupees, shortDate } from '../format'
 import { useLoad } from '../useLoad'
-import { Balance } from './Shop'
+import { Bal, Rows } from '../ui'
 
-/** The landing page: any grahak in the market, by name, mobile or A/C code. Empty = biggest udhaar. */
+/** Home: any grahak in the market. Empty search = who owes the market most. */
 export function Customers() {
-  const [q, setQ] = useState(() => sessionStorageGet('customers-q'))
+  const [q, setQ] = useState(() => remembered())
   const [query, setQuery] = useState(q.trim())
   useEffect(() => {
-    const t = setTimeout(() => { setQuery(q.trim()); sessionStorageSet('customers-q', q) }, 250)
+    const t = setTimeout(() => { setQuery(q.trim()); remember(q) }, 250)
     return () => clearTimeout(t)
   }, [q])
   const { data, error, loading } = useLoad(
-    () => api<{ customers: MarketCustomer[] }>(`/v1/admin/customers?q=${encodeURIComponent(query)}`).then((r) => r.customers), [query])
+    () => api<{ customers: MarketCustomer[]; market: { duePaise: number; debtors: number } | null }>(`/v1/admin/customers?q=${encodeURIComponent(query)}`),
+    [query])
 
   return (
     <>
-      <h1>Customers</h1>
-      <input className="field search" type="search" placeholder="Search name, mobile or A/C code" value={q} autoFocus onChange={(e) => setQ(e.target.value)} />
+      <div className="head"><h1 className="grow">Grahak</h1></div>
+      <input
+        className="field search" type="search" inputMode="search" enterKeyHint="search" autoComplete="off"
+        placeholder="Naam, mobile ya A/C code" value={q} onChange={(e) => setQ(e.target.value)}
+        aria-label="Grahak dhoondhein"
+      />
       {error && <p className="error">{error}</p>}
-      {!query && data && data.length > 0 && <p className="muted hint">Most udhaar in the market</p>}
-      <div className={`table${loading ? ' dim' : ''}`}>
-        <div className="tr th"><span>Customer</span><span className="hide-sm">Traders</span><span className="num hide-sm">Last slip</span><span className="num">Market udhaar</span></div>
-        {(data ?? []).map((c) => (
-          <a key={c.key} className="tr link" href={href({ page: 'person', key: c.key })}>
-            <span><b>{c.name}</b><small>{c.phone ? phone(c.phone) : 'No mobile'}</small></span>
-            <span className="hide-sm muted">{c.shops.map((s) => s.shopName).join(', ')}</span>
-            <span className="num hide-sm">{c.lastSlipOn ? date(c.lastSlipOn) : '—'}</span>
-            <Balance paise={c.balancePaise} />
-          </a>
-        ))}
-        {data && data.length === 0 && <p className="empty">No customer found</p>}
-      </div>
+
+      {!query && data?.market && (
+        <div className="summary">
+          <span className="label">Market mein kul baaki</span>
+          <span className="big due">{rupees(data.market.duePaise)}</span>
+          <span className="line">{count(data.market.debtors)} grahak par · sabse zyada baaki pehle</span>
+        </div>
+      )}
+
+      {!data ? <Rows /> : (
+        <div className={`list${loading ? ' dim' : ''}`}>
+          {data.customers.map((c) => (
+            <a key={c.key} className="row" data-row href={href({ page: 'person', key: c.key })}>
+              <span className="grow">
+                <b>{c.name}</b>
+                <small>{[c.phone ? phone(c.phone) : 'Mobile nahi', traders(c)].join(' · ')}</small>
+              </span>
+              <span className="right">
+                <span className="amt"><Bal paise={c.balancePaise} /></span>
+                <small>{c.lastSlipOn ? shortDate(c.lastSlipOn) : ''}</small>
+              </span>
+            </a>
+          ))}
+          {data.customers.length === 0 && <p className="empty">“{query}” naam ya number ka koi grahak nahi</p>}
+        </div>
+      )}
     </>
   )
 }
 
-// The search survives going into a customer and coming back.
-function sessionStorageGet(k: string): string {
-  try { return sessionStorage.getItem(k) ?? '' } catch { return '' }
+function traders(c: MarketCustomer): string {
+  return c.shops.length === 1 ? c.shops[0].shopName : `${c.shops.length} dukaan`
 }
-function sessionStorageSet(k: string, v: string) {
-  try { sessionStorage.setItem(k, v) } catch { /* private mode */ }
+
+// The search survives opening a grahak and coming back.
+function remembered(): string {
+  try { return sessionStorage.getItem('grahak-q') ?? '' } catch { return '' }
+}
+function remember(v: string) {
+  try { sessionStorage.setItem('grahak-q', v) } catch { /* private mode */ }
 }
