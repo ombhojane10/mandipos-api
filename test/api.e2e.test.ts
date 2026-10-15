@@ -43,7 +43,7 @@ beforeAll(async () => {
     JWT_SECRET: 'test-secret-test-secret-test-secret-123',
     OTP_HASH_SECRET: 'test-otp-secret-123',
     OTP_TEST_LOGINS: '9000000000:123456',
-    ADMIN_PHONES: '9022353647, 9022300000',
+    ADMIN_PHONES: '9022353647, 9022300000, 9000000000',
     ULIP_BASE_URL: 'https://ulip.staging.invalid/ulip/v1.0.0',
     ULIP_USERNAME: 'test',
     ULIP_PASSWORD: 'test',
@@ -575,6 +575,9 @@ describe('shop approval and the admin portal', () => {
     await http().get('/v1/admin/shops').set(auth(app.accessToken)).expect(401);
     const admin = await adminLogin('9022300000');
     await http().get('/v1/admin/me').set(admin).expect(200);
+    // An admin number on OTP_TEST_LOGINS signs in with its fixed code.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9000000000' }).expect(204);
+    await http().post('/v1/admin/auth/verify').send({ phone: '9000000000', code: '123456' }).expect(200);
   });
 
   it('shows a shop the same figures the app does, and a grahak’s whole history', async () => {

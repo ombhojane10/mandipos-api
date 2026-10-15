@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, type Shop } from '../api'
 import { href } from '../routes'
 import { ago, date, phone, rupees } from '../format'
@@ -6,6 +6,11 @@ import { useLoad } from '../useLoad'
 
 export function Shops() {
   const { data, error, loading, reload } = useLoad(() => api<{ shops: Shop[] }>('/v1/admin/shops').then((r) => r.shops), [])
+  // New requests turn up without a reload.
+  useEffect(() => {
+    const t = setInterval(reload, 30_000)
+    return () => clearInterval(t)
+  }, [reload])
   const shops = data ?? []
   const pending = shops.filter((s) => s.status === 'pending')
   const open = shops.filter((s) => s.status === 'approved')
@@ -16,18 +21,21 @@ export function Shops() {
 
   return (
     <>
-      <h1>Shops</h1>
+      <h1>MandiPlus POS</h1>
 
-      {pending.length > 0 && (
-        <section className="section">
-          <h2>Requests <span className="badge">{pending.length}</span></h2>
+      <section className="section">
+        <h2>Requests {pending.length > 0 && <span className="badge">{pending.length}</span>}</h2>
+        {pending.length > 0 ? (
           <div className="stack">
             {pending.map((s) => <Request key={s.id} shop={s} onDone={reload} />)}
           </div>
-        </section>
-      )}
+        ) : (
+          <p className="card muted">No new shop requests. New ones show up here.</p>
+        )}
+      </section>
 
       <section className="section">
+        <h2>Shops</h2>
         <div className="table">
           <div className="tr th">
             <span>Shop</span><span>Owner</span><span className="num">Today</span><span className="num hide-sm">Devices</span><span className="num hide-sm">Last active</span>
@@ -117,7 +125,7 @@ function Request({ shop, onDone }: { shop: Shop; onDone: () => void }) {
 function Skeleton() {
   return (
     <>
-      <h1>Shops</h1>
+      <h1>MandiPlus POS</h1>
       <div className="table">{[0, 1, 2, 3].map((i) => <div key={i} className="tr"><span className="sk" /></div>)}</div>
     </>
   )

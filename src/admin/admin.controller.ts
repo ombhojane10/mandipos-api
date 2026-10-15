@@ -6,7 +6,7 @@ import type { Request } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { OtpService } from '../auth/otp.service';
-import { adminPhones, config, sendsRealSms, testLoginCode } from '../config';
+import { adminPhones, config } from '../config';
 import { parse, phone } from '../common/validate';
 import { AdminService } from './admin.service';
 
@@ -68,10 +68,12 @@ export class AdminAuthController {
   }
 }
 
-/** A number not on the list is refused before any SMS goes out; a fixed QA code never opens the portal. */
+/**
+ * A number not on the list is refused before any SMS goes out. An admin number that is also on
+ * OTP_TEST_LOGINS signs in with its fixed code (Omi's call for 9010101010, 2026-10-15).
+ */
 function allowed(p: string) {
   if (!adminPhones().includes(p)) throw new ForbiddenException('Yeh number admin nahi hai');
-  if (sendsRealSms() && testLoginCode(p)) throw new ForbiddenException('Yeh number admin nahi hai');
 }
 
 @Controller('v1/admin')
