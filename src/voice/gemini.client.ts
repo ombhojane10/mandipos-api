@@ -37,7 +37,8 @@ export class GeminiClient {
     const c = config();
     const deadline = Date.now() + budgetMs;
     try {
-      return await this.hedged(c.VOICE_MODEL, payload, c.VOICE_HEDGE_MS, deadline);
+      // The hedged pair gets at most 8 s, so a call that hangs still leaves the retry time to answer.
+      return await this.hedged(c.VOICE_MODEL, payload, c.VOICE_HEDGE_MS, Math.min(deadline, Date.now() + 8_000));
     } catch (e) {
       const left = deadline - Date.now();
       if (left < 1_500) throw this.unavailable(e);
