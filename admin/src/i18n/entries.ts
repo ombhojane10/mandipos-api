@@ -32,7 +32,7 @@ export const ENTRIES: Record<string, readonly [string, string]> = {
   'baaki': ['due', 'बाकी'],
   'jama': ['advance', 'जमा'],
   'Badlein': ['Change', 'बदलें'],
-  'Naam, mobile ya A/C': ['Name, mobile or A/C', 'नाम, मोबाइल या खाता'],
+  'Naam, mobile ya code': ['Name, mobile or code', 'नाम, मोबाइल या कोड'],
 
   // Nayi parchi
   'Nayi Parchi': ['New Slip', 'नई पर्ची'],
@@ -133,7 +133,6 @@ export const ENTRIES: Record<string, readonly [string, string]> = {
   'Naya Grahak': ['New Customer', 'नया ग्राहक'],
   'Naam daalein': ['Enter name', 'नाम डालें'],
   '{name} ka khata khul gaya': ['Account opened for {name}', '{name} का खाता खुल गया'],
-  'A/C code': ['A/C code', 'खाता कोड'],
   'Dukaan / pata': ['Shop / address', 'दुकान / पता'],
   'Purana udhaar (optional)': ['Old credit (optional)', 'पुराना उधार (वैकल्पिक)'],
   'Purana udhaar': ['Old credit', 'पुराना उधार'],

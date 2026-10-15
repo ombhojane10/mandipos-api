@@ -18,24 +18,25 @@ export function GrahakList({ shopId }: { shopId: string }) {
 
   useExport(data ? () => ({
     title: t('Grahak Ledger'), file: fileName(t('Grahak Ledger')),
-    columns: [{ label: t('Grahak'), wide: true }, { label: t('Mobile') }, { label: t('Kharida'), num: true }, { label: t('Aakhri parchi') }, { label: t('Baaki'), num: true }],
-    rows: data.map((b) => ({ cells: [[b.name, b.code && `A/C ${b.code}`].filter(Boolean).join(' · '), b.phone ? phone(b.phone) : '', rupees(b.boughtPaise), b.lastSlipOn ? shortDate(b.lastSlipOn) : '—', balText(b.balancePaise)] })),
-    foot: [t('Kul'), '', rupees(data.reduce((s, b) => s + b.boughtPaise, 0)), '', balText(data.reduce((s, b) => s + b.balancePaise, 0))],
+    columns: [{ label: t('Code') }, { label: t('Grahak'), wide: true }, { label: t('Mobile') }, { label: t('Kharida'), num: true }, { label: t('Aakhri parchi') }, { label: t('Baaki'), num: true }],
+    rows: data.map((b) => ({ cells: [b.code, b.name, b.phone ? phone(b.phone) : '', rupees(b.boughtPaise), b.lastSlipOn ? shortDate(b.lastSlipOn) : '—', balText(b.balancePaise)] })),
+    foot: ['', t('Kul'), '', rupees(data.reduce((s, b) => s + b.boughtPaise, 0)), '', balText(data.reduce((s, b) => s + b.balancePaise, 0))],
   }) : null, [data])
 
   return (
     <>
-      <div className="toolbar"><input className="field grow" data-search type="search" placeholder={t('Naam, mobile ya A/C code')} value={q} autoFocus onChange={(e) => setQ(e.target.value)} /></div>
+      <div className="toolbar"><input className="field grow" data-search type="search" placeholder={t('Naam, mobile ya code')} value={q} autoFocus onChange={(e) => setQ(e.target.value)} /></div>
       {error && <p className="error">{error}</p>}
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
           <table className="tbl fold">
-            <thead><tr><th>{t('Grahak')}</th><th>{t('Mobile')}</th><th className="num">{t('Kharida')}</th><th>{t('Aakhri parchi')}</th><th className="num">{t('Baaki')}</th></tr></thead>
+            <thead><tr><th>{t('Code')}</th><th>{t('Grahak')}</th><th>{t('Mobile')}</th><th className="num">{t('Kharida')}</th><th>{t('Aakhri parchi')}</th><th className="num">{t('Baaki')}</th></tr></thead>
             <tbody>
               {data.map((b) => (
                 <tr key={b.id} data-row tabIndex={0} onClick={() => { location.hash = href({ page: 'grahak', shopId, buyerId: b.id }) }}
                   onKeyDown={(e) => { if (e.key === 'Enter') location.hash = href({ page: 'grahak', shopId, buyerId: b.id }) }}>
-                  <td className="main-col"><b>{b.name}</b><small>{[b.code && `A/C ${b.code}`, b.hidden && t('Chhupa hua')].filter(Boolean).join(' · ')}<span className="show-sm">{b.phone ? ` ${phone(b.phone)}` : ''}</span></small></td>
+                  <td className="code-col">{b.code ? <span className="code">{b.code}</span> : null}</td>
+                  <td className="main-col"><b>{b.name}</b><small>{b.hidden ? t('Chhupa hua') : ''}<span className="show-sm">{b.phone ? phone(b.phone) : ''}</span></small></td>
                   <td className="opt-col muted">{b.phone ? phone(b.phone) : '—'}</td>
                   <td className="num opt-col money">{rupees(b.boughtPaise)}</td>
                   <td className="opt-col muted">{b.lastSlipOn ? shortDate(b.lastSlipOn) : '—'}</td>
@@ -67,8 +68,8 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         <Crumb to={back}>{t('Grahak Ledger')}</Crumb>
         <div className="head" style={{ marginBottom: 0 }}>
           <div className="grow">
-            <h1>{b.name}</h1>
-            <p>{[b.code && `A/C ${b.code}`, b.kind, b.address, b.destination && `→ ${b.destination}`, b.vehicle].filter(Boolean).join(' · ')}</p>
+            <h1>{b.code && <span className="code big">{b.code}</span>}{b.name}</h1>
+            <p>{[b.kind, b.address, b.destination && `→ ${b.destination}`, b.vehicle].filter(Boolean).join(' · ')}</p>
           </div>
           {mobile && <a className="call" href={`tel:+91${b.phone}`}>☎ {phone(b.phone)}</a>}
         </div>
@@ -82,7 +83,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         {me?.admin && mobile && <div><span className="lb">{t('Poora market')}</span><a className="v call" href={href({ page: 'person', key: b.phone })}>{t('Dekhein')} ›</a></div>}
       </div>
       <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} exportAs={{
-        title: t('Grahak Khata'), name: b.name, sub: [b.code && `A/C ${b.code}`, mobile && phone(b.phone), b.address].filter(Boolean).join(' · '),
+        title: t('Grahak Khata'), name: b.name, sub: [b.code, mobile && phone(b.phone), b.address].filter(Boolean).join(' · '),
         summary: [[t('Kharida'), rupees(tot.boughtPaise)], [t('Diya'), rupees(tot.paidPaise)], [t('Baaki'), balText(tot.balancePaise)]],
       }} />
     </div>

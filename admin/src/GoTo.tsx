@@ -28,7 +28,7 @@ export function GoTo({ shopId, onClose }: { shopId: string | null; onClose: () =
         const found: Option[] = []
         if (shopId) {
           const r = await api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(query)}`)
-          found.push(...r.buyers.slice(0, 6).map((b) => ({ key: `b-${b.id}`, section: t('Grahak'), title: b.name, sub: [b.phone && phone(b.phone), b.code && `A/C ${b.code}`].filter(Boolean).join(' · '),
+          found.push(...r.buyers.slice(0, 6).map((b) => ({ key: `b-${b.id}`, section: t('Grahak'), title: b.name, sub: [b.phone && phone(b.phone), b.code].filter(Boolean).join(' · '),
             right: b.balancePaise > 0 ? t('{amt} baaki', { amt: rupees(b.balancePaise) }) : undefined, to: href({ page: 'grahak', shopId, buyerId: b.id }) })))
         }
         if (me?.admin) {

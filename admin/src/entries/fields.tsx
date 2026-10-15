@@ -66,7 +66,7 @@ export const isWalkInName = (name: string) => WALK_INS.some((w) => w.toLowerCase
 const walkInLabel = (name: string) => (name === 'Bank' ? t('Bank (UPI)') : t('Cash grahak'))
 
 /**
- * Grahak by name, mobile or A/C — with the baaki beside each. [walkIn] puts Cash and Bank first
+ * Grahak by name, mobile or code — with the baaki beside each. [walkIn] puts Cash and Bank first
  * and adds "Naya: <name>" for a name the shop hasn't seen, as the parchi screen allows.
  */
 export function BuyerPicker({ shopId, value, onChange, walkIn, autoFocus }: {
@@ -107,7 +107,7 @@ export function BuyerPicker({ shopId, value, onChange, walkIn, autoFocus }: {
   }
   return (
     <div className="combo">
-      <input ref={box} className="field" placeholder={t('Naam, mobile ya A/C')} value={q} autoFocus={autoFocus}
+      <input ref={box} className="field" placeholder={t('Naam, mobile ya code')} value={q} autoFocus={autoFocus}
         onFocus={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setSel(0); setOpen(true) }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={(e) => {

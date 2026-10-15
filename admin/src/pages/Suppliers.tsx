@@ -3,7 +3,7 @@ import { api, type SupplierKhata as Khata, type Suppliers as List } from '../api
 import { ago, count, rupees } from '../format'
 import { href } from '../routes'
 import { useLoad } from '../useLoad'
-import { Ages, Bal, balText, Crumb, Ledger, Skeleton } from '../ui'
+import { Bal, balText, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
 import { fileName, useExport } from '../export/doc'
 
@@ -27,13 +27,9 @@ export function Suppliers({ shopId }: { shopId: string }) {
       {error && <p className="error">{error}</p>}
       {!data ? <Skeleton /> : (
         <div className="stack">
-          <div className="card split">
-            <div className="kpi" style={{ flexDirection: 'column', gap: 2 }}>
-              <span className="lb">{t('Supplier ko dena')}</span>
-              <span className="v">{rupees(data.totals.duePaise)}</span>
-              <span className="s">{t('{n} supplier', { n: count(data.totals.count) })}</span>
-            </div>
-            <div className="split-r"><Ages b={data.totals} total={data.totals.duePaise} /></div>
+          <div className="card sum">
+            <div><span className="lb">{t('Supplier ko dena')}</span><span className="v">{rupees(data.totals.duePaise)}</span></div>
+            <div><span className="lb">{t('Supplier')}</span><span className="v">{count(data.totals.count)}</span></div>
           </div>
           <div className="toolbar" style={{ margin: 0 }}>
             <input className="field grow" data-search type="search" placeholder={t('Supplier ka naam')} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -44,7 +40,7 @@ export function Suppliers({ shopId }: { shopId: string }) {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.key} data-row tabIndex={0} onClick={() => open(r.key)} onKeyDown={(e) => { if (e.key === 'Enter') open(r.key) }}>
-                    <td className="main-col"><b>{r.name}</b><small>{t('{n} gaadi', { n: count(r.gaadis) })}{r.openGaadis ? ` · ${t('{n} khuli', { n: r.openGaadis })}` : ''}</small></td>
+                    <td className="main-col"><b>{r.name}</b></td>
                     <td className="num opt-col">{count(r.gaadis)}</td>
                     <td className="num opt-col money">{rupees(r.purchasePaise)}</td>
                     <td className="num opt-col money">{rupees(r.paidPaise)}</td>

@@ -20,7 +20,7 @@ export function Market() {
 
   return (
     <div className="stack">
-      <input className="field" data-search type="search" placeholder={t('Naam, mobile ya A/C code — sab dukaan mein')} value={q} autoFocus onChange={(e) => setQ(e.target.value)} />
+      <input className="field" data-search type="search" placeholder={t('Naam, mobile ya code — sab dukaan mein')} value={q} autoFocus onChange={(e) => setQ(e.target.value)} />
       {!query && data?.market && (
         <div className="card sum">
           <div><span className="lb">{t('Market mein kul udhaar')}</span><span className="v due">{rupees(data.market.duePaise)}</span></div>
@@ -81,7 +81,7 @@ export function Person({ personKey }: { personKey: string }) {
             {traders.map((x) => (
               <tr key={`${x.shopId}-${x.buyerId}`} data-row tabIndex={0} onClick={() => { location.hash = href({ page: 'grahak', shopId: x.shopId, buyerId: x.buyerId }) }}
                 onKeyDown={(e) => { if (e.key === 'Enter') location.hash = href({ page: 'grahak', shopId: x.shopId, buyerId: x.buyerId }) }}>
-                <td className="main-col"><b>{x.shopName}</b><small>{[x.mandi, x.code && `A/C ${x.code}`].filter(Boolean).join(' · ')}{x.marketPaise !== null && <span className="show-sm"> · {t('market')} {rupees(x.marketPaise)}</span>}</small></td>
+                <td className="main-col"><b>{x.shopName}</b><small>{[x.mandi, x.code].filter(Boolean).join(' · ')}{x.marketPaise !== null && <span className="show-sm"> · {t('market')} {rupees(x.marketPaise)}</span>}</small></td>
                 <td className="num opt-col money">{rupees(x.boughtPaise)}</td>
                 <td className="opt-col muted">{x.lastSlipOn ? shortDate(x.lastSlipOn) : '—'}</td>
                 <td className="num opt-col money muted">{x.marketPaise !== null ? rupees(x.marketPaise) : '—'}</td>

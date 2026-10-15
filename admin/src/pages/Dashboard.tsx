@@ -99,14 +99,14 @@ export function Dashboard({ shopId }: { shopId: string }) {
               <div className="hd"><h3>{t('Udhaar · kitna purana')}</h3></div>
               <div className="bd">
                 <span className="money b due" style={{ fontSize: 18 }}>{rupees(data.d.receivables.duePaise)}</span>
-                <Ages b={data.d.receivables} total={data.d.receivables.duePaise} />
+                <Ages b={data.d.receivables} />
               </div>
             </a>
             <a className="card" href={to('suppliers')}>
               <div className="hd"><h3>{t('Supplier · kitna purana')}</h3></div>
               <div className="bd">
                 <span className="money b" style={{ fontSize: 18 }}>{rupees(data.d.payables.duePaise)}</span>
-                <Ages b={data.d.payables} total={data.d.payables.duePaise} />
+                <Ages b={data.d.payables} />
               </div>
             </a>
             <StockCard shopId={shopId} />

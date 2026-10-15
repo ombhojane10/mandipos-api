@@ -703,6 +703,12 @@ describe('shop approval and the admin portal', () => {
     const stock = (await http().get(`${base}/stock`).set(web).expect(200)).body.rows;
     expect(stock.find((r: any) => r.truckId === gaadi.truckId)).toMatchObject({ number: 'RJ14AB1', supplier: 'Mani', received: 300, brands: 'Gujarat' });
     expect(stock.find((r: any) => r.truckId === truckId).left).toBe(500 - 1 * 0 - 10);
+    // Past: closed gaadis only, newest first, with the day each closed.
+    await owner(`UPDATE trucks SET closed_at = now() WHERE id = '${gaadi.truckId}'`);
+    const past = (await http().get(`${base}/stock?view=past`).set(web).expect(200)).body.rows;
+    expect(past.map((r: any) => r.truckId)).toEqual([gaadi.truckId]);
+    expect(past[0].closedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect((await http().get(`${base}/stock`).set(web).expect(200)).body.rows.map((r: any) => r.truckId)).not.toContain(gaadi.truckId);
 
     // The website shows up as one machine of the shop.
     const team = (await http().get(base).set(web).expect(200)).body;

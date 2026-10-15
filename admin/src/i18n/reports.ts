@@ -122,8 +122,7 @@ export const REPORTS: Record<string, readonly [string, string]> = {
   // Outstanding, Grahak Ledger
   'Kul udhaar (lena)': ['Total credit (to collect)', 'कुल उधार (लेना)'],
   'Kul baaki': ['Total due', 'कुल बाकी'],
-  'Naam, mobile ya A/C': ['Name, mobile or A/C', 'नाम, मोबाइल या A/C'],
-  'Naam, mobile ya A/C code': ['Name, mobile or A/C code', 'नाम, मोबाइल या A/C कोड'],
+  'Naam, mobile ya code': ['Name, mobile or code', 'नाम, मोबाइल या कोड'],
   'Is filter mein koi nahi': ['None in this filter', 'इस फ़िल्टर में कोई नहीं'],
   'Kisi par udhaar nahi': ['No one owes credit', 'किसी पर उधार नहीं'],
   'Koi grahak nahi mila': ['No customer found', 'कोई ग्राहक नहीं मिला'],
@@ -158,7 +157,7 @@ export const REPORTS: Record<string, readonly [string, string]> = {
   'Machine': ['Machines', 'मशीन'],
   'Chalu': ['Last active', 'चालू'],
   'Aaj bikri': ['Sales today', 'आज बिक्री'],
-  'Naam, mobile ya A/C code — sab dukaan mein': ['Name, mobile or A/C code — all shops', 'नाम, मोबाइल या A/C कोड — सब दुकानों में'],
+  'Naam, mobile ya code — sab dukaan mein': ['Name, mobile or code — all shops', 'नाम, मोबाइल या कोड — सब दुकानों में'],
   'Market mein kul udhaar': ['Total market credit', 'मार्केट में कुल उधार'],
   'Market baaki': ['Market due', 'मार्केट बाकी'],
   'Mobile nahi': ['No mobile', 'मोबाइल नहीं'],
@@ -177,4 +176,10 @@ export const REPORTS: Record<string, readonly [string, string]> = {
   'Dukaan wale ko app mein yeh wajah dikhegi.': ['The shop will see this reason in the app.', 'दुकान वाले को ऐप में यह वजह दिखेगी।'],
   'Wajah (optional)': ['Reason (optional)', 'वजह (वैकल्पिक)'],
   'Rehne dein': ['Cancel', 'रहने दें'],
+  // Stock views
+  'Active': ['Active', 'चालू'],
+  'Past': ['Past', 'पुरानी'],
+  'Band hui': ['Closed', 'बंद हुई'],
+  'Koi band gaadi nahi': ['No closed trucks', 'कोई बंद गाड़ी नहीं'],
+  'Code': ['Code', 'कोड'],
 }

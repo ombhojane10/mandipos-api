@@ -433,7 +433,7 @@ function GrahakForm({ shopId, onClose, onDone }: FormProps) {
       <Field label={t('Naam')}><input className="field" value={f.name} autoFocus maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <div className="row2">
         <Field label={t('Mobile')}><input className="field" inputMode="tel" value={f.phone} maxLength={10} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
-        <Field label={t('A/C code')}><input className="field" value={f.code} maxLength={20} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
+        <Field label={t('Code')}><input className="field" value={f.code} maxLength={20} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
       </div>
       <Field label={t('Dukaan / pata')}><input className="field" value={f.address} maxLength={200} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
       <Field label={t('Purana udhaar (optional)')}><Money value={f.opening} onChange={(v) => setF({ ...f, opening: v })} /></Field>

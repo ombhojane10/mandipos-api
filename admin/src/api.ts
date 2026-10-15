@@ -142,7 +142,7 @@ export type SupplierKhata = {
 }
 export type Stock = {
   totals: { left: number; valuePaise: number; gaadis: number; stale: number }
-  rows: { truckId: string; number: string; supplier: string; brands: string; arrivedOn: string; ageDays: number; stale: boolean; received: number; sold: number; spoiled: number; left: number; valuePaise: number }[]
+  rows: { truckId: string; number: string; supplier: string; brands: string; arrivedOn: string; closedOn: string | null; ageDays: number; stale: boolean; received: number; sold: number; spoiled: number; left: number; valuePaise: number }[]
 }
 
 export type BankAccount = { holder: string; bank: string; ifsc: string; account: string }

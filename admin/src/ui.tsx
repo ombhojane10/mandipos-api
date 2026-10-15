@@ -50,14 +50,10 @@ export function Change({ now, before }: { now: number; before: number }) {
 }
 
 /** 0–7 / 8–30 / 30+ din: a bar, then the three amounts. */
-export function Ages({ b, total }: { b: Buckets; total: number }) {
-  const pct = (v: number) => (total > 0 ? `${(v / total) * 100}%` : '0')
+export function Ages({ b }: { b: Buckets }) {
   return (
     <>
-      <div className="agebar" aria-hidden>
-        <span className="a0" style={{ width: pct(b.d0_7) }} /><span className="a1" style={{ width: pct(b.d8_30) }} /><span className="a2" style={{ width: pct(b.d31) }} />
-      </div>
-      <div className="ages">
+      <div className="ages" style={{ marginTop: 10 }}>
         <div><span className="dot a0" /><span>{t('0–7 din')}</span><span className="money">{rupees(b.d0_7)}</span></div>
         <div><span className="dot a1" /><span>{t('8–30 din')}</span><span className="money">{rupees(b.d8_30)}</span></div>
         <div><span className="dot a2" /><span>{t('30+ din')}</span><span className={`money${b.d31 ? ' due b' : ''}`}>{rupees(b.d31)}</span></div>

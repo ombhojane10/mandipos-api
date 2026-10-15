@@ -276,8 +276,8 @@ export class AdminController {
   }
 
   @Get('shops/:id/stock')
-  stock(@See() v: Viewer, @Param('id') id: string) {
-    return this.reports.stock(mine(v, id), todayIst());
+  stock(@See() v: Viewer, @Param('id') id: string, @Query('view') view?: string) {
+    return this.reports.stock(mine(v, id), todayIst(), view === 'past' ? 'past' : 'active');
   }
 
   // ---------------------------------------------------------------- entries, as a terminal makes them

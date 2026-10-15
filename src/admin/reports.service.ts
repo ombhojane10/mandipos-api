@@ -219,10 +219,11 @@ export class ReportsService {
   // ---------------------------------------------------------------- Stock, maal
 
   /** Every open gaadi: aaya, gaya, phoota, baaki, its age, and what the baaki is worth at cost. */
-  async stock(shopId: string, today: string) {
+  /** [view] 'active': the open gaadis (Tally's stock summary); 'past': closed ones, newest first. */
+  async stock(shopId: string, today: string, view: 'active' | 'past' = 'active') {
     return this.db.withShop(shopId, async (tx) => {
-      const rows = (await tx.query<{ id: string; number: string; supplier: string; arrived_at: Date; brands: string | null; recv: string; sold: string; spoiled: string; cost: string; shelf: number | null }>(
-        `SELECT t.id, t.number, t.supplier, t.arrived_at,
+      const rows = (await tx.query<{ id: string; number: string; supplier: string; arrived_at: Date; closed_at: Date | null; brands: string | null; recv: string; sold: string; spoiled: string; cost: string; shelf: number | null }>(
+        `SELECT t.id, t.number, t.supplier, t.arrived_at, t.closed_at,
                 (SELECT string_agg(DISTINCT br.name, ', ') FROM truck_grades g JOIN brands br ON br.id = g.brand_id WHERE g.truck_id = t.id) AS brands,
                 (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id)
                   - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
@@ -231,10 +232,12 @@ export class ReportsService {
                 (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id)
                   + t.freight_paise + t.labour_paise + t.commission_paise AS cost,
                 (SELECT MIN(br.shelf_days) FROM truck_grades g JOIN brands br ON br.id = g.brand_id WHERE g.truck_id = t.id) AS shelf
-         FROM trucks t WHERE t.closed_at IS NULL ORDER BY t.arrived_at`)).rows.map((r) => {
+         FROM trucks t WHERE ${view === 'past' ? 't.closed_at IS NOT NULL' : 't.closed_at IS NULL'}
+         ORDER BY ${view === 'past' ? 't.closed_at DESC LIMIT 300' : 't.arrived_at'}`)).rows.map((r) => {
         const recv = n(r.recv), left = Math.max(0, recv - n(r.sold) - n(r.spoiled));
         const ageDays = daysBetween(istDay(r.arrived_at), today);
         return { truckId: r.id, number: r.number, supplier: r.supplier, brands: r.brands ?? '', arrivedOn: istDay(r.arrived_at), ageDays,
+          closedOn: r.closed_at ? istDay(r.closed_at) : null,
           stale: r.shelf !== null && ageDays >= r.shelf, received: recv, sold: n(r.sold), spoiled: n(r.spoiled), left,
           valuePaise: recv > 0 ? Math.round((n(r.cost) * left) / recv) : 0 };
       });
