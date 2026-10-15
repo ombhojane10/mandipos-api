@@ -23,6 +23,13 @@ export function unlock() {
   } catch { /* no Web Audio: the browser's own voice is the fallback */ }
 }
 
+/** The one audio context, woken inside a tap: the mic's meter runs on it too (iPhone Safari pauses any made later). */
+export function audioContext(): AudioContext {
+  ctx ??= new AudioContext()
+  if (ctx.state === 'suspended') void ctx.resume()
+  return ctx
+}
+
 export function hush() {
   if (!playing) return
   playing.ctl.abort()

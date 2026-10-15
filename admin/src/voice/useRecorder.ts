@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
+import { audioContext } from './player'
 
 /** What the browser records best: Opus in WebM (Chrome, Edge, Firefox), else MP4/AAC (Safari). */
 const MIME = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
@@ -16,6 +17,7 @@ export function useRecorder(onLevel: (level: number) => void, onSilence: () => v
   const stream = useRef<MediaStream | null>(null)
   const ctx = useRef<AudioContext | null>(null)
   const analyser = useRef<AnalyserNode | null>(null)
+  const source = useRef<MediaStreamAudioSourceNode | null>(null)
   const rec = useRef<MediaRecorder | null>(null)
   const chunks = useRef<Blob[]>([])
   const started = useRef(0)
@@ -29,10 +31,13 @@ export function useRecorder(onLevel: (level: number) => void, onSilence: () => v
     stream.current = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
-    ctx.current = new AudioContext()
+    // The context the tap unlocked (player.ts), not a new one: Safari would leave a new one paused
+    // and the meter flat, so "stopped talking" would never be heard.
+    ctx.current = audioContext()
     analyser.current = ctx.current.createAnalyser()
     analyser.current.fftSize = 512
-    ctx.current.createMediaStreamSource(stream.current).connect(analyser.current)
+    source.current = ctx.current.createMediaStreamSource(stream.current)
+    source.current.connect(analyser.current)
   }, [])
 
   const meter = useCallback(() => {
@@ -92,7 +97,10 @@ export function useRecorder(onLevel: (level: number) => void, onSilence: () => v
     rec.current = null
     stream.current?.getTracks().forEach((t) => t.stop())
     stream.current = null
-    void ctx.current?.close()
+    // The shared context stays open for the answer's voice; only this mic's nodes are let go.
+    source.current?.disconnect()
+    source.current = null
+    analyser.current = null
     ctx.current = null
   }, [])
 
