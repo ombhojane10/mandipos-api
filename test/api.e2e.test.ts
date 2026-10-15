@@ -96,6 +96,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 describe('team', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
+  it('lets a shop print bhav on its udhaar slips, and says so in /v1/me', async () => {
+    const admin = await registerShop('9811100091', 'Rates Shop');
+    const me = async () => (await http().get('/v1/me').set(auth(admin.accessToken)).expect(200)).body.shop;
+    expect((await me()).udhaarRates).toBe(false);
+    await http().post('/v1/shops/udhaar-rates').set(auth(admin.accessToken)).send({ on: true }).expect(204);
+    expect((await me()).udhaarRates).toBe(true);
+    await http().post('/v1/shops/udhaar-rates').set(auth(admin.accessToken)).send({ on: 'yes' }).expect(400);
+  });
+
   it('joins by code as accountant, admin-adds a number that lands in the shop, and keeps team changes admin-only', async () => {
     const admin = await registerShop('9811100001', 'Team Shop');
     const team = await http().get('/v1/shops/members').set(auth(admin.accessToken)).expect(200);

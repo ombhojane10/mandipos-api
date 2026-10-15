@@ -245,6 +245,14 @@ export class AccountsService {
     });
   }
 
+  /** Any member: whether this shop's udhaar order slips print the bhav and rakam. */
+  async setUdhaarRates(p: Principal, on: boolean) {
+    return this.db.tx(async (tx) => {
+      await this.requireMember(tx, p);
+      await tx.query(`UPDATE shops SET udhaar_rates = $2 WHERE id = $1`, [p.shopId, on]);
+    });
+  }
+
   /** Any member: what the shop sells — tender coconut or amrud. */
   async setCommodity(p: Principal, commodity: string) {
     return this.db.tx(async (tx) => {

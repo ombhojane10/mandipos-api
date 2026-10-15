@@ -167,6 +167,14 @@ export class ShopsController {
     await this.accounts.setSlipCode(p, b.code);
   }
 
+  /** Any member: whether udhaar order slips print the bhav and rakam too (off: rates stay in the register). */
+  @Post('udhaar-rates')
+  @HttpCode(204)
+  async udhaarRates(@Me() p: Principal, @Body() body: unknown) {
+    const b = parse(z.object({ on: z.boolean() }), body);
+    await this.accounts.setUdhaarRates(p, b.on);
+  }
+
   /** Admin: a new join code; the old one stops working. */
   @Post('join-code')
   @HttpCode(200)
