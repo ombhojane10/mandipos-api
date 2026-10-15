@@ -184,7 +184,8 @@ export default function App() {
     return () => clearInterval(t)
   }, [route])
 
-  if (!signedIn) return <Login onDone={(t) => { setToken(t); setSignedIn(true) }} />
+  // A fresh sign-in starts at home: the address may still hold the last login's shop.
+  if (!signedIn) return <Login onDone={(t) => { setToken(t); location.replace('#/'); setSignedIn(true) }} />
 
   const signOut = () => { setToken(null); setSignedIn(false); setMe(null); setShops(null) }
   const pending = me?.admin ? (shops ?? []).filter((s) => s.status === 'pending').length : 0
