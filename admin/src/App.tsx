@@ -78,7 +78,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    whenSignedOut(() => setSignedIn(false))
+    whenSignedOut(() => { setSignedIn(false); setMe(null); setShops(null) })
     let lastPath = location.hash.split('?')[0]
     const onHash = () => {
       setRoute(parse(location.hash)); setDrawer(false)
@@ -103,6 +103,11 @@ export default function App() {
   const remembered = (() => { try { return localStorage.getItem(LAST_SHOP) } catch { return null } })()
   const shopId = routeShop ?? (open.find((s) => s.id === remembered)?.id ?? open[0]?.id ?? null)
   useEffect(() => { if (routeShop) try { localStorage.setItem(LAST_SHOP, routeShop) } catch { /* private mode */ } }, [routeShop])
+
+  // A link or tab left on another login's shop would only be refused; an owner goes to their own.
+  useEffect(() => {
+    if (me && !me.admin && routeShop && !me.shopIds?.includes(routeShop)) location.replace('#/')
+  }, [me, routeShop])
 
   // An owner's home is their shop; an admin's is every shop.
   useEffect(() => {
