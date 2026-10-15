@@ -7,8 +7,7 @@ import { useLoad } from '../useLoad'
 import { PeriodBar, Skeleton } from '../ui'
 import { HEADS } from './DayBook'
 import { t } from '../i18n'
-import { fileName, useExport } from '../export/doc'
-import { periodLabel } from '../period'
+import { dayRange, dmy, fileName, rs, useExport, type ExportRow } from '../export/doc'
 
 const POTS = [{ key: 'galla', label: t('Galla (Cash)') }, { key: 'office', label: t('Office') }, { key: 'bank', label: t('Bank / UPI') }] as const
 type Pot = (typeof POTS)[number]['key']
@@ -22,17 +21,31 @@ export function CashBook({ shopId }: { shopId: string }) {
   const pick = (p: Pot) => { setPot(p); setHashQuery({ ...Object.fromEntries(hashQuery()), pot: p }) }
   let lastDay = ''
   const label = (l: Book['lines'][number]) => l.kind === 'bikri' || l.kind === 'vasooli' ? l.title : HEADS[l.title] ?? (l.title || (l.kind === 'out' ? t('Kharcha') : t('Aaya')))
+  // Printed as the app's DaybookPdf: CREDIT (AAYA), DEBIT (GAYA), BACHA, then MALIK and MUNIM.
   useExport(data ? () => {
-    const potName = POTS.find((p) => p.key === pot)!.label
+    const oneDay = data.from === data.to
+    const item = (l: Book['lines'][number], paise: number): ExportRow => ({
+      cells: [(oneDay ? '' : `${dmy(l.date).slice(0, 5)}  `) + label(l), [l.party, l.note].filter(Boolean).join(' · '), oneDay && !l.auto ? time(l.at) : '', rs(paise)],
+    })
+    const credit = data.lines.filter((l) => l.inPaise > 0)
+    const debit = data.lines.filter((l) => l.outPaise > 0)
+    const none: ExportRow = { cells: ['Kuch nahi', '', '', '0'] }
     return {
-      title: `${t('Cash / Bank Book')} · ${potName}`, period: periodLabel(period), file: fileName(t('Cash / Bank Book'), potName, period.from, period.to),
-      summary: [[t('Shuru (b/f)'), rupees(data.openingPaise)], [t('Aaya'), rupees(data.inPaise)], [t('Gaya'), rupees(data.outPaise)], [t('Bacha (c/f)'), rupees(data.closingPaise)]],
-      columns: [{ label: t('Tarikh') }, { label: t('Vivaran'), wide: true }, { label: t('Aaya (Dr)'), num: true }, { label: t('Gaya (Cr)'), num: true }, { label: t('Balance'), num: true }],
+      style: 'book' as const, title: `DAYBOOK  ·  ${{ galla: 'GALLA', office: 'OFFICE', bank: 'BANK / UPI' }[pot]}`, dateLine: dayRange(data.from, data.to),
+      file: fileName('Daybook', pot, period.from, period.to), sign: true,
+      note: pot === 'galla' ? 'Galla = nakad bikri + nakad vasooli + nakad aaya - nakad kharcha.' : undefined,
       rows: [
-        { bold: true, cells: [shortDate(data.from), t('Shuru ka balance'), '', '', rupees(data.openingPaise)] },
-        ...data.lines.map((l) => ({ cells: [shortDate(l.date), [label(l), l.party, l.note].filter(Boolean).join(' · '), l.inPaise ? rupees(l.inPaise) : '', l.outPaise ? rupees(l.outPaise) : '', rupees(l.balancePaise)] })),
+        { kind: 'heading', cells: ['CREDIT  (AAYA)'] },
+        ...(credit.length ? credit.map((l) => item(l, l.inPaise)) : [none]),
+        { kind: 'total', cells: ['Total credit', '', '', rs(data.inPaise)] },
+        { kind: 'heading', cells: ['DEBIT  (GAYA)'] },
+        ...(debit.length ? debit.map((l) => item(l, l.outPaise)) : [none]),
+        { kind: 'total', cells: ['Total debit', '', '', rs(data.outPaise)] },
+        { kind: 'heading', cells: ['BACHA'] },
+        { cells: ['Shuru  (b/f)', '', '', rs(data.openingPaise)] },
+        { cells: ['Aaj ka  (credit - debit)', '', '', rs(data.inPaise - data.outPaise)] },
+        { kind: 'final', cells: ['Bacha  (c/f)', '', '', rs(data.closingPaise)] },
       ],
-      foot: ['', t('Bacha (c/f)'), rupees(data.inPaise), rupees(data.outPaise), rupees(data.closingPaise)],
     }
   } : null, [data, pot])
 

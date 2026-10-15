@@ -5,14 +5,15 @@ export function csv(doc: ExportDoc): Blob {
   const q = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s)
   const line = (cells: string[]) => cells.map(q).join(',')
   const out = [
-    line([doc.title, doc.name ?? '', doc.period ?? '']),
+    line([doc.title, doc.party?.description ?? '', doc.dateLine ?? [doc.from, doc.to].filter(Boolean).join(' - ')]),
+    ...(doc.party?.code ? [line(['Code', doc.party.code])] : []),
     ...(doc.summary ?? []).map(([k, v]) => line([k, v])),
     '',
-    line(doc.columns.map((c) => c.label)),
-    ...doc.rows.map((r) => line(r.band ? [r.cells[0]] : r.cells)),
+    ...(doc.columns ? [line(doc.columns.map((c) => c.label))] : []),
+    ...doc.rows.map((r) => line(r.kind === 'band' || r.kind === 'heading' ? [r.cells[0]] : r.cells)),
     ...(doc.foot ? [line(doc.foot)] : []),
   ]
-  return new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  return new Blob(['\ufeff' + out.join('\r\n')], { type: 'text/csv;charset=utf-8' })
 }
 
 /**

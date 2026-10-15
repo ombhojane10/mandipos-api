@@ -8,7 +8,7 @@ import { useLoad } from '../useLoad'
 import { openVoucher } from '../keys'
 import { PeriodBar, Skeleton } from '../ui'
 import { t } from '../i18n'
-import { fileName, useExport, type ExportRow } from '../export/doc'
+import { dayRange, fileName, longDay, rs, type ExportRow, useExport } from '../export/doc'
 
 const FILTERS = [
   { key: 'sab', label: t('Sab') }, { key: 'bikri', label: t('Parchi') }, { key: 'vasooli', label: t('Vasooli') }, { key: 'kharcha', label: t('Kharcha') },
@@ -41,14 +41,14 @@ export function DayBook({ shopId }: { shopId: string }) {
     const rows: ExportRow[] = []
     let day = ''
     for (const e of shown) {
-      if (period.from !== period.to && e.date !== day) rows.push({ band: true, cells: [dayHeader(e.date)] })
+      if (period.from !== period.to && e.date !== day) rows.push({ kind: 'band', cells: [longDay(e.date)] })
       day = e.date
       const v = describe(e)
       rows.push({ strike: !!e.voided, cells: [time(e.at), v.type, v.no, [v.name, v.detail].filter(Boolean).join(' · '), e.nags ? count(e.nags) : '', v.amount, e.voided ? '' : v.pay ?? ''] })
     }
     return {
-      title: t('Day Book'), period: periodLabel(period), file: fileName(t('Day Book'), period.from, period.to),
-      summary: [[t('Parchi'), rupees(sum((e) => e.kind === 'slip'))], [t('Vasooli'), rupees(sum((e) => e.kind === 'payment'))], [t('Kharcha'), rupees(sum((e) => e.kind === 'out' && !NOT_KHARCHA.has(e.title)))]],
+      style: 'book' as const, title: t('Day Book'), dateLine: dayRange(period.from, period.to), file: fileName(t('Day Book'), period.from, period.to),
+      summary: [[t('Parchi'), rs(sum((e) => e.kind === 'slip'))], [t('Vasooli'), rs(sum((e) => e.kind === 'payment'))], [t('Kharcha'), rs(sum((e) => e.kind === 'out' && !NOT_KHARCHA.has(e.title)))]],
       columns: [{ label: t('Samay') }, { label: t('Type') }, { label: t('No.') }, { label: t('Naam'), wide: true }, { label: t('Nag'), num: true }, { label: t('Rakam'), num: true }, { label: t('Payment') }],
       rows,
     }

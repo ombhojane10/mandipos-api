@@ -3,9 +3,9 @@ import { api, type SupplierKhata as Khata, type Suppliers as List } from '../api
 import { ago, count, rupees } from '../format'
 import { href } from '../routes'
 import { useLoad } from '../useLoad'
-import { Bal, balText, Crumb, Ledger, Skeleton } from '../ui'
+import { Bal, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
-import { fileName, useExport } from '../export/doc'
+import { balRs, fileName, rs, useExport } from '../export/doc'
 
 /** Every supplier: gaadis, kharid, diya, and what the shop still has to give — aged. */
 export function Suppliers({ shopId }: { shopId: string }) {
@@ -15,11 +15,11 @@ export function Suppliers({ shopId }: { shopId: string }) {
   const rows = (data?.rows ?? []).filter((r) => !query || r.name.toLowerCase().includes(query))
   const open = (key: string) => { location.hash = href({ page: 'supplier', shopId, key }) }
   useExport(data ? () => ({
-    title: t('Supplier Khata'), file: fileName(t('Supplier Khata')),
-    summary: [[t('Supplier ko dena'), rupees(data.totals.duePaise)], [t('Supplier'), count(data.totals.count)]],
+    style: 'book' as const, title: t('Supplier Khata'), file: fileName(t('Supplier Khata')),
+    summary: [[t('Supplier ko dena'), rs(data.totals.duePaise)], [t('Supplier'), count(data.totals.count)]],
     columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), num: true }, { label: t('Kharid'), num: true }, { label: t('Diya'), num: true }, { label: t('Baaki'), num: true }],
-    rows: rows.map((r) => ({ cells: [r.name, count(r.gaadis), rupees(r.purchasePaise), rupees(r.paidPaise), balText(r.duePaise, 'supplier')] })),
-    foot: [t('Kul'), count(rows.reduce((s, r) => s + r.gaadis, 0)), rupees(rows.reduce((s, r) => s + r.purchasePaise, 0)), rupees(rows.reduce((s, r) => s + r.paidPaise, 0)), balText(rows.reduce((s, r) => s + r.duePaise, 0), 'supplier')],
+    rows: rows.map((r) => ({ cells: [r.name, count(r.gaadis), rs(r.purchasePaise), rs(r.paidPaise), balRs(r.duePaise, 'supplier')] })),
+    foot: [t('Kul'), count(rows.reduce((s, r) => s + r.gaadis, 0)), rs(rows.reduce((s, r) => s + r.purchasePaise, 0)), rs(rows.reduce((s, r) => s + r.paidPaise, 0)), balRs(rows.reduce((s, r) => s + r.duePaise, 0), 'supplier')],
   }) : null, [data, query])
 
   return (
@@ -78,8 +78,7 @@ export function SupplierKhata({ shopId, supplierKey }: { shopId: string; supplie
         <div><span className="lb">{t('Gaadi')}</span><span className="v">{count(tot.gaadis)} · {t('{n} nag', { n: count(tot.dana) })}</span></div>
       </div>
       <Ledger who="supplier" closingPaise={tot.duePaise} exportAs={{
-        title: t('Supplier Khata'), name: data.name,
-        summary: [[t('Kharid'), rupees(tot.purchasePaise)], [t('Diya'), rupees(tot.paidPaise)], [t('Baaki'), balText(tot.duePaise, 'supplier')]],
+        title: 'SUPPLIER LEDGER', party: { description: data.name },
       }}
         rows={data.history.map((r) => ({ ...r, detail: r.kind === 'gaadi' ? [r.detail, r.open ? t('{n} baaki', { n: count(r.left) }) : t('band')].filter(Boolean).join(' · ') : r.detail }))} />
     </div>

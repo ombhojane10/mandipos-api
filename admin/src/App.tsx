@@ -266,7 +266,7 @@ export default function App() {
         {goto && <GoTo shopId={shopId} onClose={() => setGoto(false)} />}
         {shopId && <NewEntry key={shopId} shopId={shopId} />}
         <VoucherHost />
-        <ExportHost shop={shop ?? null} />
+        <ExportHost shopId={shopId} fallback={shop ?? null} />
         <Help />
       </div>
     </SessionContext.Provider>

@@ -4,7 +4,7 @@ import { addDays, count, dayHeader, rate, rupees, shortDate, spanDays, todayIst 
 import { PRESETS, periodLabel, type Period } from './period'
 import type { Buckets } from './api'
 import { t } from './i18n'
-import { fileName, useExport } from './export/doc'
+import { amt, bal, dmy, fileName, qty, useExport } from './export/doc'
 
 /**
  * An amount that is owed, in words as well as colour. [who] says whose side it is on:
@@ -161,7 +161,8 @@ const WORDS = {
  * closing balance on top. On a phone each entry folds into one row: what happened on the left,
  * the amount and running balance on the right. A parchi opens to show its maal.
  */
-export type LedgerExport = { title: string; name: string; sub?: string; summary?: [string, string][] }
+/** How a khata prints: LedgerPdf's CUSTOMER LEDGER head, the party block, the shop's bank accounts. */
+export type LedgerExport = { title: string; party: { code?: string; description: string; address?: string }; banks?: boolean; firm?: string }
 
 export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId, exportAs }: {
   rows: LedgerRow[]; withShop?: boolean; closingPaise: number; who?: 'grahak' | 'supplier'; shopId?: string; exportAs?: LedgerExport
@@ -169,22 +170,29 @@ export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId, e
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [all, setAll] = useState(false)
   const w = WORDS[who]
-  // Exported the way a khata is read on paper: oldest first, the running baaki on each line.
+  // Printed as the app's LedgerPdf: oldest first, opening balance, the running baaki, TOTAL.
   useExport(exportAs ? () => {
     const live = rows.filter((r) => !r.void)
     const sum = (k: 'debitPaise' | 'creditPaise' | 'nags') => live.reduce((s, r) => s + r[k], 0)
+    const [owe, ahead] = who === 'grahak' ? ['baaki', 'jama'] : ['dena', 'advance']
+    const opening = closingPaise - sum('debitPaise') + sum('creditPaise')
+    const oldest = rows.at(-1)?.date ?? todayIst()
     return {
-      ...exportAs, file: fileName(exportAs.title, exportAs.name),
-      columns: [{ label: t('Tarikh') }, { label: t('Vivaran'), wide: true }, ...(withShop ? [{ label: t('Dukaan') }] : []),
-        { label: t('Nag'), num: true }, { label: w.dr, num: true }, { label: w.cr, num: true }, { label: t('Baaki'), num: true }],
-      rows: [...rows].reverse().map((r) => ({
-        strike: r.void,
-        cells: [shortDate(r.date), [r.title, r.detail].filter(Boolean).join(' · '), ...(withShop ? [r.shop ?? ''] : []),
-          r.nags ? count(r.nags) : '', r.debitPaise ? rupees(r.debitPaise) : '', r.creditPaise ? rupees(r.creditPaise) : '', balText(r.balancePaise, who)],
-      })),
-      foot: [t('Kul'), '', ...(withShop ? [''] : []), count(sum('nags')), rupees(sum('debitPaise')), rupees(sum('creditPaise')), balText(closingPaise, who)],
+      style: 'ledger' as const, title: exportAs.title, party: exportAs.party, banks: exportAs.banks, firm: exportAs.firm,
+      from: oldest, to: todayIst(), file: fileName(exportAs.title, exportAs.party.description),
+      columns: [{ label: 'Date' }, { label: 'Particulars', wide: true }, ...(withShop ? [{ label: 'Shop' }] : []),
+        { label: 'Qty', num: true }, { label: 'DEBIT', num: true }, { label: 'CREDIT', num: true }, { label: 'Balance', num: true }],
+      rows: [
+        { cells: [dmy(oldest), 'Opening Balance...', ...(withShop ? [''] : []), '', opening > 0 ? amt(opening) : '', opening < 0 ? amt(-opening) : '', bal(opening, owe, ahead)] },
+        ...[...rows].reverse().map((r) => ({
+          strike: r.void,
+          cells: [dmy(r.date), [r.title, r.detail].filter(Boolean).join(' · '), ...(withShop ? [r.shop ?? ''] : []),
+            qty(r.nags), amt(r.debitPaise), amt(r.creditPaise), bal(r.balancePaise, owe, ahead)],
+        })),
+      ],
+      foot: ['', 'TOTAL...', ...(withShop ? [''] : []), qty(sum('nags')), amt(sum('debitPaise') + Math.max(0, opening)), amt(sum('creditPaise') + Math.max(0, -opening)), bal(closingPaise, owe, ahead)],
     }
-  } : null, [rows, closingPaise, exportAs?.name])
+  } : null, [rows, closingPaise, exportAs?.party.description])
   const hasLines = rows.some((r) => r.lines?.length)
   const totals = rows.reduce((t, r) => ({ dr: t.dr + r.debitPaise, cr: t.cr + r.creditPaise }), { dr: 0, cr: 0 })
   const cols = withShop ? 7 : 6

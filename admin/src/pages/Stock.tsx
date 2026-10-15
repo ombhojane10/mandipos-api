@@ -5,7 +5,7 @@ import { hashQuery, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
 import { Skeleton } from '../ui'
 import { t } from '../i18n'
-import { fileName, useExport } from '../export/doc'
+import { dmy, fileName, rs, useExport } from '../export/doc'
 
 const VIEWS = [{ key: 'active', label: t('Active') }, { key: 'past', label: t('Past') }] as const
 type View = (typeof VIEWS)[number]['key']
@@ -22,15 +22,15 @@ export function Stock({ shopId }: { shopId: string }) {
   const sum = (k: 'received' | 'sold' | 'spoiled') => (data?.rows ?? []).reduce((s, r) => s + r[k], 0)
 
   useExport(data ? () => ({
-    title: `${t('Stock Summary')} · ${VIEWS.find((v) => v.key === view)!.label}`, file: fileName(t('Stock Summary'), view, new Date().toISOString().slice(0, 10)),
+    style: 'book' as const, title: `${t('Stock Summary')} · ${VIEWS.find((v) => v.key === view)!.label}`, file: fileName(t('Stock Summary'), view, new Date().toISOString().slice(0, 10)),
     summary: past
       ? [[t('Gaadi'), count(data.rows.length)], [t('Aaya'), count(sum('received'))], [t('Gaya'), count(sum('sold'))]]
-      : [[t('Baaki maal'), t('{n} nag', { n: count(data.totals.left) })], [t('Kharid bhav par'), rupees(data.totals.valuePaise)], [t('Khuli gaadi'), count(data.totals.gaadis)]],
+      : [[t('Baaki maal'), t('{n} nag', { n: count(data.totals.left) })], [t('Kharid bhav par'), rs(data.totals.valuePaise)], [t('Khuli gaadi'), count(data.totals.gaadis)]],
     columns: [{ label: t('Gaadi'), wide: true }, { label: t('Aayi') }, ...(past ? [{ label: t('Band hui') }] : []), { label: t('Aaya'), num: true }, { label: t('Gaya'), num: true },
       { label: t('Phoota'), num: true }, { label: t('Baaki'), num: true }, ...(past ? [] : [{ label: t('Keemat'), num: true }])],
-    rows: data.rows.map((r) => ({ cells: [[r.number, r.supplier, r.brands].filter(Boolean).join(' · '), shortDate(r.arrivedOn), ...(past ? [r.closedOn ? shortDate(r.closedOn) : ''] : []),
-      count(r.received), count(r.sold), r.spoiled ? count(r.spoiled) : '', count(r.left), ...(past ? [] : [rupees(r.valuePaise)])] })),
-    foot: [t('Kul'), '', ...(past ? [''] : []), count(sum('received')), count(sum('sold')), count(sum('spoiled')), count(data.totals.left), ...(past ? [] : [rupees(data.totals.valuePaise)])],
+    rows: data.rows.map((r) => ({ cells: [[r.number, r.supplier, r.brands].filter(Boolean).join(' · '), dmy(r.arrivedOn), ...(past ? [r.closedOn ? dmy(r.closedOn) : ''] : []),
+      count(r.received), count(r.sold), r.spoiled ? count(r.spoiled) : '', count(r.left), ...(past ? [] : [rs(r.valuePaise)])] })),
+    foot: [t('Kul'), '', ...(past ? [''] : []), count(sum('received')), count(sum('sold')), count(sum('spoiled')), count(data.totals.left), ...(past ? [] : [rs(data.totals.valuePaise)])],
   }) : null, [data, view])
 
   const tot = data?.totals

@@ -4,29 +4,35 @@
  * on phones.
  */
 :root {
-  --page: #f5f6f8;
-  --card: #ffffff;
-  --ink: #111827;
-  --ink-2: #374151;
-  --muted: #6b7280;
-  --line: #e6e8ec;
-  --line-2: #f0f1f4;
-  --accent: #15803d;
-  --accent-ink: #166534;
-  --accent-soft: #e9f6ee;
-  --blue: #2563eb;
-  --blue-soft: #eaf1fe;
-  --amber: #b45309;
-  --amber-soft: #fdf3e2;
-  --due: #c2261b;
-  --due-soft: #fdecea;
-  --jama: #15803d;
-  --select: #eef6f1;
-  --radius: 14px;
-  --radius-sm: 10px;
+  /* Bahi-khata, done cleanly: aged paper, ruled cream cards, ink, red for what is owed,
+     ledger green for actions, a canary highlight bar. */
+  --page: #f3eee2;
+  --card: #fffdf8;
+  --ink: #1d2028;
+  --ink-2: #3a3f4b;
+  --muted: #7a7264;
+  --line: #e0d5bf;
+  --line-2: #ece3d1;
+  --rule: #cbbd9f;
+  --accent: #1f5c3e;
+  --accent-ink: #164430;
+  --accent-soft: #e4ede2;
+  --blue: #2c5b88;
+  --blue-soft: #e5ecf3;
+  --amber: #94630f;
+  --amber-soft: #f5ead1;
+  --due: #a8281e;
+  --due-soft: #f6e2dd;
+  --jama: #1f6b3a;
+  --select: #fbf0c4;
+  --bahi: #9e2a22;
+  --radius: 8px;
+  --radius-sm: 6px;
   --side: 244px;
   --top: 60px;
   --tabs: 64px;
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, 'Noto Serif', 'Noto Serif Devanagari', serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   color-scheme: light;
 }
 
@@ -454,35 +460,74 @@ a.kpi:hover { border-color: #cfd3da; }
 .export-bar .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .export-scroll { flex: 1; overflow: auto; padding: 20px 12px 40px; }
 .paper-stack { display: grid; gap: 20px; justify-content: center; }
-/* One A4 sheet at 96 dpi; hex colours only, so the PDF photograph matches the screen. */
+/* One A4 sheet at 96 dpi, set as the POS app prints (LedgerPdf, DaybookPdf): heavy sans heads,
+   typewriter figures, ink rules. Fixed row heights so Preview.tsx can count a page's rows.
+   Hex colours only, so the PDF photograph matches the screen. */
 .paper {
-  width: 794px; height: 1123px; padding: 38px 44px 28px; background: #ffffff; color: #111827; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-  display: flex; flex-direction: column; font-size: 11.5px; line-height: 1.3; overflow: hidden;
+  --pi: #111111; --pm: #6b7280; --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono', monospace;
+  width: 794px; height: 1123px; padding: 48px 48px 0; background: #ffffff; color: var(--pi); box-shadow: 0 2px 14px rgba(0, 0, 0, 0.14);
+  display: flex; flex-direction: column; font: 500 13px/1.3 system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Devanagari', sans-serif; overflow: hidden;
 }
-.paper-hd { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; padding-bottom: 12px; border-bottom: 2px solid #111827; }
-.paper-hd.small { font-size: 10.5px; color: #6b7280; border-bottom: 1px solid #d1d5db; padding-bottom: 8px; }
-.paper-shop b { display: block; font-size: 19px; letter-spacing: 0.01em; }
-.paper-shop span, .paper-title span { color: #4b5563; font-size: 11.5px; }
-.paper-title { text-align: right; }
-.paper-title b { display: block; font-size: 15px; }
-.paper-party { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 12px 0; border-bottom: 1px solid #d1d5db; }
-.paper-party b { display: block; font-size: 15px; }
-.paper-party span { color: #4b5563; }
-.paper-party dl { display: flex; gap: 20px; margin: 0; }
-.paper-party dt { color: #6b7280; font-size: 10.5px; }
-.paper-party dd { margin: 0; font-weight: 700; font-size: 13px; white-space: nowrap; }
-.paper-tbl { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: auto; }
-.paper-tbl th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #4b5563; padding: 6px 6px; border-bottom: 1px solid #111827; white-space: nowrap; }
-.paper-tbl td { height: 22px; padding: 0 6px; border-bottom: 1px solid #eef0f3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
-.paper-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
-.paper-tbl th.wide { width: 100%; }
-.paper-tbl tr.b td { font-weight: 700; }
-.paper-tbl tr.muted td { color: #9ca3af; }
-.paper-tbl tr.strike td { text-decoration: line-through; color: #9ca3af; }
-.paper-tbl tr.band td { background: #f3f4f6; font-weight: 700; font-size: 10.5px; color: #374151; }
-.paper-tbl tfoot td { font-weight: 800; border-top: 1.5px solid #111827; border-bottom: 0; height: 26px; }
-.paper-empty { color: #6b7280; padding: 24px 0; text-align: center; }
-.paper-ft { margin-top: auto; display: flex; justify-content: space-between; color: #9ca3af; font-size: 9.5px; padding-top: 8px; border-top: 1px solid #eef0f3; }
+.paper b, .paper em { font-style: normal; }
+/* Ledger head: firm left (centred in its half), bank accounts right, the party, From/To · Page. */
+.lh { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.lh-firm { display: grid; justify-items: center; text-align: center; gap: 4px; padding-top: 14px; }
+.lh-firm b { font-size: 20px; font-weight: 900; letter-spacing: 0.01em; }
+.lh-firm span { font-size: 11.5px; font-weight: 800; }
+.lh-firm em { font-size: 13.5px; font-weight: 900; margin-top: 26px; letter-spacing: 0.02em; }
+.lh-banks { display: grid; justify-items: center; text-align: center; }
+.lh-banks > div { display: grid; gap: 3px; padding: 8px 0; width: 280px; }
+.lh-banks > div + div { border-top: 1px solid var(--pi); }
+.lh-banks b { font-size: 14.5px; font-weight: 900; }
+.lh-banks span { font-size: 12.5px; font-weight: 800; }
+.lh-party { display: grid; row-gap: 5px; margin: 40px 0 0 26px; font-size: 13px; }
+.lh-party > div { display: grid; grid-template-columns: 86px 12px 1fr; }
+.lh-party span { font-weight: 600; }
+.lh-party b { font-weight: 800; }
+.lh-period { display: flex; align-items: flex-end; gap: 60px; margin: 34px 0 8px 26px; font-size: 14px; }
+.lh-period b { font-weight: 900; }
+.lh-period span { margin-left: auto; font-weight: 800; font-size: 13px; padding-right: 12px; }
+/* Book head (DaybookPdf): firm and place centred, the book and the day ruled off under them. */
+.bh-firm { display: grid; justify-items: center; gap: 4px; }
+.bh-firm b { font-size: 24px; font-weight: 900; letter-spacing: 0.01em; }
+.bh-firm span { font-size: 12.5px; font-weight: 700; color: var(--pm); }
+.bh-line { display: flex; justify-content: space-between; gap: 16px; margin-top: 24px; padding-bottom: 9px; border-bottom: 1.6px solid var(--pi); font-size: 14.5px; letter-spacing: 0.03em; }
+.bh-line b { font-weight: 800; font-stretch: condensed; }
+.bh-sum { display: flex; gap: 28px; margin: 12px 0 2px; }
+.bh-sum dt { color: var(--pm); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.bh-sum dd { margin: 0; font: 800 14px var(--mono); }
+/* The table: column titles boxed between two rules, typewriter rows, TOTAL ruled above and below. */
+.pt { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.pt th { height: 26px; padding: 0 6px; font-size: 13px; font-weight: 900; text-align: center; white-space: nowrap; border-top: 1px solid var(--pi); border-bottom: 1px solid var(--pi); }
+.pt th + th { border-left: 1px solid var(--pi); }
+.pt th.wide { width: 100%; }
+.pt td { height: 22px; padding: 0 6px; font: 400 12.8px/22px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 330px; }
+.pt td.num { text-align: right; }
+.pt tr.b td { font-weight: 700; }
+.pt tr.strike td { text-decoration: line-through; color: #9ca3af; }
+.pt tr.band td { height: 26px; font: 800 12px system-ui, sans-serif; letter-spacing: 0.04em; padding-top: 6px; }
+.pt tfoot td { height: 30px; font-weight: 800; border-top: 1px solid var(--pi); border-bottom: 1px solid var(--pi); }
+.paper.book .pt td { font-family: inherit; font-size: 13px; }
+.paper.book .pt th, .bh-line b:first-child { text-transform: uppercase; }
+.paper.book .pt td.num { font-family: var(--mono); }
+/* The daybook's sections: a heading ruled under, lines with their detail and time, totals. */
+.ps { margin-top: 14px; }
+.ps > div { display: grid; grid-template-columns: 250px 1fr 64px 120px; align-items: center; gap: 8px; padding: 0 4px; }
+.ps .l, .ps .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps .s, .ps .tm { color: var(--pm); font-size: 12px; }
+.ps .a { text-align: right; font-family: var(--mono); }
+.ps-row { height: 22px; font-size: 14px; }
+.ps-heading { height: 40px; align-content: end; padding-bottom: 6px !important; margin-bottom: 4px; border-bottom: 0.8px solid var(--pi); font-weight: 800; font-size: 15px; letter-spacing: 0.04em; }
+.ps-heading .l { grid-column: 1 / -1; }
+.ps-total, .ps-final { font-weight: 900; }
+.ps-total { height: 34px; font-size: 15px; background: linear-gradient(var(--pi), var(--pi)) no-repeat right 4px top 4px / 50% 0.8px; }
+.ps-final { height: 40px; font-size: 17px; background: linear-gradient(var(--pi), var(--pi)) no-repeat right 4px top 4px / 50% 1.8px; }
+.ps-total .a, .ps-final .a { font-weight: 800; }
+.pnote { margin-top: 20px; color: var(--pm); font-size: 11.5px; }
+.psign { display: flex; justify-content: space-between; margin-top: 64px; }
+.psign span { width: 214px; padding-top: 6px; border-top: 0.8px solid var(--pi); text-align: center; font-weight: 800; font-size: 12px; letter-spacing: 0.08em; }
+.paper-empty { color: var(--pm); padding: 24px 0; text-align: center; }
+.pf { margin-top: auto; height: 26px; display: flex; justify-content: space-between; align-items: center; color: #9ca3af; font-size: 10px; }
 .export-btn { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-weight: 600; cursor: pointer; color: var(--ink-2); }
 .export-btn svg { width: 18px; height: 18px; }
 @media (max-width: 899px) {
@@ -537,3 +582,52 @@ a.kpi:hover { border-color: #cfd3da; }
 .big-fig { display: grid; gap: 2px; }
 .big-fig .lb { color: var(--muted); font-size: 12.5px; }
 .big-fig .v { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+
+/* ================================================================ old-school, done cleanly */
+h1, h3, .card > .hd h3, .sheet-hd h3, .dialog h3, .side .brand, .set-sec > h3, .head h1 { font-family: var(--serif); letter-spacing: 0; }
+h1 { font-weight: 700; font-size: 22px; }
+.card > .hd h3, .sheet-hd h3 { font-weight: 700; font-size: 16px; }
+.set-sec > h3 { text-transform: none; font-size: 17px; color: var(--ink); letter-spacing: 0; }
+/* Figures in typewriter type, as a munim writes them in columns. */
+.money, .num, .kpi .v, .sum .v, .big-fig .v, .total-line b, .tbl td.num { font-family: var(--mono); letter-spacing: -0.02em; }
+.kpi .v, .sum .v { font-weight: 700; }
+.card { box-shadow: 0 1px 0 rgba(120, 96, 50, 0.06); }
+.card > .hd { border-bottom: 1px solid var(--line-2); padding-bottom: 12px; }
+.card > .hd + .bd { padding-top: 12px; }
+
+/* Sidebar: a bahi's spine — the red mark, serif name, ruled groups. */
+.side { background: #f8f4ea; }
+.side .brand i { background: var(--bahi); border-radius: 6px; font-family: var(--serif); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.18); }
+.side .brand span { color: var(--bahi); }
+.nav .grp { font-family: var(--serif); text-transform: none; letter-spacing: 0; font-size: 12.5px; font-style: italic; color: var(--muted); font-weight: 600; }
+.nav a { border-radius: 6px; }
+.nav a[aria-current='page'], .side-ft > a[aria-current='page'] { background: var(--card); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--line); }
+.shop-pick select, .shop-name { background: var(--card); border: 1px solid var(--line); }
+.top { background: rgb(243 238 226 / 0.94); border-bottom: 3px double var(--rule); }
+
+/* Ledger tables: column titles over a double rule, thin rules between columns on wide screens,
+   totals over a double rule, and the canary bar on the line you are on. */
+.tbl th { background: #faf6ec; color: #6a604f; border-bottom: 3px double var(--rule); font-size: 11px; letter-spacing: 0.06em; }
+.tbl tfoot td { border-top: 3px double var(--rule); background: #faf6ec; }
+.tbl .day td, .tbl tr.open-lines td { background: #f7f1e3; }
+.tbl tbody tr[data-row]:hover { background: #fdf7df; }
+.tbl tbody tr[data-row]:focus-visible, .tbl tbody tr[data-row]:focus { background: var(--select); }
+@media (min-width: 900px) {
+  .tbl th + th, .tbl td + td { border-left: 1px solid var(--line-2); }
+}
+
+/* Controls: squarer, inked. */
+.btn, .new-btn, .export-btn, .seg, .field, .picked, .goto, .stepper { border-radius: 6px; }
+.seg button { border-radius: 4px; }
+.field { background: #fffefb; border-color: var(--line); }
+.chips button { border-radius: 6px; }
+.chip { border-radius: 4px; }
+.kpi .ic { border-radius: 8px; }
+.sum > div + div { border-left-color: var(--line); }
+.quick button { border-radius: var(--radius); }
+.box, .set-bank { background: #f8f3e6; }
+.total-line { background: #f7f1e3; border: 1px dashed var(--rule); }
+.sheet, .dialog, .palette { border-radius: 10px; }
+.tabs { background: #f8f4ea; border-top: 3px double var(--rule); }
+.tabs .plus span { border-radius: 10px; }
+.login-card h1 { font-family: var(--serif); }

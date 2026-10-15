@@ -3,7 +3,7 @@ import { api, type MarketCustomer, type Person as P } from '../api'
 import { count, date, phone, rupees, shortDate } from '../format'
 import { href } from '../routes'
 import { useLoad } from '../useLoad'
-import { Bal, balText, Crumb, Ledger, Skeleton } from '../ui'
+import { Bal, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
 
 /** MandiPlus: any grahak across every dukaan, matched by mobile. Empty = who owes the market most. */
@@ -92,8 +92,8 @@ export function Person({ personKey }: { personKey: string }) {
         </table>
       </div>
       <Ledger withShop closingPaise={tot.balancePaise} rows={history.map((r) => ({ ...r, shop: r.shopName }))} exportAs={{
-        title: t('Market Khata'), name: data.name, sub: data.phone ? phone(data.phone) : undefined,
-        summary: [[t('Kharida'), rupees(tot.boughtPaise)], [t('Market baaki'), balText(tot.balancePaise)]],
+        title: 'MARKET LEDGER', firm: 'MandiPlus',
+        party: { description: [data.name, data.phone].filter(Boolean).join(' '), address: profile.address },
       }} />
     </div>
   )

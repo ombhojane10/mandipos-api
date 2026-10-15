@@ -5,7 +5,7 @@ import { hashQuery, href, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
 import { Skeleton } from '../ui'
 import { t } from '../i18n'
-import { fileName, useExport } from '../export/doc'
+import { dmy, fileName, rs, useExport } from '../export/doc'
 
 const VIEWS = [{ key: 'sab', label: t('Sab') }, { key: '30', label: t('30+ din') }, { key: '8', label: t('8+ din') }] as const
 type View = (typeof VIEWS)[number]['key']
@@ -22,11 +22,11 @@ export function Outstanding({ shopId }: { shopId: string }) {
     .filter((r) => !query || `${r.name} ${r.phone} ${r.code}`.toLowerCase().includes(query))
 
   useExport(data ? () => ({
-    title: t('Outstanding'), period: VIEWS.find((v) => v.key === view)!.label, file: fileName(t('Outstanding'), view),
-    summary: [[t('Kul udhaar (lena)'), rupees(data.totals.duePaise)], [t('Grahak'), count(data.totals.count)]],
+    style: 'book' as const, title: t('Outstanding'), period: VIEWS.find((v) => v.key === view)!.label, file: fileName(t('Outstanding'), view),
+    summary: [[t('Kul udhaar (lena)'), rs(data.totals.duePaise)], [t('Grahak'), count(data.totals.count)]],
     columns: [{ label: t('Code') }, { label: t('Grahak'), wide: true }, { label: t('0–7 din'), num: true }, { label: t('8–30 din'), num: true }, { label: t('30+ din'), num: true }, { label: t('Kul baaki'), num: true }, { label: t('Aakhri parchi') }],
-    rows: rows.map((r) => ({ cells: [r.code, [r.name, r.phone && phone(r.phone)].filter(Boolean).join(' · '), r.d0_7 ? rupees(r.d0_7) : '', r.d8_30 ? rupees(r.d8_30) : '', r.d31 ? rupees(r.d31) : '', rupees(r.duePaise), r.lastSlipOn ? shortDate(r.lastSlipOn) : '—'] })),
-    foot: ['', t('Kul'), rupees(rows.reduce((s, r) => s + r.d0_7, 0)), rupees(rows.reduce((s, r) => s + r.d8_30, 0)), rupees(rows.reduce((s, r) => s + r.d31, 0)), rupees(rows.reduce((s, r) => s + r.duePaise, 0)), ''],
+    rows: rows.map((r) => ({ cells: [r.code, [r.name, r.phone && phone(r.phone)].filter(Boolean).join(' · '), r.d0_7 ? rs(r.d0_7) : '', r.d8_30 ? rs(r.d8_30) : '', r.d31 ? rs(r.d31) : '', rs(r.duePaise), r.lastSlipOn ? dmy(r.lastSlipOn) : '—'] })),
+    foot: ['', t('Kul'), rs(rows.reduce((s, r) => s + r.d0_7, 0)), rs(rows.reduce((s, r) => s + r.d8_30, 0)), rs(rows.reduce((s, r) => s + r.d31, 0)), rs(rows.reduce((s, r) => s + r.duePaise, 0)), ''],
   }) : null, [data, view, query])
 
   return (

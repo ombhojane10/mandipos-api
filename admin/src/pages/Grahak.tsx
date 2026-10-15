@@ -4,9 +4,9 @@ import { useSession } from '../App'
 import { count, phone, rupees, shortDate } from '../format'
 import { href } from '../routes'
 import { useLoad } from '../useLoad'
-import { Bal, balText, Crumb, Ledger, Skeleton } from '../ui'
+import { Bal, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
-import { fileName, useExport } from '../export/doc'
+import { balRs, dmy, fileName, rs, useExport } from '../export/doc'
 
 /** Every grahak of the shop, searchable; biggest baaki first. Enter opens the khata. */
 export function GrahakList({ shopId }: { shopId: string }) {
@@ -17,10 +17,10 @@ export function GrahakList({ shopId }: { shopId: string }) {
     () => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(query)}`).then((r) => r.buyers), [shopId, query])
 
   useExport(data ? () => ({
-    title: t('Grahak Ledger'), file: fileName(t('Grahak Ledger')),
+    style: 'book' as const, title: t('Grahak Ledger'), file: fileName(t('Grahak Ledger')),
     columns: [{ label: t('Code') }, { label: t('Grahak'), wide: true }, { label: t('Mobile') }, { label: t('Kharida'), num: true }, { label: t('Aakhri parchi') }, { label: t('Baaki'), num: true }],
-    rows: data.map((b) => ({ cells: [b.code, b.name, b.phone ? phone(b.phone) : '', rupees(b.boughtPaise), b.lastSlipOn ? shortDate(b.lastSlipOn) : '—', balText(b.balancePaise)] })),
-    foot: ['', t('Kul'), '', rupees(data.reduce((s, b) => s + b.boughtPaise, 0)), '', balText(data.reduce((s, b) => s + b.balancePaise, 0))],
+    rows: data.map((b) => ({ cells: [b.code, b.name, b.phone ? phone(b.phone) : '', rs(b.boughtPaise), b.lastSlipOn ? dmy(b.lastSlipOn) : '—', balRs(b.balancePaise)] })),
+    foot: ['', t('Kul'), '', rs(data.reduce((s, b) => s + b.boughtPaise, 0)), '', balRs(data.reduce((s, b) => s + b.balancePaise, 0))],
   }) : null, [data])
 
   return (
@@ -83,8 +83,8 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         {me?.admin && mobile && <div><span className="lb">{t('Poora market')}</span><a className="v call" href={href({ page: 'person', key: b.phone })}>{t('Dekhein')} ›</a></div>}
       </div>
       <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} exportAs={{
-        title: t('Grahak Khata'), name: b.name, sub: [b.code, mobile && phone(b.phone), b.address].filter(Boolean).join(' · '),
-        summary: [[t('Kharida'), rupees(tot.boughtPaise)], [t('Diya'), rupees(tot.paidPaise)], [t('Baaki'), balText(tot.balancePaise)]],
+        title: 'CUSTOMER LEDGER', banks: true,
+        party: { code: b.code || b.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 6), description: [b.name, b.destination, mobile ? b.phone : ''].filter(Boolean).join(' '), address: b.address },
       }} />
     </div>
   )

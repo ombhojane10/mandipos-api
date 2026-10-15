@@ -3,9 +3,9 @@ import { usePeriod } from '../hooks'
 import { count, rate, rupees } from '../format'
 import { useLoad } from '../useLoad'
 import { PeriodBar, Skeleton } from '../ui'
-import { periodLabel } from '../period'
+
 import { t } from '../i18n'
-import { fileName, useExport } from '../export/doc'
+import { dayRange, fileName, rs, useExport } from '../export/doc'
 
 /** Maal-wise bikri over the period: nag, average bhav, rakam, and each maal's share. */
 export function Items({ shopId }: { shopId: string }) {
@@ -13,10 +13,10 @@ export function Items({ shopId }: { shopId: string }) {
   const { data, error, loading } = useLoad(() => api<ItemRow[]>(`/v1/admin/shops/${shopId}/items?from=${period.from}&to=${period.to}`), [shopId, period.from, period.to])
   const total = (data ?? []).reduce((t, r) => t + r.amountPaise, 0)
   useExport(data ? () => ({
-    title: t('Maal-wise Bikri'), period: periodLabel(period), file: fileName(t('Maal-wise Bikri'), period.from, period.to),
+    style: 'book' as const, title: t('Maal-wise Bikri'), dateLine: dayRange(period.from, period.to), file: fileName(t('Maal-wise Bikri'), period.from, period.to),
     columns: [{ label: t('Maal'), wide: true }, { label: t('Nag'), num: true }, { label: t('Avg bhav'), num: true }, { label: t('Parchi'), num: true }, { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
-    rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), count(r.slips), rupees(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
-    foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', count(data.reduce((s, r) => s + r.slips, 0)), rupees(total), ''],
+    rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), count(r.slips), rs(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
+    foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', count(data.reduce((s, r) => s + r.slips, 0)), rs(total), ''],
   }) : null, [data])
   return (
     <>
