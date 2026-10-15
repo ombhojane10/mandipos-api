@@ -2,16 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { lang, t } from '../i18n'
 import { href, type Report } from '../routes'
-import { openEntry, type EntryKind, type VoiceDraft } from '../entries/kinds'
-import { VoiceCard, type Card } from './Cards'
+import { editEntry, openEntry, type EditBill, type EntryKind, type VoiceDraft } from '../entries/kinds'
+import { exportWhenReady } from '../export/doc'
+import { AnswerTable, VoiceCard, type Answer, type Card } from './Cards'
 import { MicIcon } from './MicIcon'
 import { hush, sayCard, speak } from './speak'
 import { toBase64, useRecorder } from './useRecorder'
 
 type Reply = { transcript: string; kind: string; say: string }
 type Turn = {
-  id: string; reply: Reply; draft?: VoiceDraft; cards?: Card[]
+  id: string; reply: Reply; draft?: VoiceDraft; cards?: Card[]; answer?: Answer
   open?: { to: string; buyerId: string | null; truckId: string | null }
+  edit?: EditBill; editMiss?: string; downloadMiss?: string
+  download?: { report: string; format: 'pdf' | 'excel'; buyerId: string | null; from: string | null; to: string | null }
 }
 type Phase = 'listening' | 'thinking' | 'answer' | 'error'
 
@@ -21,6 +24,11 @@ const OPEN: Record<string, Report> = {
   vasooli: 'vasooli', mazdoori: 'daybook', supplier: 'suppliers', settings: 'settings', gaadi_hisab: 'gaadis',
 }
 const ENTRY_OPEN: Record<string, EntryKind> = { nayi_parchi: 'parchi', nayi_gaadi: 'gaadi' }
+/** "… download karo": the report page whose export is the file. */
+const DOWNLOAD: Record<string, Report> = {
+  daybook: 'daybook', outstanding: 'outstanding', cashbook: 'cashbook', stock: 'stock', register: 'register',
+  suppliers: 'suppliers', vasooli: 'vasooli', gaadis: 'gaadis', munafa: 'munafa', items: 'items',
+}
 
 /**
  * Bolo on the website: listening starts the moment the sheet opens (and the shop's books are
@@ -67,6 +75,19 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
       })
       if (r.reply.transcript) history.current = [...history.current, { q: r.reply.transcript, a: r.reply.say }].slice(-3)
       if (r.draft) { rec.close(); onDraft(r.draft); return }
+      // A saved slip, changed as asked: its alter form opens on the change, Save rewrites it.
+      if (r.edit) { rec.close(); onClose(); editEntry({ kind: 'parchi', bill: r.edit }); return }
+      if (r.download) {
+        const d = r.download
+        const period = d.from ? `?from=${d.from}&to=${d.to ?? d.from}` : ''
+        rec.close(); onClose()
+        location.hash = (d.report === 'ledger' && d.buyerId ? href({ page: 'grahak', shopId, buyerId: d.buyerId })
+          : href({ page: 'report', shopId, report: (DOWNLOAD[d.report] ?? 'daybook') })) + period
+        exportWhenReady(d.format)
+        return
+      }
+      const miss = r.editMiss ?? r.downloadMiss
+      if (miss) { setPhase('error'); setTitle(miss); speak(miss); return }
       if (r.open) {
         rec.close(); onClose()
         const entry = ENTRY_OPEN[r.open.to]
@@ -77,9 +98,10 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
       }
       setTurn(r)
       // Read out, as the terminal does: the answer, or each card's figure from the books.
-      if (r.cards?.length) speak(r.cards.map(sayCard).join('। '))
+      if (r.answer) speak(r.answer.speak || r.answer.say)
+      else if (r.cards?.length) speak(r.cards.map(sayCard).join('। '))
       else if (r.reply.kind === 'answer') speak(r.reply.say)
-      setTitle(r.reply.kind === 'answer' ? t('Jawaab') : r.reply.say || t('Samajh nahi aaya, phir boliye'))
+      setTitle(r.answer ? r.answer.title : r.reply.kind === 'answer' ? t('Jawaab') : r.reply.say || t('Samajh nahi aaya, phir boliye'))
       setPhase(r.reply.kind === 'unclear' ? 'error' : 'answer')
     } catch (e) {
       if (ctl.signal.aborted) return
@@ -109,6 +131,8 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
         <div className="bolo-body">
           {phase === 'listening' && <div ref={orb} className="bolo-orb" aria-hidden><MicIcon /></div>}
           {phase === 'thinking' && <div className="bolo-spin" aria-hidden />}
+          {phase === 'answer' && turn?.answer && <p className="bolo-say">{turn.answer.say}</p>}
+          {phase === 'answer' && turn?.answer && <AnswerTable a={turn.answer} shopId={shopId} />}
           {phase === 'answer' && turn?.cards?.map((c, i) => <VoiceCard key={i} c={c} shopId={shopId} />)}
           {phase === 'answer' && !turn?.cards?.length && turn?.reply.kind === 'answer' && <p className="bolo-say">{turn.reply.say}</p>}
         </div>

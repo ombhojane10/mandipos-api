@@ -6,7 +6,7 @@ import { uuidv7 } from '../common/uuid';
 import { config } from '../config';
 import { Db } from '../db/db.service';
 import { GeminiClient } from './gemini.client';
-import { APP_GUIDE, FALLBACK_SCHEMA, RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, userText } from './voice.prompt';
+import { APP_GUIDE, FALLBACK_SCHEMA, PORTAL_FALLBACK_SCHEMA, PORTAL_GUIDE, PORTAL_SCHEMA, RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, userText } from './voice.prompt';
 
 export const TurnBody = z
   .object({
@@ -38,21 +38,22 @@ export class VoiceService {
 
   constructor(private readonly db: Db, private readonly gemini: GeminiClient) {}
 
-  async turn(p: Principal, b: z.infer<typeof TurnBody>) {
+  /** [portal]: the website's turn, which may also query the books, edit a slip or ask for a file. */
+  async turn(p: Principal, b: z.infer<typeof TurnBody>, portal = false) {
     const shopId = requireShop(p);
     this.limit(shopId);
     const t0 = Date.now();
     const parts: object[] = [{ text: userText(b) }];
     if (b.audio && !b.text) parts.push({ inlineData: { mimeType: b.mime, data: b.audio } });
     const payload = {
-      systemInstruction: { parts: [{ text: `${SYSTEM_INSTRUCTION}\n\n${APP_GUIDE}` }] },
+      systemInstruction: { parts: [{ text: `${SYSTEM_INSTRUCTION}\n\n${APP_GUIDE}${portal ? `\n\n${PORTAL_GUIDE}` : ''}` }] },
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0,
         // A full slip is ~300 tokens with its nulls; the cap only stops a runaway reply sooner.
-        maxOutputTokens: 512,
+        maxOutputTokens: portal ? 900 : 512,
         responseMimeType: 'application/json',
-        responseJsonSchema: RESPONSE_SCHEMA,
+        responseJsonSchema: portal ? PORTAL_SCHEMA : RESPONSE_SCHEMA,
         // Thinking costs a second or more and buys nothing for slot-filling.
         thinkingConfig: { thinkingLevel: config().VOICE_THINKING.toUpperCase() },
       },
@@ -66,7 +67,7 @@ export class VoiceService {
     try {
       // A lite fallback model is sent the loose schema; the same model keeps the strict one.
       const lite = /lite/.test(config().VOICE_FALLBACK_MODEL);
-      const fallback = lite ? { ...payload, generationConfig: { ...payload.generationConfig, responseJsonSchema: FALLBACK_SCHEMA } } : payload;
+      const fallback = lite ? { ...payload, generationConfig: { ...payload.generationConfig, responseJsonSchema: portal ? PORTAL_FALLBACK_SCHEMA : FALLBACK_SCHEMA } } : payload;
       const r = await this.gemini.generate(payload, fallback);
       ({ model, tokensIn, tokensOut } = r);
       reply = this.read(r.text);

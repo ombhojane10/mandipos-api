@@ -66,6 +66,25 @@ export function useCanExport() {
 export const EXPORT_EVENT = 'mandipos:export'
 export const openExport = () => { if (current) dispatchEvent(new Event(EXPORT_EVENT)) }
 
+/** Save without asking: Bolo's "download karo". */
+export type AutoSave = 'pdf' | 'excel'
+
+/**
+ * After a navigation (Bolo's "ledger download karo"): waits for the new page to register its
+ * export and for its data to be in (its builder returns a doc), then opens the preview set to
+ * save the file by itself. Gives up quietly after [ms].
+ */
+export function exportWhenReady(auto: AutoSave, ms = 12_000) {
+  const before = current
+  const until = Date.now() + ms
+  const tick = () => {
+    const doc = current && current !== before ? current() : null
+    if (doc) { dispatchEvent(new CustomEvent(EXPORT_EVENT, { detail: { auto } })); return }
+    if (Date.now() < until) setTimeout(tick, 200)
+  }
+  setTimeout(tick, 200)
+}
+
 /** A safe file name: letters, digits and dashes. */
 export const fileName = (...parts: (string | undefined)[]) =>
   parts.filter(Boolean).join(' ').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'report'

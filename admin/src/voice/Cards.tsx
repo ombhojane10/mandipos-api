@@ -105,3 +105,41 @@ export const VoiceCard = memo(function VoiceCard({ c, shopId }: { c: Card; shopI
       )
   }
 })
+
+/** A free question's answer: what the books returned, as a small table. */
+export type Answer = { title: string; columns: string[]; rows: Record<string, string | number | boolean | null>[]; say: string; speak: string }
+
+/** Columns that hold rupees (by their Hinglish names), shown as ₹. */
+const MONEY = /(udhaar|rakam|kharid|baaki|mila|cash|upi|bhav|jama|amount|bikri|vasooli|total)/i
+
+function value(col: string, v: string | number | boolean | null) {
+  if (v === null || v === '') return '—'
+  if (typeof v === 'boolean') return v ? '✓' : ''
+  if (typeof v === 'number') return MONEY.test(col) ? (Number.isInteger(v) ? rupees(v * 100) : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : count(v)
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? date(v) : v
+}
+
+const label = (c: string) => c.replace(/_/g, ' ').replace(/^./, (x) => x.toUpperCase())
+
+export const AnswerTable = memo(function AnswerTable({ a, shopId }: { a: Answer; shopId: string }) {
+  if (!a.rows.length) return null
+  // One value: no table, just the figure.
+  if (a.rows.length === 1 && a.columns.length === 1) return <div className="vc"><Head label={label(a.columns[0])} value={value(a.columns[0], a.rows[0][a.columns[0]])} /></div>
+  return (
+    <div className="vc vc-scroll">
+      <table className="vc-table">
+        <thead><tr>{a.columns.map((c) => <th key={c} className={typeof a.rows[0][c] === 'number' ? 'num' : undefined}>{label(c)}</th>)}</tr></thead>
+        <tbody>
+          {a.rows.slice(0, 20).map((r, i) => {
+            const buyer = typeof r.grahak_id === 'string' ? r.grahak_id : null
+            return (
+              <tr key={i} className={buyer ? 'link' : undefined} onClick={buyer ? () => { location.hash = href({ page: 'grahak', shopId, buyerId: buyer }) } : undefined}>
+                {a.columns.map((c) => <td key={c} className={typeof r[c] === 'number' ? 'num' : undefined}>{value(c, r[c])}</td>)}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+})

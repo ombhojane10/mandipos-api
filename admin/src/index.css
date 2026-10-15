@@ -838,3 +838,10 @@ a.vc-row:hover { background: var(--accent-soft); }
 .vc-link { display: block; padding: 10px 14px; border-top: 1px solid var(--line); color: var(--accent); font-weight: 600; text-decoration: none; }
 .vc .due { color: var(--due); } .vc .jama { color: var(--jama); }
 .voice-note { background: var(--amber-soft); color: var(--amber); padding: 8px 10px; margin: 0; font-weight: 600; }
+.vc-scroll { overflow-x: auto; }
+.vc-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.vc-table th, .vc-table td { padding: 8px 12px; text-align: left; border-top: 1px solid var(--line); white-space: nowrap; }
+.vc-table th { color: var(--muted); font-weight: 600; border-top: 0; }
+.vc-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.vc-table tr.link { cursor: pointer; }
+.vc-table tr.link:hover td { background: var(--accent-soft); }

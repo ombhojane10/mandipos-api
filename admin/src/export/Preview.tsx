@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api, type ShopSettings } from '../api'
 import { t } from '../i18n'
-import { EXPORT_EVENT, dmyLong, exportBuilder, longDay, type ExportDoc, type ExportRow } from './doc'
+import { EXPORT_EVENT, dmyLong, exportBuilder, longDay, type AutoSave, type ExportDoc, type ExportRow } from './doc'
 import { todayIst } from '../format'
 import { csv, download, pdf, share } from './save'
 
@@ -27,9 +27,10 @@ const canShareFiles = () => {
  */
 export function ExportHost({ shopId, fallback }: { shopId: string | null; fallback: { name: string; mandi?: string; shopNo?: string } | null }) {
   const [doc, setDoc] = useState<ExportDoc | null>(null)
+  const [auto, setAuto] = useState<AutoSave | null>(null)
   const [firm, setFirm] = useState<Firm | null>(null)
   useEffect(() => {
-    const on = () => setDoc(exportBuilder()?.() ?? null)
+    const on = (e: Event) => { setAuto((e as CustomEvent<{ auto?: AutoSave } | null>).detail?.auto ?? null); setDoc(exportBuilder()?.() ?? null) }
     const off = () => setDoc(null)
     addEventListener(EXPORT_EVENT, on)
     addEventListener('hashchange', off)
@@ -47,7 +48,7 @@ export function ExportHost({ shopId, fallback }: { shopId: string | null; fallba
   }, [doc, shopId]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!doc) return null
   const head = doc.firm ? { name: doc.firm, place: '', address: '', banks: [] } : firm ?? { name: fallback?.name ?? 'MandiPlus', place: '', address: '', banks: [] }
-  return createPortal(<Preview doc={doc} firm={head} onClose={() => setDoc(null)} />, document.body)
+  return createPortal(<Preview doc={doc} firm={head} auto={auto} onClose={() => setDoc(null)} />, document.body)
 }
 
 /** Rows split into pages by their printed height; the last page keeps room for the total and signatures. */
@@ -65,7 +66,7 @@ function paginate(doc: ExportDoc, budget: number): ExportRow[][] {
   return pages
 }
 
-function Preview({ doc, firm, onClose }: { doc: ExportDoc; firm: Firm; onClose: () => void }) {
+function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; auto: AutoSave | null; onClose: () => void }) {
   const stack = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
   const [busy, setBusy] = useState('')
@@ -97,11 +98,12 @@ function Preview({ doc, firm, onClose }: { doc: ExportDoc; firm: Firm; onClose: 
   }, [firm, doc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const paperEls = () => [...(stack.current?.querySelectorAll<HTMLElement>('.paper') ?? [])]
-  const run = async (what: 'pdf' | 'excel') => {
+  const run = async (what: 'pdf' | 'excel', direct = false) => {
     setBusy(what); setNote('')
     try {
       if (what === 'excel') { download(csv(doc), `${doc.file}.csv`); setNote(t('Excel file save hui')); return }
       const blob = await pdf(paperEls())
+      if (direct) { download(blob, `${doc.file}.pdf`); setNote(t('PDF save hui')); return }
       const done = await share(blob, `${doc.file}.pdf`, [doc.title, doc.party?.description].filter(Boolean).join(' · '))
       if (done === 'saved') setNote(t('PDF save hui'))
     } catch (e) {
@@ -110,6 +112,12 @@ function Preview({ doc, firm, onClose }: { doc: ExportDoc; firm: Firm; onClose: 
       setBusy('')
     }
   }
+  // Bolo asked for the file: save it once the pages have their real size and the firm's head.
+  useEffect(() => {
+    if (!auto) return
+    const id = setTimeout(() => void run(auto, true), 700)
+    return () => clearTimeout(id)
+  }, [auto]) // eslint-disable-line react-hooks/exhaustive-deps
   const print = () => window.print()
   const cols = doc.columns
 

@@ -8,6 +8,9 @@ import { ReportsService } from '../admin/reports.service';
 import { BALANCES, n } from '../admin/sql';
 import { Db } from '../db/db.service';
 import { Reply, TurnBody, VoiceService } from './voice.service';
+import { ask } from './ask';
+import { GeminiClient } from './gemini.client';
+import { LIVE_BILLS } from '../admin/sql';
 
 /** What the portal sends: the recording and the moment; the books are read here, not sent. */
 export const PortalTurnBody = z.object({
@@ -27,6 +30,7 @@ type Books = { text: string; at: number; buyers: Map<string, Buyer>; trucks: Map
 
 const PANNI = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'];
 const KATTA = ['Green', 'Jaipur', 'White'];
+const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 /** "Ashu" ~ "Ashu Parchan"; enough to trust a ref the model also named. */
@@ -47,6 +51,7 @@ export class PortalVoiceService {
   constructor(
     private readonly db: Db, private readonly voice: VoiceService, private readonly accounts: AccountsService,
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
+    private readonly gemini: GeminiClient,
   ) {}
 
   /** Called when the mic opens: the books are ready by the time the person stops talking. */
@@ -58,11 +63,19 @@ export class PortalVoiceService {
   async turn(phone: string, shopId: string, body: z.infer<typeof PortalTurnBody>) {
     const [books, p] = await Promise.all([this.books(shopId), this.principal(phone, shopId)]);
     const input = TurnBody.parse({ ...body, context: books.text });
-    const { id, reply, ms } = await this.voice.turn(p, input);
+    const { id, reply, ms } = await this.voice.turn(p, input, true);
     const out: Record<string, unknown> = { id, reply, ms };
     if (reply.kind === 'slip' || reply.kind === 'collect' || reply.kind === 'expense') out.draft = this.draft(reply, books);
     if (reply.kind === 'show') out.cards = await this.cards(shopId, reply, books);
     if (reply.kind === 'open') out.open = { to: reply.open, buyerId: this.buyer(reply, books)?.id ?? null, truckId: this.truck(reply, books)?.id ?? null };
+    if (reply.kind === 'query') out.answer = await this.answer(shopId, reply, body.lang);
+    if (reply.kind === 'edit') Object.assign(out, await this.edit(p, shopId, reply, books, body.lang));
+    if (reply.kind === 'download') {
+      const d = (reply.download ?? {}) as { report?: string; format?: string; from?: string; to?: string };
+      const b = this.buyer(reply, books);
+      if (d.report === 'ledger' && !b) out.downloadMiss = `${reply.buyer_name ?? 'Grahak'} list mein nahi mila`;
+      else out.download = { report: d.report ?? 'daybook', format: d.format === 'excel' ? 'excel' : 'pdf', buyerId: b?.id ?? null, buyerName: b?.name ?? null, from: d.from ?? null, to: d.to ?? null };
+    }
     return out;
   }
 
@@ -117,9 +130,11 @@ export class PortalVoiceService {
     const name = String(r.buyer_name ?? '').trim();
     const byRef = books.buyers.get(ref);
     if (byRef && (!name || agrees(byRef.name, name))) return byRef;
-    if (!name || ref === 'new') return null;
-    return [...books.buyers.values()].find((b) => norm(b.name) === norm(name))
-      ?? [...books.buyers.values()].find((b) => agrees(b.name, name)) ?? null;
+    if (!name) return null;
+    // A name on the list is that grahak even when the model called it new; only a near match needs a real ref.
+    const exact = [...books.buyers.values()].find((b) => norm(b.name) === norm(name));
+    if (exact || ref === 'new') return exact ?? null;
+    return [...books.buyers.values()].find((b) => agrees(b.name, name)) ?? null;
   }
 
   private truck(r: Reply, books: Books): Truck | null {
@@ -216,7 +231,9 @@ export class PortalVoiceService {
           return { view: 'supplier', totalPaise: s.totals.duePaise, rows: s.rows.filter((x) => x.duePaise > 0).slice(0, 6).map((x) => ({ key: x.key, name: x.name, duePaise: x.duePaise })) };
         }
         case 'parchi': {
-          const d = await this.admin.daybook(shopId, from, to);
+          // One grahak's slips with no period named: their last two months, not one day.
+          const wide = vb && !date(v.from);
+          const d = await this.admin.daybook(shopId, wide ? addDays(books.day, -60) : from, to);
           const slips = d.entries.filter((e) => e.kind === 'slip' && !e.voided && (!vb || e.buyerId === vb.id));
           return { view: 'parchi', from, to, count: slips.length, rows: slips.slice(0, 8).map((e) => ({ id: e.id, title: e.title, party: e.party, nags: e.nags, amountPaise: e.amountPaise })) };
         }
@@ -225,4 +242,129 @@ export class PortalVoiceService {
     }));
     return out.filter(Boolean);
   }
+
+  // ---------------------------------------------------------------- a free question, read from the books
+
+  /**
+   * The model's SELECT over the voice tables (ask.ts), then a second, text-only call that says
+   * the result in one line — numbers only from the rows. A bad query comes back as a plain miss.
+   */
+  private async answer(shopId: string, r: Reply, lang: string) {
+    const q = (r.query ?? {}) as { sql?: string; title?: string };
+    const title = q.title || r.say;
+    let result;
+    try {
+      result = await ask(this.db, shopId, q.sql ?? '');
+    } catch (e) {
+      this.log(`query refused or failed: ${(e as Error).message} :: ${q.sql}`);
+      return { title, columns: [], rows: [], say: lang === 'english' ? "Couldn't find that in the books" : 'Ye hisab nahi nikal paaye, alag tarah se poochiye', speak: 'ये हिसाब नहीं निकल पाए, अलग तरह से पूछिए' };
+    }
+    const said = await this.compose(r.transcript, title, result.rows, lang).catch(() => null);
+    return { title, ...result, say: said?.say ?? title, speak: said?.speak ?? '' };
+  }
+
+  private async compose(question: string, title: string, rows: Record<string, unknown>[], lang: string) {
+    const r = await this.gemini.generate({
+      systemInstruction: { parts: [{ text: COMPOSE }] },
+      contents: [{ role: 'user', parts: [{ text: `Language for "say": ${lang}\nQuestion: ${question}\nTitle: ${title}\nRows (${rows.length}): ${JSON.stringify(rows.slice(0, 15))}` }] }],
+      generationConfig: {
+        temperature: 0, maxOutputTokens: 300, responseMimeType: 'application/json',
+        responseJsonSchema: { type: 'object', properties: { say: { type: 'string' }, speak: { type: 'string' } }, required: ['say', 'speak'] },
+        thinkingConfig: { thinkingLevel: 'MINIMAL' },
+      },
+    }, undefined, 8_000);
+    return JSON.parse(r.text) as { say: string; speak: string };
+  }
+
+  private log(msg: string) { console.warn(`[PortalVoice] ${msg}`); }
+
+  // ---------------------------------------------------------------- a change to a saved slip
+
+  /**
+   * Finds the slip (its number, the grahak's last, or the shop's last), lets the model correct it
+   * the way a correction is made on the slip screen (the whole slip back, changed), and returns it
+   * as the alter form takes it. Saving it there voids and rewrites, as Badlein does.
+   */
+  private async edit(p: Principal, shopId: string, r: Reply, books: Books, lang: z.infer<typeof PortalTurnBody>['lang']) {
+    const e = (r.edit ?? {}) as { slip_no?: number; change?: string };
+    const buyer = e.slip_no ? null : this.buyer(r, books);
+    // A grahak was named but is not on the list: never fall back to some other slip.
+    const named = String(r.buyer_name ?? '').trim();
+    if (!e.slip_no && named && !buyer) return { editMiss: `${named} ki parchi nahi mili` };
+    const found = (await this.db.withShop(shopId, (tx) => tx.query<{ id: string }>(
+      `SELECT b.id FROM ${LIVE_BILLS} b WHERE ($1::int IS NULL OR b.slip_no = $1) AND ($2::uuid IS NULL OR b.buyer_id = $2)
+       ORDER BY b.created_at DESC LIMIT 1`, [e.slip_no ?? null, buyer?.id ?? null]))).rows[0];
+    if (!found) return { editMiss: e.slip_no ? `Parchi #${e.slip_no} nahi mili` : 'Parchi nahi mili' };
+    const bill = await this.admin.bill(shopId, found.id);
+    const second = await this.voice.turn(p, TurnBody.parse({
+      text: e.change || r.transcript, draft: billText(bill, books), context: books.text, screen: 'parchi', lang,
+    }), true);
+    if (second.reply.kind !== 'slip') return { editMiss: second.reply.say || 'Badlav samajh nahi aaya' };
+    return { edit: this.patch(bill, second.reply, books) };
+  }
+
+  private patch(bill: Bill, r: Reply, books: Books) {
+    const s = (r.slip ?? {}) as { lines?: { grade?: string; qty?: number; rate?: number; amount?: number }[]; packing?: string; panni?: string; katta_name?: string; parchune?: boolean };
+    const pay = (r.pay ?? {}) as { mode?: string; cash?: number; upi?: number };
+    const leak = bill.lines.filter((l) => l.leak);
+    const spoken = (s.lines ?? []).filter((l) => (l.qty ?? 0) > 0).map((l) => ({
+      grade: l.grade === 'II' ? '2' : l.grade === 'III' ? '3' : '1', qty: Math.round(l.qty!),
+      ratePaise: paise(l.rate) || (l.amount ? Math.round(paise(l.amount) / l.qty!) : 0), leak: false,
+    }));
+    const lines = spoken.length ? [...spoken, ...leak] : bill.lines;
+    const total = lines.reduce((t, l) => t + l.qty * l.ratePaise, 0);
+    const b = this.buyer(r, books);
+    const named = String(r.buyer_name ?? '').trim();
+    const buyer = b ? { buyerId: b.id, buyerName: b.name } : named && r.buyer === 'new' ? { buyerId: null, buyerName: named } : { buyerId: bill.buyerId, buyerName: bill.buyerName };
+    // The payment as it was picked, unless they changed it; amounts follow the new total.
+    const was = bill.payMode === 'free' || bill.payMode === 'after' ? bill.payMode
+      : bill.paidPaise === 0 ? 'udhaar' : bill.cashPaise === bill.totalPaise ? 'cash' : bill.upiPaise === bill.totalPaise ? 'upi' : 'mixed';
+    const mode = pay.mode ?? was;
+    const money = mode === 'cash' ? { payMode: 'cash', cashPaise: total, upiPaise: 0 }
+      : mode === 'upi' ? { payMode: 'upi', cashPaise: 0, upiPaise: total }
+      : mode === 'free' || mode === 'after' ? { payMode: mode, cashPaise: 0, upiPaise: 0 }
+      : mode === 'mixed' ? (() => {
+          const cash = pay.cash !== undefined ? paise(pay.cash) : bill.cashPaise, upi = pay.upi !== undefined ? paise(pay.upi) : Math.max(0, total - cash);
+          return { payMode: 'mixed', cashPaise: Math.min(cash, total), upiPaise: Math.min(upi, Math.max(0, total - cash)) };
+        })()
+      : { payMode: 'credit', cashPaise: 0, upiPaise: 0 };
+    let packing = bill.packing, panniName = bill.panniName;
+    if (s.packing) {
+      packing = s.packing;
+      panniName = s.packing === 'panni' ? (PANNI.find((k) => agrees(k, s.panni ?? '')) ?? '') : s.packing.startsWith('katta') ? (KATTA.find((k) => agrees(k, s.katta_name ?? '')) ?? '') : '';
+      if (s.parchune && !s.packing.startsWith('katta')) panniName = panniName ? `${panniName} + Parchune` : 'Parchune';
+    }
+    const t = this.truck(r, books);
+    return {
+      ...bill, ...buyer, ...money, lines, totalPaise: total, paidPaise: money.cashPaise + money.upiPaise, packing, panniName,
+      ...(t ? { truckId: t.id, truck: t.number } : {}),
+    };
+  }
 }
+
+type Bill = Awaited<ReturnType<AdminService['bill']>>;
+
+/** A saved slip in the words the slip screen sends the model for a correction. */
+function billText(b: Bill, books: Books): string {
+  const ref = [...books.buyers.entries()].find(([, x]) => x.id === b.buyerId)?.[0];
+  const roman = (g: string) => (g === '2' ? 'II' : g === '3' ? 'III' : g === 'mix' ? 'mix' : 'I');
+  const pay = b.payMode === 'free' ? 'free' : b.payMode === 'after' ? 'after payment' : b.paidPaise === 0 ? 'udhaar'
+    : b.cashPaise === b.totalPaise ? 'cash' : b.upiPaise === b.totalPaise ? 'upi' : `mixed cash ${b.cashPaise / 100} upi ${b.upiPaise / 100}`;
+  return [
+    `Parchi #${b.slipNo ?? ''}`,
+    `Grahak: ${b.buyerName}${ref ? ` (${ref})` : ''}`,
+    b.truck ? `Gaadi: ${b.truck}` : '',
+    ...b.lines.filter((l) => !l.leak).map((l) => `Line: ${roman(l.grade)} ${l.qty} dana @ ${l.ratePaise / 100}`),
+    ...b.lines.filter((l) => l.leak).map((l) => `Leak: ${l.qty} dana for total ${(l.qty * l.ratePaise) / 100}`),
+    `Packing: ${b.packing}${b.panniName ? ` ${b.panniName}` : ''}`,
+    b.delivery ? 'Delivery: yes' : '',
+    b.labourPaise > 0 ? 'Mazdoori: yes' : '',
+    `Pay: ${pay}`,
+  ].filter(Boolean).join('\n');
+}
+
+const COMPOSE = `You are Bolo, the voice assistant in a mandi shop's billing website. You get a trader's question and the rows the shop's books returned for it. Answer in one or two short sentences.
+- "say": in the requested language (hinglish = Hindi words in Latin script; hindi = Devanagari; english = simple English). The direct answer first, with the exact names and numbers from the rows. Rupees as ₹ with Indian grouping (₹1,25,000), no paise unless they are not zero. Dates as "15 Oct".
+- "speak": the same answer in Hindi, Devanagari script, for a Hindi voice to read: numbers as digits with Indian grouping followed by "रुपये" for money; names as they are.
+- Several rows: name at most the top three and say how many there are in all. No rows: say nothing matched.
+- Never state a number, name or date that is not in the rows. No advice, no greetings.`;

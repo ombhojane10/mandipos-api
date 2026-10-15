@@ -1,3 +1,5 @@
+import { ASK_TABLES } from './ask';
+
 /**
  * What the voice model is told, kept apart from the plumbing so it can be read and changed on
  * its own. The system instruction never changes between calls, so Vertex caches it as a prefix;
@@ -119,7 +121,7 @@ const oneOf = (...values: string[]) => ({ type: 'string', enum: values });
  * decide each one out loud gets them right, and the nulls are stripped server-side. The lite
  * fallback models take 20 s+ to decode that, though, so they get the loose form.
  */
-function schema(strict: boolean) {
+function schema(strict: boolean, portal = false) {
   const obj = (properties: Record<string, object>) => strict
     ? {
         type: 'object',
@@ -152,16 +154,53 @@ function schema(strict: boolean) {
     expense: obj({ direction: oneOf('in', 'out'), amount: num, what: str }),
     views: { type: 'array', items: view },
     open: oneOf('home', 'gaadiyan', 'grahak', 'hisab', 'aaya_gaya', 'vasooli', 'mazdoori', 'supplier', 'settings', 'nayi_gaadi', 'nayi_parchi', 'grahak_khata', 'gaadi_hisab'),
+    // The website's extra intents: a read over the voice tables, a change to a saved slip, a file.
+    ...(portal ? {
+      query: obj({ sql: str, title: str }),
+      edit: obj({ slip_no: int, change: str }),
+      download: obj({
+        report: oneOf('ledger', 'daybook', 'outstanding', 'cashbook', 'stock', 'register', 'suppliers', 'vasooli', 'gaadis', 'munafa', 'items'),
+        format: oneOf('pdf', 'excel'), from: str, to: str,
+      }),
+    } : {}),
   });
   return {
     type: 'object',
-    properties: { transcript: str, kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear'), say: str, ...rest.properties },
+    properties: {
+      transcript: str,
+      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download'] : [])),
+      say: str, ...rest.properties,
+    },
     required: ['transcript', 'kind', 'say', ...(strict ? Object.keys(rest.properties) : [])],
   };
 }
 
 export const RESPONSE_SCHEMA = schema(true);
 export const FALLBACK_SCHEMA = schema(false);
+export const PORTAL_SCHEMA = schema(true, true);
+export const PORTAL_FALLBACK_SCHEMA = schema(false, true);
+
+/**
+ * On the website the same assistant can also read the books freely, change a saved slip and
+ * hand over a report as a file. Kept out of the terminal's prompt: the app has no use for them.
+ */
+export const PORTAL_GUIDE = `
+## On the website: three more kinds
+- "query": any question about the books that a view does not answer EXACTLY. Views are only for: one named grahak's udhaar (udhaar), the biggest udhaar list (udhaar_list), one day's or range's totals (bikri, vasooli, galla, mazdoori), stock, supplier dues, the shop's slips of one day. One grahak's parchiyan or vasooli ("Wasim ki parchiyan dikhao") is a query on parchi / vasooli for that grahak, newest first (ORDER BY din DESC, samay DESC LIMIT 10) — not the parchi view. Everything else is a query: rankings either way ("sabse kam udhaar kiska" = ORDER BY udhaar ASC among udhaar > 0, NOT udhaar_list), filters ("10000 se zyada udhaar", "30 din se vasooli nahi"), counts ("kitne grahak"), comparisons ("kal se zyada becha?"), averages ("aaj ka average bhav"), one grahak's slips or payments in a period, best-selling gaadi or maal, who bought most, cash vs udhaar split by grahak, a slip or raseed by number.
+  Write ONE PostgreSQL SELECT in query.sql using ONLY these tables:
+${ASK_TABLES}
+  Rules: SELECT only. Name the output columns in plain Hinglish (naam, udhaar, din, rakam, dana...). Rankings: ORDER BY and LIMIT 10 (LIMIT 1 when they asked for "sabse"). For a grahak named in speech use their exact naam from the shop data (WHERE naam = '...'), or ILIKE '%part%' when unsure. Dates: the working day for "aaj", the day before it for "kal"; din BETWEEN 'from' AND 'to' for a range. Never compute what a column already holds (udhaar is the balance). Average bhav = SUM(rakam) / SUM(dana) over parchi_line (weighted), never AVG(bhav). Round money to whole rupees, rates to 2 decimals. query.title: 2–5 words naming the answer ("Sabse kam udhaar").
+- "edit": change a slip that is already saved. edit.slip_no when they said the parchi number; otherwise buyer (ref) for that grahak's last slip; neither = the shop's last slip. edit.change = the change in their words ("rate 22 karo", "udhaar mein daalo", "50 dana aur jodo", "grahak Suresh karo").
+- "download": a report as a file. download.report: ledger (one grahak's khata — needs buyer) | daybook | outstanding (udhaar list) | cashbook | stock | register (bikri register) | suppliers | vasooli | gaadis | munafa | items; format pdf unless they said excel/sheet; from/to for a named period (else leave empty).
+
+Examples:
+Heard: "sabse kam udhaar kiska hai" → {"transcript":"sabse kam udhaar kiska hai","kind":"query","say":"Sabse kam udhaar","query":{"sql":"SELECT naam, udhaar FROM grahak WHERE udhaar > 0 ORDER BY udhaar ASC LIMIT 1","title":"Sabse kam udhaar"}}
+Heard: "kin grahakon ne 30 din se paisa nahi diya" (working day 2026-10-15) → {"transcript":"kin grahakon ne 30 din se paisa nahi diya","kind":"query","say":"30 din se vasooli nahi","query":{"sql":"SELECT naam, udhaar, aakhri_vasooli FROM grahak WHERE udhaar > 0 AND (aakhri_vasooli IS NULL OR aakhri_vasooli < '2026-09-15') ORDER BY udhaar DESC LIMIT 10","title":"30 din se vasooli nahi"}}
+Heard: "is hafte sabse zyada kisne kharida" (working day 2026-10-15) → {"transcript":"is hafte sabse zyada kisne kharida","kind":"query","say":"Is hafte sabse bada grahak","query":{"sql":"SELECT grahak AS naam, SUM(rakam) AS kharid, SUM(dana) AS dana FROM parchi WHERE din BETWEEN '2026-10-09' AND '2026-10-15' AND grahak_id IS NOT NULL GROUP BY grahak ORDER BY kharid DESC LIMIT 1","title":"Is hafte sabse bada grahak"}}
+Heard: "parchi 761 mein rate 22 kar do" → {"transcript":"parchi 761 mein rate 22 kar do","kind":"edit","say":"Parchi 761: rate ₹22","edit":{"slip_no":761,"change":"rate 22 kar do"}}
+Heard: "Ashu ki aakhri parchi udhaar mein daal do" → {"transcript":"Ashu ki aakhri parchi udhaar mein daal do","kind":"edit","say":"Ashu ki parchi udhaar mein","buyer":"b9017","buyer_name":"Ashu Parchan","edit":{"change":"udhaar mein daal do"}}
+Heard: "Jagriti Agro ka ledger download karo" → {"transcript":"Jagriti Agro ka ledger download karo","kind":"download","say":"Jagriti Agro ka ledger","buyer":"b9005","buyer_name":"Jagriti Agro","download":{"report":"ledger","format":"pdf"}}
+`.trim();
 
 const LANG_NOTE: Record<string, string> = {
   hinglish: 'Reply ("say") in Hinglish, Latin script.',
