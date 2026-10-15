@@ -18,5 +18,8 @@
   {"id": "leak", "voice": "Lekha", "speak": "राकेश को पंद्रह फूटे नारियल, तीन सौ रुपये में", "expect": {"kind": "slip", "buyer": "b5", "slip": {"leak": {"qty": 15, "amount": 300}}, "pay": null}},
   {"id": "noise", "noise": true, "expect": {"kind": "unclear"}},
   {"id": "top-dues", "voice": "Lekha", "speak": "सबसे ज़्यादा उधार किसका है", "expect": {"kind": "show", "views": [{"view": "udhaar_list"}]}},
-  {"id": "collect-upi", "voice": "Rishi", "speak": "Rakesh se ten thousand PhonePe pe aaye", "expect": {"kind": "collect", "buyer": "b5", "pay": {"upi": 10000}}}
+  {"id": "collect-upi", "voice": "Rishi", "speak": "Rakesh se ten thousand PhonePe pe aaye", "expect": {"kind": "collect", "buyer": "b5", "pay": {"upi": 10000}}},
+  {"id": "vasooli-today", "voice": "Lekha", "speak": "आज कितनी वसूली हुई", "expect": {"kind": "show", "views": [{"view": "vasooli"}]}},
+  {"id": "collection-amount", "voice": "Rishi", "speak": "Aaj collection kitna aaya", "expect": {"kind": "show", "views": [{"view": "vasooli"}]}},
+  {"id": "collection-baaki", "voice": "Lekha", "speak": "कलेक्शन कितना बाकी है", "expect": {"kind": "show", "views": [{"view": "udhaar_list"}]}}
 ]

@@ -49,7 +49,9 @@ Refer to gaadis, lots and grahaks by their ref from THIS shop's data (g903, l902
 - "show": a question about the books. Put the views to show in "views"; the app computes the numbers. Views:
   - udhaar: one grahak's balance and recent slips (needs buyer). "Ramesh ka kitna baaki hai", "Ashu ka hisab".
   - udhaar_list: who owes the most. "Sabse zyada udhaar kiska", "kis kis ka baaki hai".
-  - bikri: sales totals for a day or range (from/to as YYYY-MM-DD; default today). "Aaj kitna becha", "kal ki bikri", "is hafte".
+  - bikri: sales totals for a day or range (from/to as YYYY-MM-DD; leave empty for the working day). "Aaj kitna becha", "kal ki bikri", "is hafte".
+  - vasooli: money collected from grahaks for a day or range (from/to as for bikri). "Aaj kitni vasooli hui", "collection kitna aaya", "kitna paisa aaya", "kal ki collection".
+    But "collection kitna baaki hai" / "kitna lena hai" is what is still owed = udhaar_list.
   - stock: what is left on the gaadis (gaadi optional). "Kitna maal bacha", "3033 mein kitna hai".
   - gaadi: one gaadi's hisab/register (needs gaadi).
   - galla: cash in the galla today, money in and out.
@@ -79,6 +81,7 @@ Heard: "Rakesh ko 12 phoote nariyal dhai sau mein" → {"transcript":"Rakesh ko 
 Heard: "Ramesh ne paanch hazaar diye, do hazaar cash baaki online" → {"transcript":"Ramesh ne 5000 diye, 2000 cash baaki online","kind":"collect","say":"Ramesh se ₹5000: ₹2000 cash, ₹3000 online","buyer":"b9009","buyer_name":"Ramesh Kumar","pay":{"cash":2000,"upi":3000}}
 Heard: "chai ke sau rupaye gaye" → {"transcript":"chai ke 100 rupaye gaye","kind":"expense","say":"Kharcha: Chai ₹100","expense":{"direction":"out","amount":100,"what":"Chai"}}
 Heard: "Ramesh ka kitna baaki hai" → {"transcript":"Ramesh ka kitna baaki hai","kind":"show","say":"Ramesh ka hisab","buyer":"b9009","buyer_name":"Ramesh Kumar","views":[{"view":"udhaar","buyer":"b9009","buyer_name":"Ramesh Kumar"}]}
+Heard: "aaj kitni collection hui" → {"transcript":"aaj kitni collection hui","kind":"show","say":"Aaj ki vasooli","views":[{"view":"vasooli"}]}
 Heard: "aaj kitna becha aur galla mein kitna hai" → {"transcript":"aaj kitna becha aur galla mein kitna hai","kind":"show","say":"Aaj ka hisab","views":[{"view":"bikri"},{"view":"galla"}]}
 Heard (DRAFT: Ashu b9017, gaadi g902, I 100 @ 20, panni, pay cash): "rate bais karo aur udhaar" → {"transcript":"rate 22 karo aur udhaar","kind":"slip","say":"Rate ₹22, udhaar","buyer":"b9017","buyer_name":"Ashu Parchan","gaadi":"g902","gaadi_no":"HR38Z9827","slip":{"lines":[{"grade":"I","qty":100,"rate":22}],"packing":"panni"},"pay":{"mode":"udhaar"}}
 Heard: "naya grahak Pappu Yadav ko 40 dana 25 ka" (no Pappu in list) → {"transcript":"naya grahak Pappu Yadav ko 40 dana 25 ka","kind":"slip","say":"Naya grahak Pappu Yadav, 40 dana, ₹25","buyer":"new","buyer_name":"Pappu Yadav","slip":{"lines":[{"grade":"I","qty":40,"rate":25}]}}
@@ -126,7 +129,7 @@ function schema(strict: boolean) {
     : { type: 'object', properties };
   const line = obj({ grade: oneOf('I', 'II', 'III'), qty: int, rate: num, amount: num, lot: str });
   const view = obj({
-    view: oneOf('udhaar', 'udhaar_list', 'bikri', 'stock', 'gaadi', 'galla', 'mazdoori', 'supplier', 'parchi'),
+    view: oneOf('udhaar', 'udhaar_list', 'bikri', 'vasooli', 'stock', 'gaadi', 'galla', 'mazdoori', 'supplier', 'parchi'),
     buyer: str, gaadi: str, from: str, to: str,
   });
   const rest = obj({
