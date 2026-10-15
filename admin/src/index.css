@@ -354,3 +354,25 @@ a.kpi:hover { border-color: #cfd3da; }
   .quick button small { display: none; }
   .toast { bottom: calc(var(--tabs) + 16px); }
 }
+
+/* ================================================================ Tally keys */
+/* The hotkey letter, underlined inside the menu's own word — only where there is a keyboard. */
+@media (hover: hover) and (pointer: fine) {
+  .hk { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; text-decoration-color: var(--accent); }
+}
+/* Tally's highlight bar: the selected line stands out clearly. */
+.tbl tbody tr[data-row]:focus-visible, .tbl tbody tr[data-row]:focus { background: #dcefe3; outline: none; }
+.tbl tbody tr[data-row]:focus > td:first-child, .tbl tbody tr[data-row]:focus-visible > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.help { max-width: 860px; }
+.help-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding: 6px 20px 22px; }
+.help-row { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; font-size: 13.5px; }
+.help-row kbd { min-width: 28px; text-align: center; flex: none; font-size: 11.5px; }
+.keys-btn { font-size: 18px; color: var(--muted); }
+.voucher-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 16px; }
+.voucher-meta > div { display: grid; gap: 2px; min-width: 0; }
+.voucher-pay { display: grid; gap: 6px; padding: 12px 14px; background: var(--page); border-radius: var(--radius-sm); }
+.voucher-pay > div { display: flex; justify-content: space-between; gap: 12px; }
+@media (max-width: 899px) {
+  .help-grid { grid-template-columns: minmax(0, 1fr); }
+  .voucher-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

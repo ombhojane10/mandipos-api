@@ -5,6 +5,7 @@ import { count, dayHeader, rupees, time } from '../format'
 import { periodLabel } from '../period'
 import { hashQuery, href, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
+import { openVoucher } from '../keys'
 import { PeriodBar, Skeleton } from '../ui'
 
 const FILTERS = [
@@ -78,11 +79,13 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
             const header = multiDay && e.date !== lastDay ? <tr className="day"><td colSpan={compact ? 6 : 7}>{dayHeader(e.date)}</td></tr> : null
             lastDay = e.date
             const v = describe(e)
-            const go = e.buyerId ? () => { location.hash = href({ page: 'grahak', shopId, buyerId: e.buyerId! }) } : undefined
+            // Enter opens what the line is: a parchi as its voucher, a vasooli as the grahak's khata.
+            const go = e.kind === 'slip' ? () => openVoucher(shopId, e.id)
+              : e.buyerId ? () => { location.hash = href({ page: 'grahak', shopId, buyerId: e.buyerId! }) } : undefined
             return (
               <Rows key={`${e.kind}-${e.id}`}>
                 {header}
-                <tr data-row={go ? '' : undefined} tabIndex={go ? 0 : undefined} className={e.voided ? 'void' : undefined}
+                <tr data-row tabIndex={0} className={e.voided ? 'void' : undefined}
                   onClick={go} onKeyDown={(ev) => { if (go && ev.key === 'Enter') go() }}>
                   <td className="opt-col muted money">{time(e.at)}</td>
                   <td className="opt-col"><span className={`chip ${v.tone}`}>{v.type}</span></td>

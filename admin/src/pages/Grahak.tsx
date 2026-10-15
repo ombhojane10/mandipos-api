@@ -72,7 +72,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         {b.creditLimitPaise > 0 && <div><span className="lb">Limit</span><span className="v">{rupees(b.creditLimitPaise)}</span></div>}
         {me?.admin && mobile && <div><span className="lb">Poora market</span><a className="v call" href={href({ page: 'person', key: b.phone })}>Dekhein ›</a></div>}
       </div>
-      <Ledger closingPaise={t.balancePaise} rows={history} />
+      <Ledger closingPaise={t.balancePaise} rows={history} shopId={shopId} />
     </div>
   )
 }

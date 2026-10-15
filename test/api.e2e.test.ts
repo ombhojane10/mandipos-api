@@ -670,6 +670,11 @@ describe('shop approval and the admin portal', () => {
     const bill = pulled.find((c: any) => c.table === 'bills' && c.row.id === slip.billId).row;
     expect(bill).toMatchObject({ buyer_id: raju, total_paise: 25000, paid_paise: 12500, cash_paise: 12500, pay_mode: 'cash', labour_paise: 300, packs: 10, packing: 'katta10', staff_name: 'Website', slip_no: 2 });
     expect(bill.device_id).not.toBe(shop.me.device.id);
+    // Opened like a Tally voucher: its maal, its money, the machine that made it.
+    const voucher = (await http().get(`${base}/bills/${slip.billId}`).set(web).expect(200)).body;
+    expect(voucher).toMatchObject({ slipNo: 2, buyerName: 'Raju Fruits', totalPaise: 25000, cashPaise: 12500, openPaise: 12500, packing: 'katta10', truck: 'TN09', voided: null });
+    expect(voucher.machine).toMatch(/Website$/);
+    expect(voucher.lines).toEqual([{ brand: 'Pollachi', grade: '1', qty: 10, ratePaise: 2500, leak: false }]);
     expect(pulled.filter((c: any) => c.table === 'bill_lines' && c.row.bill_id === slip.billId).map((c: any) => [c.row.qty, c.row.brand_id])).toEqual([[10, brandId]]);
 
     const vas = (await http().post(`${base}/entries/vasooli`).set(web).send({ buyerId: raju, cashPaise: 0, upiPaise: 5000 }).expect(201)).body;

@@ -63,7 +63,7 @@ function Request({ shop, onDone }: { shop: Shop; onDone: () => void }) {
       {rejecting && (
         <div className="scrim" onClick={() => !busy && setRejecting(false)}>
           <div className="dialog" role="alertdialog" aria-labelledby={`r-${shop.id}`} onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => { if (e.key === 'Escape') setRejecting(false) }}>
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setRejecting(false) } }}>
             <h3 id={`r-${shop.id}`}>{shop.name} reject karein?</h3>
             <p className="muted">Dukaan wale ko app mein yeh wajah dikhegi.</p>
             <input className="field" placeholder="Wajah (optional)" value={reason} maxLength={200} autoFocus onChange={(e) => setReason(e.target.value)} />

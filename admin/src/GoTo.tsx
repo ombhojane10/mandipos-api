@@ -57,7 +57,7 @@ export function GoTo({ shopId, onClose }: { shopId: string | null; onClose: () =
           role="combobox" aria-expanded aria-controls="goto-results" aria-activedescendant={options[current] ? `goto-${current}` : undefined}
           onChange={(e) => { setQ(e.target.value); setSel(0) }}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') { e.preventDefault(); onClose() }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
             else if (e.key === 'ArrowDown') { e.preventDefault(); setSel(Math.min(options.length - 1, current + 1)) }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setSel(Math.max(0, current - 1)) }
             else if (e.key === 'Enter') { e.preventDefault(); go(options[current]) }

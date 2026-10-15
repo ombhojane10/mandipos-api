@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { EntryForm } from './Entries'
 import { ENTRY_TYPES, OPEN_ENTRY, type EntryKind } from './kinds'
+import { ENTRY_KEYS, letterOf } from '../keys'
+import { Hot } from '../Hot'
 
 /** The menu of entries, the open form, and the "saved" note after it. */
 export function NewEntry({ shopId }: { shopId: string }) {
@@ -18,13 +20,18 @@ export function NewEntry({ shopId }: { shopId: string }) {
   return (
     <>
       {menu && (
-        <div className="scrim sheet-scrim" onClick={() => setMenu(false)} onKeyDown={(e) => { if (e.key === 'Escape') setMenu(false) }}>
+        <div className="scrim sheet-scrim" onClick={() => setMenu(false)} onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); setMenu(false); return }
+          // One letter picks the entry, as in Tally's Create menu.
+          const k = ENTRY_KEYS[e.key.toLowerCase()]
+          if (k && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setKind(k); setMenu(false) }
+        }}>
           <div className="sheet entry-menu" role="dialog" aria-label="Nayi entry" onClick={(e) => e.stopPropagation()}>
             <div className="sheet-hd"><h3>Nayi entry</h3><button type="button" className="icon-btn" aria-label="Band karein" onClick={() => setMenu(false)}>✕</button></div>
             <div className="entry-grid">
               {ENTRY_TYPES.map((t, i) => (
                 <button key={t.kind} type="button" autoFocus={i === 0} onClick={() => { setKind(t.kind); setMenu(false) }}>
-                  <b>{t.label}</b><small>{t.sub}</small>
+                  <b><Hot label={t.label} k={letterOf(ENTRY_KEYS, t.kind)} /></b><small>{t.sub}</small>
                 </button>
               ))}
             </div>

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { PERIOD_EVENT, openVoucher } from './keys'
 import { addDays, count, dayHeader, rate, rupees, shortDate, spanDays, todayIst } from './format'
 import { PRESETS, periodLabel, type Period } from './period'
 import type { Buckets } from './api'
@@ -69,9 +70,22 @@ export function Skeleton({ rows = 6 }: { rows?: number }) {
 
 /** ‹ period › with presets: arrows step by the period's own length, the label opens a date picker. F2 lands here. */
 export function PeriodBar({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+  const [asking, setAsking] = useState(false)
   const len = spanDays(value.from, value.to)
   const today = todayIst()
-  const step = (dir: number) => onChange({ key: 'custom', from: addDays(value.from, dir * len), to: addDays(value.to, dir * len) })
+  const step = (dir: number) => {
+    if (dir > 0 && value.to >= today) return
+    onChange({ key: 'custom', from: addDays(value.from, dir * len), to: addDays(value.to, dir * len) })
+  }
+  // ← → step, F2 asks for From and To (Tally's Change Period).
+  useEffect(() => {
+    const on = (e: Event) => {
+      const what = (e as CustomEvent<'open' | 'prev' | 'next'>).detail
+      if (what === 'open') setAsking(true); else step(what === 'prev' ? -1 : 1)
+    }
+    addEventListener(PERIOD_EVENT, on)
+    return () => removeEventListener(PERIOD_EVENT, on)
+  })
   return (
     <>
       <div className="seg period" role="group" aria-label="Period">
@@ -88,7 +102,32 @@ export function PeriodBar({ value, onChange }: { value: Period; onChange: (p: Pe
         </label>
         <button aria-label="Agla" disabled={value.to >= today} onClick={() => step(1)}>›</button>
       </div>
+      {asking && <PeriodAsk value={value} onClose={() => setAsking(false)} onChange={(p) => { onChange(p); setAsking(false) }} />}
     </>
+  )
+}
+
+/** From–To, as Tally's F2 asks it. Enter applies, Esc leaves it as it was. */
+function PeriodAsk({ value, onChange, onClose }: { value: Period; onChange: (p: Period) => void; onClose: () => void }) {
+  const [from, setFrom] = useState(value.from)
+  const [to, setTo] = useState(value.to)
+  const today = todayIst()
+  return (
+    <div className="scrim" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-label="Period badlein" onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}
+        onSubmit={(e) => { e.preventDefault(); if (from && to) onChange({ key: 'custom', from: from <= to ? from : to, to: from <= to ? to : from }) }}>
+        <h3>Period badlein</h3>
+        <div className="row2">
+          <label className="fld"><span className="fld-lb">Se</span><input className="field" type="date" autoFocus max={today} value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+          <label className="fld"><span className="fld-lb">Tak</span><input className="field" type="date" max={today} value={to} onChange={(e) => setTo(e.target.value)} /></label>
+        </div>
+        <div className="actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Rehne dein</button>
+          <button type="submit" className="btn primary">Dikhayein</button>
+        </div>
+      </form>
+    </div>
   )
 }
 function presetOf(key: string): Period {
@@ -102,6 +141,8 @@ export type LedgerRow = {
   id: string; at: string; date: string; title: string; detail: string; shop?: string; nags: number
   debitPaise: number; creditPaise: number; balancePaise: number; void?: boolean
   lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
+  /** A parchi's row opens its voucher on Enter; [shopId] when the khata spans shops. */
+  kind?: string; shopId?: string
 }
 
 const WORDS = {
@@ -114,7 +155,7 @@ const WORDS = {
  * closing balance on top. On a phone each entry folds into one row: what happened on the left,
  * the amount and running balance on the right. A parchi opens to show its maal.
  */
-export function Ledger({ rows, withShop, closingPaise, who = 'grahak' }: { rows: LedgerRow[]; withShop?: boolean; closingPaise: number; who?: 'grahak' | 'supplier' }) {
+export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId }: { rows: LedgerRow[]; withShop?: boolean; closingPaise: number; who?: 'grahak' | 'supplier'; shopId?: string }) {
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [all, setAll] = useState(false)
   const w = WORDS[who]
@@ -154,7 +195,12 @@ export function Ledger({ rows, withShop, closingPaise, who = 'grahak' }: { rows:
                 <FragmentRows key={`${r.shop ?? ''}-${r.id}`}>
                   {header}
                   <tr data-row tabIndex={0} className={r.void ? 'void' : undefined} onClick={toggle}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}>
+                    onDoubleClick={() => { const sid = r.shopId ?? shopId; if (r.kind === 'slip' && sid) openVoucher(sid, r.id) }}
+                    onKeyDown={(e) => {
+                      const sid = r.shopId ?? shopId
+                      if (e.key === 'Enter' && r.kind === 'slip' && sid) { e.preventDefault(); openVoucher(sid, r.id) }
+                      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
+                    }}>
                     <td className="opt-col muted">{shortDate(r.date)}</td>
                     <td className="main-col">
                       <span className="name b">{r.title}</span>

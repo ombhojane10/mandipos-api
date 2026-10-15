@@ -194,6 +194,12 @@ export class AdminController {
     return this.admin.daybook(mine(v, id), r.from, r.to);
   }
 
+  /** One parchi in full, as Tally opens a voucher. */
+  @Get('shops/:id/bills/:billId')
+  bill(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string) {
+    return this.admin.bill(mine(v, id), parse(Id, billId));
+  }
+
   @Get('shops/:id/buyers')
   async buyers(@See() v: Viewer, @Param('id') id: string, @Query('q') q?: string) {
     return { buyers: await this.admin.buyers(mine(v, id), (q ?? '').trim().slice(0, 60)) };
