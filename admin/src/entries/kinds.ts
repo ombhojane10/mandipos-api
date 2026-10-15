@@ -31,3 +31,22 @@ export type Editing = { kind: 'parchi'; bill: EditBill } | { kind: 'vasooli'; ra
 /** Alter (A on a voucher): the entry's own form, filled in as it stands. */
 export const EDIT_ENTRY = 'mandipos:edit-entry'
 export const editEntry = (e: Editing) => dispatchEvent(new CustomEvent(EDIT_ENTRY, { detail: e }))
+
+/** A buyer as the voice found it: on the list (id), or a new name to open a khata for (id null). */
+type VoiceBuyer = { id: string | null; name: string; balancePaise?: number } | null
+
+/**
+ * What Bolo heard, resolved on the server against the shop's books: the entry form opens on it
+ * and the counter checks it and saves. [notes]: what to look at (a name not on the list).
+ */
+export type VoiceDraft =
+  | {
+      kind: 'parchi'; buyer: VoiceBuyer; truckId: string | null
+      lines: { grade: '1' | '2' | '3' | 'mix'; qty: number; ratePaise: number }[]
+      pay: 'cash' | 'upi' | 'credit' | 'split' | 'after' | 'free' | null; cashPaise: number; upiPaise: number
+      packing: 'loose' | 'katta' | 'panni' | null; size: 'katta10' | 'katta15' | 'katta20' | 'katta25' | null
+      kattaName: string; kattas: number | null; panni: string; parchune: boolean; delivery: boolean; labour: boolean
+      notes: string[]
+    }
+  | { kind: 'vasooli'; buyer: VoiceBuyer; cashPaise: number; upiPaise: number; notes: string[] }
+  | { kind: 'kharcha'; dir: 'in' | 'out'; amountPaise: number; note: string; notes: string[] }

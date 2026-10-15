@@ -14,6 +14,7 @@ import { ReportsService, type Pot } from './reports.service';
 import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
 import { InsightsService } from './insights.service';
+import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 
 /** Portal tokens are signed with the app's secret but for their own audience, so neither works as the other. */
 const AUDIENCE = 'mandipos-admin';
@@ -157,8 +158,24 @@ export class AdminAuthController {
 export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
-    private readonly settings: SettingsService, private readonly insights: InsightsService,
+    private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService,
   ) {}
+
+  // ---------------------------------------------------------------- Bolo (voice), as on the terminal
+
+  /** The mic opened: read the shop's books now, so the turn does not wait on them. */
+  @Post('shops/:id/voice/warm')
+  @HttpCode(200)
+  voiceWarm(@See() v: Viewer, @Param('id') id: string) {
+    return this.voice.warm(v.phone, mine(v, id));
+  }
+
+  /** One recording in; a draft for the entry form, or the answer's figures, out. Nothing is saved. */
+  @Post('shops/:id/voice')
+  @HttpCode(200)
+  voiceTurn(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.voice.turn(v.phone, mine(v, id), parse(PortalTurnBody, body));
+  }
 
   /** Who is signed in, and which shops they may open. */
   @Get('me')

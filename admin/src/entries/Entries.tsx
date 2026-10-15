@@ -4,7 +4,7 @@ import { rupees, count } from '../format'
 import { t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
-import type { EditBill, EditRaseed, EntryKind, Editing } from './kinds'
+import type { EditBill, EditRaseed, EntryKind, Editing, VoiceDraft } from './kinds'
 
 type Options = {
   commodity: string
@@ -39,12 +39,14 @@ function useOptions(shopId: string) {
   return o
 }
 
-export function EntryForm({ kind, shopId, editing, onClose, onSaved }: { kind: EntryKind; shopId: string; editing?: Editing | null; onClose: () => void; onSaved: (msg: string) => void }) {
+export function EntryForm({ kind, shopId, editing, draft, onClose, onSaved }: {
+  kind: EntryKind; shopId: string; editing?: Editing | null; draft?: VoiceDraft | null; onClose: () => void; onSaved: (msg: string) => void
+}) {
   const done = (m: string) => { onSaved(m); onClose() }
   switch (kind) {
-    case 'parchi': return <ParchiForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'parchi' ? editing.bill : undefined} />
-    case 'vasooli': return <VasooliForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'vasooli' ? editing.raseed : undefined} />
-    case 'kharcha': return <KharchaForm shopId={shopId} onClose={onClose} onDone={done} />
+    case 'parchi': return <ParchiForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'parchi' ? editing.bill : undefined} draft={draft?.kind === 'parchi' ? draft : undefined} />
+    case 'vasooli': return <VasooliForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'vasooli' ? editing.raseed : undefined} draft={draft?.kind === 'vasooli' ? draft : undefined} />
+    case 'kharcha': return <KharchaForm shopId={shopId} onClose={onClose} onDone={done} draft={draft?.kind === 'kharcha' ? draft : undefined} />
     case 'supplier': return <SupplierForm shopId={shopId} onClose={onClose} onDone={done} />
     case 'gaadi': return <GaadiForm shopId={shopId} onClose={onClose} onDone={done} />
     case 'grahak': return <GrahakForm shopId={shopId} onClose={onClose} onDone={done} />
@@ -53,6 +55,10 @@ export function EntryForm({ kind, shopId, editing, onClose, onSaved }: { kind: E
 }
 
 type FormProps = { shopId: string; onClose: () => void; onDone: (msg: string) => void }
+type Draft<K extends VoiceDraft['kind']> = Extract<VoiceDraft, { kind: K }>
+
+/** Only when the voice draft needs a look (a grahak not on the list). */
+const Notes = ({ notes }: { notes?: string[] }) => (notes?.length ? <p className="muted voice-note">{notes.join(' · ')}</p> : null)
 
 // ---------------------------------------------------------------- Nayi parchi
 
@@ -103,27 +109,27 @@ function fromBill(b: EditBill) {
   }
 }
 
-function ParchiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?: EditBill }) {
+function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { editing?: EditBill; draft?: Draft<'parchi'> }) {
   const o = useOptions(shopId)
   const { saving, error, setError, save } = useSave(onDone)
-  const [was] = useState(() => (editing ? fromBill(editing) : null))
+  const [was] = useState(() => (editing ? fromBill(editing) : draft ? fromDraft(draft) : null))
   const [buyer, setBuyer] = useState<PickedBuyer | null>(was?.buyer ?? null)
-  const [truckId, setTruckId] = useState(editing?.truckId ?? '')
+  const [truckId, setTruckId] = useState(editing?.truckId ?? draft?.truckId ?? '')
   const [lines, setLines] = useState<Line[]>(was?.lines ?? [{ grade: '1', qty: 0, ratePaise: 0 }])
   const [pay, setPay] = useState<Pay>(was?.pay ?? 'cash')
-  const [cash, setCash] = useState(editing && was?.pay === 'split' ? editing.cashPaise : 0)
-  const [upi, setUpi] = useState(editing && was?.pay === 'split' ? editing.upiPaise : 0)
+  const [cash, setCash] = useState(editing && was?.pay === 'split' ? editing.cashPaise : draft?.cashPaise ?? 0)
+  const [upi, setUpi] = useState(editing && was?.pay === 'split' ? editing.upiPaise : draft?.upiPaise ?? 0)
   const [bank, setBank] = useState(editing?.upiBank ?? '')
   const [pack, setPack] = useState<'loose' | 'katta' | 'panni'>(was?.packing ?? 'loose')
   const [size, setSize] = useState<KattaSize>(was?.size ?? 'katta10')
   const [kattaName, setKattaName] = useState(was?.kattaName ?? '')
-  const [kattas, setKattas] = useState('')
+  const [kattas, setKattas] = useState(draft?.kattas ? String(draft.kattas) : '')
   const [panniName, setPanniName] = useState(was?.panni ?? '')
   const [parchune, setParchune] = useState(was?.parchune ?? false)
   const [labour, setLabour] = useState(was?.labour ?? false)
   const [labourQty, setLabourQty] = useState(was?.labourQty ?? '')
   const [rate, setRate] = useState(() => was?.rate ?? (Number(remembered('mp.labourRate', '30')) || 30))
-  const [delivery, setDelivery] = useState(!!editing?.delivery)
+  const [delivery, setDelivery] = useState(!!editing?.delivery || !!draft?.delivery)
   const [address, setAddress] = useState(editing?.delivery?.address ?? '')
   const [stand, setStand] = useState(editing?.delivery?.stand ?? '')
   const [staff, setStaff] = useState(() => editing ? (editing.staff === 'Website' ? '' : editing.staff) : remembered('mp.staff', ''))
@@ -194,7 +200,8 @@ function ParchiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?
           slipNo: !editing && Number(slipNo) > 0 ? Number(slipNo) : undefined,
         }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) }) : t('Parchi #{n} save hui', { n: String(r.slipNo) })))
       }}>
-      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus /></Field>
+      <Notes notes={draft?.notes} />
+      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus={!draft} /></Field>
       <Field label={t('Gaadi')}>
         {!o ? <div className="sk" /> : trucks.length === 0 ? <p className="muted">{t('Koi khuli gaadi nahi — pehle Nayi Gaadi jodein')}</p> : (
           <select className="field" value={truck?.id} onChange={(e) => setTruckId(e.target.value)}>
@@ -296,12 +303,12 @@ function ParchiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?
 // ---------------------------------------------------------------- Vasooli
 
 /** Vasooli; altering a raseed keeps its grahak, number and time — only the money changes (CollectScreen's Badlein). */
-function VasooliForm({ shopId, onClose, onDone, editing }: FormProps & { editing?: EditRaseed }) {
+function VasooliForm({ shopId, onClose, onDone, editing, draft }: FormProps & { editing?: EditRaseed; draft?: Draft<'vasooli'> }) {
   const o = useOptions(shopId)
   const { saving, error, setError, save } = useSave(onDone)
-  const [buyer, setBuyer] = useState<PickedBuyer | null>(editing ? { id: editing.buyerId, name: editing.buyerName } : null)
-  const [cash, setCash] = useState(editing?.cashPaise ?? 0)
-  const [upi, setUpi] = useState(editing?.upiPaise ?? 0)
+  const [buyer, setBuyer] = useState<PickedBuyer | null>(editing ? { id: editing.buyerId, name: editing.buyerName } : draft?.buyer?.id ? draft.buyer : null)
+  const [cash, setCash] = useState(editing?.cashPaise ?? draft?.cashPaise ?? 0)
+  const [upi, setUpi] = useState(editing?.upiPaise ?? draft?.upiPaise ?? 0)
   const [bank, setBank] = useState(editing?.upiBank ?? '')
   const [ref, setRef] = useState(editing?.ref ?? '')
   useEffect(() => { if (o?.banks[0] && !editing?.upiBank) setBank(o.banks[0]) }, [o]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -315,7 +322,8 @@ function VasooliForm({ shopId, onClose, onDone, editing }: FormProps & { editing
         void save(`/v1/admin/shops/${shopId}/entries/vasooli`, { buyerId: buyer.id, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined, paymentRef: ref || undefined },
           (r) => t('Raseed #{n} save hui', { n: String(r.receiptNo) }))
       }}>
-      <Field label={t('Grahak')}>{editing ? <b>{editing.buyerName}</b> : <BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus />}</Field>
+      <Notes notes={draft?.notes} />
+      <Field label={t('Grahak')}>{editing ? <b>{editing.buyerName}</b> : <BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus={!draft} />}</Field>
       <div className="row2">
         <Field label={t('Cash')}><Money value={cash} onChange={setCash} autoFocus={!!editing} /></Field>
         <Field label="UPI"><Money value={upi} onChange={setUpi} /></Field>
@@ -343,14 +351,27 @@ const BOOKS = [{ key: 'cash', label: t('Galla') }, { key: 'office', label: t('Of
 /** Where a transfer leaves from (the app only offers these books for each). */
 const FROM: Record<string, string> = { handover: 'cash', float: 'office', bank_nikala: 'upi' }
 
-function KharchaForm({ shopId, onClose, onDone }: FormProps) {
+/** A spoken parchi, in the form's own terms; anything not said keeps the form's default. */
+function fromDraft(d: Draft<'parchi'>) {
+  const packing = d.packing ?? 'loose'
+  return {
+    buyer: d.buyer as PickedBuyer | null,
+    lines: d.lines.length ? d.lines : [{ grade: '1' as const, qty: 0, ratePaise: 0 }],
+    pay: (d.pay ?? 'cash') as Pay, packing, panni: d.panni,
+    size: (d.size ?? 'katta10') as KattaSize, kattaName: d.kattaName, parchune: d.parchune,
+    // Tied goods carry mazdoori as a matter of course, as when the packing is tapped.
+    labour: d.labour || packing !== 'loose', labourQty: '', rate: null,
+  }
+}
+
+function KharchaForm({ shopId, onClose, onDone, draft }: FormProps & { draft?: Draft<'kharcha'> }) {
   const { saving, error, setError, save } = useSave(onDone)
-  const [dir, setDir] = useState<'out' | 'in'>('out')
-  const [cat, setCat] = useState('kharcha')
+  const [dir, setDir] = useState<'out' | 'in'>(draft?.dir ?? 'out')
+  const [cat, setCat] = useState(draft?.dir === 'in' ? 'aur_aaya' : 'kharcha')
   const [mode, setMode] = useState<'cash' | 'office' | 'upi'>('cash')
-  const [amount, setAmount] = useState(0)
+  const [amount, setAmount] = useState(draft?.amountPaise ?? 0)
   const [party, setParty] = useState('')
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(draft?.note ?? '')
   const heads = dir === 'out' ? OUT_HEADS : IN_HEADS
   const fixed = FROM[cat]
   return (

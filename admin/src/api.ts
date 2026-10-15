@@ -23,7 +23,7 @@ export class ApiError extends Error {
 let onSignedOut = () => {}
 export function whenSignedOut(fn: () => void) { onSignedOut = fn }
 
-export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   const token = getToken()
   const res = await fetch(`${BASE}${path}`, {
     method: init.method ?? 'GET',
@@ -32,6 +32,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    signal: init.signal,
   })
   if (res.status === 401 && token) { setToken(null); onSignedOut() }
   if (!res.ok) {
