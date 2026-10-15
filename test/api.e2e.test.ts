@@ -707,6 +707,37 @@ describe('shop approval and the admin portal', () => {
     // The website shows up as one machine of the shop.
     const team = (await http().get(base).set(web).expect(200)).body;
     expect(team.devices.filter((x: any) => x.label === 'Website')).toHaveLength(1);
+    expect(team.devices.find((x: any) => x.web)).toMatchObject({ phone: '9877700008' });
+
+    // Packing as the parchi screen saves it: which katta, a panni with a parchune, a loose
+    // parchune with no mazdoori, the Bank walk-in, a delivery, the accountant, its own number.
+    const post = (body: object) => http().post(`${base}/entries/parchi`).set(web).send({ truckId, lines: [{ grade: '1', qty: 20, ratePaise: 2500 }], ...body }).expect(201).then((r) => r.body);
+    const katta = await post({ buyerId: raju, pay: 'credit', packing: 'katta20', kattaName: 'Green', labour: false });
+    const panni = await post({ buyerId: raju, pay: 'credit', packing: 'panni', panniName: 'Jai Ho', parchune: true, labourQty: 4, labourRatePaise: 50,
+      delivery: { address: 'Shop 12, Okhla', stand: 'Okhla stand' }, staff: 'Ramesh', slipNo: 900 });
+    const loose = await post({ buyerName: 'Bank', pay: 'upi', packing: 'loose', parchune: true });
+    const rows = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(shop.accessToken)).expect(200)).body.changes;
+    const row = (bid: string) => rows.find((c: any) => c.table === 'bills' && c.row.id === bid).row;
+    expect(row(katta.billId)).toMatchObject({ packing: 'katta20', panni_name: 'Green', labour_paise: 0, packs: 0 });
+    expect(row(panni.billId)).toMatchObject({ packing: 'panni', panni_name: 'Jai Ho + Parchune', labour_paise: 200, packs: 4, delivery: true, staff_name: 'Ramesh', slip_no: 900 });
+    expect(panni.slipNo).toBe(900);
+    expect(row(loose.billId)).toMatchObject({ buyer_id: null, buyer_name: 'Bank', pay_mode: 'upi', panni_name: 'Parchune', labour_paise: 0 });
+    expect(rows.find((c: any) => c.table === 'delivery_slips' && c.row.bill_id === panni.billId).row).toMatchObject({ address: 'Shop 12, Okhla', destination: 'Okhla stand' });
+    expect((await http().get(`${base}/bills/${panni.billId}`).set(web).expect(200)).body.delivery).toEqual({ address: 'Shop 12, Okhla', stand: 'Okhla stand' });
+
+    // Settings, as the app's Settings screen: the same columns, so /v1/me shows the change.
+    const before = (await http().get(`${base}/settings`).set(web).expect(200)).body;
+    expect(before).toMatchObject({ name: 'Web Entry Traders', slipCode: '', udhaarRates: false, printerDots: 576 });
+    const after = (await http().post(`${base}/settings`).set(web).send({
+      slipCode: 'wet', phone: '9877700018', udhaarRates: true, printerDots: 832,
+      bankAccounts: [{ holder: 'WET', bank: 'ICICI', ifsc: 'icic0000423', account: '123' }, { holder: '', bank: '', ifsc: '', account: '' }],
+    }).expect(200)).body;
+    expect(after).toMatchObject({ slipCode: 'WET', phone: '9877700018', udhaarRates: true, printerDots: 832, bankAccounts: [{ holder: 'WET', bank: 'ICICI', ifsc: 'ICIC0000423', account: '123' }] });
+    expect((await http().get('/v1/me').set(auth(shop.accessToken)).expect(200)).body.shop).toMatchObject({ slipCode: 'WET', phone: '9877700018', udhaarRates: true });
+    await http().post(`${base}/settings`).set(web).send({ phone: '12345' }).expect(400);
+    await http().post(`${base}/settings`).set(web).send({ printerDots: 500 }).expect(400);
+    const other = await registerShop('9877700019', 'Someone Else');
+    await http().get(`/v1/admin/shops/${other.me.shop.id}/settings`).set(web).expect(403);
   });
 
   it('turns a request down and frees the number to register again', async () => {

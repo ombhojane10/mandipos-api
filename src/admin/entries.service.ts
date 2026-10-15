@@ -19,6 +19,8 @@ import { nameKey } from './reports.service';
  * defaults: labour 30 paise a nag when packed, nothing on loose; staff "Website".
  */
 
+/** The app's word for a parchune, on panni_name. */
+const PARCHUNE = 'Parchune';
 const LABOUR_PAISE_PER_NAG = 30;
 const istNow = () => new Date(Date.now() + 330 * 60_000);
 const todayIst = () => istNow().toISOString().slice(0, 10);
@@ -37,6 +39,14 @@ export type ParchiInput = {
   lines: { grade: Grade; qty: number; ratePaise: number }[];
   pay: 'cash' | 'upi' | 'credit' | 'after' | 'split' | 'free'; cashPaise?: number; upiPaise?: number; upiBank?: string;
   packing: 'loose' | 'katta10' | 'katta15' | 'katta20' | 'katta25' | 'panni'; panniName?: string;
+  /** Which katta (Green, Jaipur, White) — kept in panni_name, as the app does. */
+  kattaName?: string;
+  /** A parchune on top: rides on panni_name ("Jai Ho + Parchune", or just "Parchune" when loose). */
+  parchune?: boolean;
+  /** Mazdoori: on/off, how many dana it is for (default every nag), and the per-nag rate. */
+  labour?: boolean; labourQty?: number; labourRatePaise?: number;
+  delivery?: { address: string; stand: string };
+  staff?: string; slipNo?: number;
 };
 export type VasooliInput = { buyerId: string; cashPaise: number; upiPaise: number; upiBank?: string; paymentRef?: string };
 export type DaybookInput = { direction: 'in' | 'out'; category: string; mode: 'cash' | 'office' | 'upi' | 'bank'; amountPaise: number; party?: string; note?: string; date?: string };
@@ -148,15 +158,26 @@ export class EntriesService {
     const chosen = free ? 'free' : input.pay === 'split' ? null : input.pay;
     const payMode = chosen && (goods === 0 || chosen === 'after') ? chosen : payModeCode(cash, upi);
     const packed = input.packing !== 'loose';
+    const isKatta = /^katta/.test(input.packing);
+    // Mazdoori as the parchi screen charges it: on for packed maal, off for a loose parchune.
+    const labourOn = input.labour ?? (packed && !(input.packing === 'loose' && input.parchune));
+    const labourQty = labourOn ? (input.labourQty ?? pre.qty) : 0;
+    const panniName = (input.packing === 'panni'
+      ? [(input.panniName ?? '').trim(), input.parchune ? PARCHUNE : ''].filter(Boolean).join(' + ')
+      : isKatta ? (input.kattaName ?? '').trim()
+      : input.parchune ? PARCHUNE : '').slice(0, 40);
+    const delivery = input.delivery && (input.delivery.address.trim() || input.delivery.stand.trim()) ? input.delivery : null;
     const billId = uuidv7();
     const txn = uuidv7();
     items.push({
       table: 'bills', txn, row: {
         id: billId, created_at: now, number: pre.number, kind: 'kachchi', buyer_id: buyerId, buyer_name: buyerName,
         business_date: todayIst(), pay_mode: payMode, total_paise: goods, paid_paise: cash + upi, cash_paise: cash, upi_paise: upi,
-        payment_ref: '', slip_no: pre.slipNo, truck_id: input.truckId, labour_paise: packed ? pre.qty * LABOUR_PAISE_PER_NAG : 0,
-        packing: input.packing, panni_name: input.packing === 'panni' ? (input.panniName ?? '') : '', packs: packed ? pre.qty : 0,
-        delivery: false, staff_name: 'Website', chungi_paise: 0, upi_bank: upi > 0 ? (input.upiBank ?? '') : '',
+        payment_ref: '', slip_no: input.slipNo ?? pre.slipNo, truck_id: input.truckId,
+        labour_paise: labourQty * (input.labourRatePaise ?? LABOUR_PAISE_PER_NAG),
+        packing: input.packing, panni_name: panniName, packs: labourQty,
+        delivery: !!delivery, staff_name: (input.staff ?? '').trim().slice(0, 60) || 'Website', chungi_paise: 0,
+        upi_bank: upi > 0 ? (input.upiBank ?? '') : '',
       },
     });
     for (const l of lines) {
@@ -165,9 +186,13 @@ export class EntriesService {
         rate_paise: free ? 0 : l.ratePaise, leak: false,
       } });
     }
+    // The rickshaw's slip is its own record, made right after the parchi (Store.addDeliverySlip).
+    if (delivery) items.push({ table: 'delivery_slips', txn: uuidv7(), row: {
+      id: uuidv7(), created_at: now, bill_id: billId, address: delivery.address.trim().slice(0, 200), destination: delivery.stand.trim().slice(0, 120),
+    } });
     const results = await this.push(p, shopId, items);
     const bill = results.find((r) => r.id === billId)!;
-    return { billId, number: pre.number, slipNo: bill.renumbered?.to ?? pre.slipNo, buyerId, results };
+    return { billId, number: pre.number, slipNo: bill.renumbered?.to ?? input.slipNo ?? pre.slipNo, buyerId, results };
   }
 
   // ---------------------------------------------------------------- Vasooli

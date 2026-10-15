@@ -3,6 +3,7 @@ import { api, type BuyerRow, type MarketCustomer } from './api'
 import { REPORTS, useSession } from './App'
 import { href, periodQuery } from './routes'
 import { phone, rupees } from './format'
+import { t } from './i18n'
 
 type Option = { key: string; section: string; title: string; sub?: string; right?: string; to: string }
 
@@ -22,38 +23,38 @@ export function GoTo({ shopId, onClose }: { shopId: string | null; onClose: () =
   useEffect(() => {
     if (!query) { setPeople([]); return }
     let live = true
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const found: Option[] = []
         if (shopId) {
           const r = await api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(query)}`)
-          found.push(...r.buyers.slice(0, 6).map((b) => ({ key: `b-${b.id}`, section: 'Grahak', title: b.name, sub: [b.phone && phone(b.phone), b.code && `A/C ${b.code}`].filter(Boolean).join(' · '),
-            right: b.balancePaise > 0 ? `${rupees(b.balancePaise)} baaki` : undefined, to: href({ page: 'grahak', shopId, buyerId: b.id }) })))
+          found.push(...r.buyers.slice(0, 6).map((b) => ({ key: `b-${b.id}`, section: t('Grahak'), title: b.name, sub: [b.phone && phone(b.phone), b.code && `A/C ${b.code}`].filter(Boolean).join(' · '),
+            right: b.balancePaise > 0 ? t('{amt} baaki', { amt: rupees(b.balancePaise) }) : undefined, to: href({ page: 'grahak', shopId, buyerId: b.id }) })))
         }
         if (me?.admin) {
           const r = await api<{ customers: MarketCustomer[] }>(`/v1/admin/customers?q=${encodeURIComponent(query)}`)
-          found.push(...r.customers.slice(0, 5).map((c) => ({ key: `m-${c.key}`, section: 'Market', title: c.name, sub: [c.phone && phone(c.phone), c.shops.map((s) => s.shopName).join(', ')].filter(Boolean).join(' · '),
-            right: c.balancePaise > 0 ? `${rupees(c.balancePaise)} baaki` : undefined, to: href({ page: 'person', key: c.key }) })))
+          found.push(...r.customers.slice(0, 5).map((c) => ({ key: `m-${c.key}`, section: t('Market'), title: c.name, sub: [c.phone && phone(c.phone), c.shops.map((s) => s.shopName).join(', ')].filter(Boolean).join(' · '),
+            right: c.balancePaise > 0 ? t('{amt} baaki', { amt: rupees(c.balancePaise) }) : undefined, to: href({ page: 'person', key: c.key }) })))
         }
         if (live) setPeople(found)
       } catch { /* the reports still show */ }
     }, 180)
-    return () => { live = false; clearTimeout(t) }
+    return () => { live = false; clearTimeout(timer) }
   }, [query, shopId, me?.admin])
 
   const reports: Option[] = shopId ? REPORTS.flatMap((g) => g.items)
     .filter((i) => !query || i.label.toLowerCase().includes(query))
-    .map((i) => ({ key: `r-${i.report}`, section: 'Report', title: i.label, to: href({ page: 'report', shopId, report: i.report }) + periodQuery() })) : []
+    .map((i) => ({ key: `r-${i.report}`, section: t('Report'), title: i.label, to: href({ page: 'report', shopId, report: i.report }) + periodQuery() })) : []
   const shopOpts: Option[] = (shops ?? []).filter((s) => s.status === 'approved' && (!query || `${s.name} ${s.mandi}`.toLowerCase().includes(query)))
-    .slice(0, 6).map((s) => ({ key: `s-${s.id}`, section: 'Dukaan', title: s.name, sub: s.mandi, to: href({ page: 'report', shopId: s.id, report: 'dashboard' }) }))
+    .slice(0, 6).map((s) => ({ key: `s-${s.id}`, section: t('Dukaan'), title: s.name, sub: s.mandi, to: href({ page: 'report', shopId: s.id, report: 'dashboard' }) }))
   const options = query ? [...people, ...reports, ...shopOpts] : [...reports, ...shopOpts]
   const current = Math.min(sel, Math.max(0, options.length - 1))
   const go = (o?: Option) => { if (!o) return; location.hash = o.to; onClose() }
 
   return (
     <div className="scrim" onClick={onClose}>
-      <div className="palette" role="dialog" aria-label="Go To" onClick={(e) => e.stopPropagation()}>
-        <input ref={input} className="field" placeholder="Grahak, report ya dukaan…" value={q}
+      <div className="palette" role="dialog" aria-label={t('Go To')} onClick={(e) => e.stopPropagation()}>
+        <input ref={input} className="field" placeholder={t('Grahak, report ya dukaan…')} value={q}
           role="combobox" aria-expanded aria-controls="goto-results" aria-activedescendant={options[current] ? `goto-${current}` : undefined}
           onChange={(e) => { setQ(e.target.value); setSel(0) }}
           onKeyDown={(e) => {
@@ -72,7 +73,7 @@ export function GoTo({ shopId, onClose }: { shopId: string | null; onClose: () =
               </div>
             </div>
           ))}
-          {query && options.length === 0 && <p className="empty">“{q.trim()}” nahi mila</p>}
+          {query && options.length === 0 && <p className="empty">{t('“{q}” nahi mila', { q: q.trim() })}</p>}
         </div>
       </div>
     </div>

@@ -8,12 +8,13 @@ import { Ages, Change, Kpi, PeriodBar, Skeleton } from '../ui'
 import { EntryTable } from './DayBook'
 import * as I from '../icons'
 import { openEntry, type EntryKind } from '../entries/kinds'
+import { t } from '../i18n'
 
 const QUICK: { kind: EntryKind; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
-  { kind: 'parchi', label: 'Nayi Parchi', sub: 'Bikri', tone: 'green', icon: I.IRupee },
-  { kind: 'vasooli', label: 'Vasooli', sub: 'Grahak se paisa', tone: 'blue', icon: I.IWallet },
-  { kind: 'kharcha', label: 'Kharcha', sub: 'Day book', tone: 'red', icon: I.ICash },
-  { kind: 'gaadi', label: 'Nayi Gaadi', sub: 'Kharid', tone: 'amber', icon: I.ITruck },
+  { kind: 'parchi', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
+  { kind: 'vasooli', label: t('Vasooli'), sub: t('Grahak se paisa'), tone: 'blue', icon: I.IWallet },
+  { kind: 'kharcha', label: t('Kharcha'), sub: t('Day book'), tone: 'red', icon: I.ICash },
+  { kind: 'gaadi', label: t('Nayi Gaadi'), sub: t('Kharid'), tone: 'amber', icon: I.ITruck },
 ]
 
 /** The shop at a glance, like the first page of Tally: four figures, the trend, and what happened last. */
@@ -42,67 +43,67 @@ export function Dashboard({ shopId }: { shopId: string }) {
       {!data ? <Skeleton rows={8} /> : (
         <div className={`stack${loading ? ' dim' : ''}`}>
           <div className="grid g4">
-            <Kpi icon={<I.IRupee />} tone="green" label="Bikri" value={rupees(data.d.now.salesPaise)} to={to('daybook')}
-              sub={<><Change now={data.d.now.salesPaise} before={data.d.before.salesPaise} /> · {count(data.d.now.slips)} parchi</>} />
-            <Kpi icon={<I.ICart />} tone="blue" label="Kharid" value={rupees(data.d.now.purchasePaise)} to={to('suppliers')}
-              sub={<><Change now={data.d.now.purchasePaise} before={data.d.before.purchasePaise} /> · {count(data.d.now.gaadis)} gaadi</>} />
-            <Kpi icon={<I.IUdhaar />} tone="amber" label="Udhaar (lena)" value={<span className="due">{rupees(data.d.receivables.duePaise)}</span>} to={to('outstanding')}
-              sub={`${count(data.d.receivables.count)} grahak`} />
-            <Kpi icon={<I.IWallet />} tone="red" label="Supplier (dena)" value={rupees(data.d.payables.duePaise)} to={to('suppliers')}
-              sub={`${count(data.d.payables.count)} supplier`} />
+            <Kpi icon={<I.IRupee />} tone="green" label={t('Bikri')} value={rupees(data.d.now.salesPaise)} to={to('daybook')}
+              sub={<><Change now={data.d.now.salesPaise} before={data.d.before.salesPaise} /> · {t('{n} parchi', { n: count(data.d.now.slips) })}</>} />
+            <Kpi icon={<I.ICart />} tone="blue" label={t('Kharid')} value={rupees(data.d.now.purchasePaise)} to={to('suppliers')}
+              sub={<><Change now={data.d.now.purchasePaise} before={data.d.before.purchasePaise} /> · {t('{n} gaadi', { n: count(data.d.now.gaadis) })}</>} />
+            <Kpi icon={<I.IUdhaar />} tone="amber" label={t('Udhaar (lena)')} value={<span className="due">{rupees(data.d.receivables.duePaise)}</span>} to={to('outstanding')}
+              sub={t('{n} grahak', { n: count(data.d.receivables.count) })} />
+            <Kpi icon={<I.IWallet />} tone="red" label={t('Supplier (dena)')} value={rupees(data.d.payables.duePaise)} to={to('suppliers')}
+              sub={t('{n} supplier', { n: count(data.d.payables.count) })} />
           </div>
 
           <div className="grid g2-1">
             <div className="card">
-              <div className="hd"><h3>Bikri aur Kharid</h3></div>
-              <div className="bd">{data.d.trend.some((t) => t.salesPaise || t.purchasePaise) ? <TrendChart data={data.d.trend} /> : <p className="empty">Is hafte koi bikri ya kharid nahi</p>}</div>
+              <div className="hd"><h3>{t('Bikri aur Kharid')}</h3></div>
+              <div className="bd">{data.d.trend.some((t) => t.salesPaise || t.purchasePaise) ? <TrendChart data={data.d.trend} /> : <p className="empty">{t('Is hafte koi bikri ya kharid nahi')}</p>}</div>
             </div>
             <div className="card">
-              <div className="hd"><h3>Sabse zyada bika</h3><a href={to('items')}>Sab ›</a></div>
+              <div className="hd"><h3>{t('Sabse zyada bika')}</h3><a href={to('items')}>{t('Sab')} ›</a></div>
               <div className="bd lines-list">
                 {data.d.items.map((it, i) => (
                   <div key={it.brand}>
                     <span className="rank">{i + 1}</span>
-                    <span className="grow"><b>{it.brand}</b><small>{count(it.nags)} nag</small></span>
+                    <span className="grow"><b>{it.brand}</b><small>{t('{n} nag', { n: count(it.nags) })}</small></span>
                     <span className="money b">{rupees(it.amountPaise)}</span>
                   </div>
                 ))}
-                {data.d.items.length === 0 && <p className="empty">Is period mein bikri nahi</p>}
+                {data.d.items.length === 0 && <p className="empty">{t('Is period mein bikri nahi')}</p>}
               </div>
             </div>
           </div>
 
           <div>
             <div className="card">
-              <div className="hd"><h3>Taaza entries</h3><a href={to('daybook')}>Day Book ›</a></div>
+              <div className="hd"><h3>{t('Taaza entries')}</h3><a href={to('daybook')}>{t('Day Book')} ›</a></div>
               <EntryTable shopId={shopId} entries={data.recent} compact />
             </div>
           </div>
 
           <div className="grid g4 stack-sm">
             <a className="card" href={to('cashbook')}>
-              <div className="hd"><h3>Cash aur Bank</h3></div>
+              <div className="hd"><h3>{t('Cash aur Bank')}</h3></div>
               <div className="bd">
-                <div className="sum" style={{ padding: 0, gap: 4, display: 'grid' }}>
-                  <span className="lb">Abhi kul</span>
+                <div className="big-fig">
+                  <span className="lb">{t('Abhi kul')}</span>
                   <span className="v">{rupees(data.d.cash.galla + data.d.cash.office + data.d.cash.bank)}</span>
                 </div>
                 <div className="ages" style={{ marginTop: 10 }}>
-                  <div><span className="dot" style={{ background: '#16a34a' }} /><span>Galla</span><span className="money">{rupees(data.d.cash.galla)}</span></div>
-                  <div><span className="dot" style={{ background: '#a3a3a3' }} /><span>Office</span><span className="money">{rupees(data.d.cash.office)}</span></div>
-                  <div><span className="dot" style={{ background: '#2563eb' }} /><span>Bank / UPI</span><span className="money">{rupees(data.d.cash.bank)}</span></div>
+                  <div><span className="dot" style={{ background: '#16a34a' }} /><span>{t('Galla')}</span><span className="money">{rupees(data.d.cash.galla)}</span></div>
+                  <div><span className="dot" style={{ background: '#a3a3a3' }} /><span>{t('Office')}</span><span className="money">{rupees(data.d.cash.office)}</span></div>
+                  <div><span className="dot" style={{ background: '#2563eb' }} /><span>{t('Bank / UPI')}</span><span className="money">{rupees(data.d.cash.bank)}</span></div>
                 </div>
               </div>
             </a>
             <a className="card" href={to('outstanding')}>
-              <div className="hd"><h3>Udhaar · kitna purana</h3></div>
+              <div className="hd"><h3>{t('Udhaar · kitna purana')}</h3></div>
               <div className="bd">
                 <span className="money b due" style={{ fontSize: 18 }}>{rupees(data.d.receivables.duePaise)}</span>
                 <Ages b={data.d.receivables} total={data.d.receivables.duePaise} />
               </div>
             </a>
             <a className="card" href={to('suppliers')}>
-              <div className="hd"><h3>Supplier · kitna purana</h3></div>
+              <div className="hd"><h3>{t('Supplier · kitna purana')}</h3></div>
               <div className="bd">
                 <span className="money b" style={{ fontSize: 18 }}>{rupees(data.d.payables.duePaise)}</span>
                 <Ages b={data.d.payables} total={data.d.payables.duePaise} />
@@ -120,15 +121,15 @@ function StockCard({ shopId }: { shopId: string }) {
   const { data } = useLoad(() => api<{ totals: { left: number; valuePaise: number; gaadis: number; stale: number } }>(`/v1/admin/shops/${shopId}/stock`), [shopId])
   return (
     <a className="card" href={href({ page: 'report', shopId, report: 'stock' })}>
-      <div className="hd"><h3>Stock</h3></div>
+      <div className="hd"><h3>{t('Stock')}</h3></div>
       <div className="bd">
         {!data ? <div className="sk" /> : (
           <>
-            <span className="money b" style={{ fontSize: 18 }}>{count(data.totals.left)} nag</span>
+            <span className="money b" style={{ fontSize: 18 }}>{t('{n} nag', { n: count(data.totals.left) })}</span>
             <div className="ages" style={{ marginTop: 10 }}>
-              <div><span /><span>Kharid bhav par</span><span className="money">{rupees(data.totals.valuePaise)}</span></div>
-              <div><span /><span>Khuli gaadi</span><span className="money">{count(data.totals.gaadis)}</span></div>
-              <div><span /><span>Purani gaadi</span><span className={`money${data.totals.stale ? ' due b' : ''}`}>{count(data.totals.stale)}</span></div>
+              <div><span /><span>{t('Kharid bhav par')}</span><span className="money">{rupees(data.totals.valuePaise)}</span></div>
+              <div><span /><span>{t('Khuli gaadi')}</span><span className="money">{count(data.totals.gaadis)}</span></div>
+              <div><span /><span>{t('Purani gaadi')}</span><span className={`money${data.totals.stale ? ' due b' : ''}`}>{count(data.totals.stale)}</span></div>
             </div>
           </>
         )}

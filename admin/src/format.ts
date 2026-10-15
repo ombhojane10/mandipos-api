@@ -1,3 +1,5 @@
+import { t } from './i18n'
+
 const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 })
 const inr2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
@@ -28,16 +30,16 @@ export function shortDate(day: string): string {
   return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 }
 
-/** "5 min ago", "3 days ago", or the date. */
+/** "5 min pehle", "3 din pehle", or the date. */
 export function ago(iso: string | null): string {
-  if (!iso) return 'Never'
+  if (!iso) return t('Kabhi nahi')
   const mins = Math.round((Date.now() - Date.parse(iso)) / 60000)
-  if (mins < 2) return 'Just now'
-  if (mins < 60) return `${mins} min ago`
+  if (mins < 2) return t('abhi')
+  if (mins < 60) return t('{n} min pehle', { n: mins })
   const hours = Math.round(mins / 60)
-  if (hours < 24) return `${hours} h ago`
+  if (hours < 24) return t('{n} ghante pehle', { n: hours })
   const days = Math.round(hours / 24)
-  if (days < 30) return `${days} days ago`
+  if (days < 30) return t('{n} din pehle', { n: days })
   return date(iso)
 }
 
@@ -51,8 +53,8 @@ export function time(iso: string): string {
 /** Wed, 15 Oct — the date headers of a ledger on a phone. */
 export function dayHeader(day: string): string {
   const today = todayIst()
-  if (day === today) return 'Aaj'
-  if (day === addDays(today, -1)) return 'Kal'
+  if (day === today) return t('Aaj')
+  if (day === addDays(today, -1)) return t('Kal')
   return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 

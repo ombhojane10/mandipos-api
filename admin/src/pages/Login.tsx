@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { t } from '../i18n'
 
 /** Mobile number, then the OTP sent to it. Only numbers on the server's admin list get one. */
 export function Login({ onDone }: { onDone: (token: string) => void }) {
@@ -31,10 +32,10 @@ export function Login({ onDone }: { onDone: (token: string) => void }) {
     <div className="login">
       <form className="card login-card" onSubmit={submit}>
         <h1>Mandi<span style={{ color: 'var(--accent)' }}>Plus</span> POS</h1>
-        <p className="muted">{sent ? `${phone} par aaya OTP daalein` : 'Apne mobile number se login karein'}</p>
+        <p className="muted">{sent ? t('{phone} par aaya OTP daalein', { phone }) : t('Apne mobile number se login karein')}</p>
         {!sent ? (
           <input
-            className="field" inputMode="numeric" autoComplete="tel" placeholder="Mobile number" autoFocus
+            className="field" inputMode="numeric" autoComplete="tel" placeholder={t('Mobile number')} autoFocus
             value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
           />
         ) : (
@@ -45,9 +46,9 @@ export function Login({ onDone }: { onDone: (token: string) => void }) {
         )}
         {error && <p className="error" role="alert">{error}</p>}
         <button className="btn primary" disabled={busy || (!sent ? phone.length !== 10 : code.length < 4)}>
-          {busy ? '…' : sent ? 'Login' : 'OTP bhejein'}
+          {busy ? '…' : sent ? t('Login') : t('OTP bhejein')}
         </button>
-        {sent && <button type="button" className="btn ghost" onClick={() => { setSent(false); setCode(''); setError('') }}>Number badlein</button>}
+        {sent && <button type="button" className="btn ghost" onClick={() => { setSent(false); setCode(''); setError('') }}>{t('Number badlein')}</button>}
       </form>
     </div>
   )

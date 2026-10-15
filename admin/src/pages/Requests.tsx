@@ -3,6 +3,7 @@ import { api, type Shop } from '../api'
 import { useSession } from '../App'
 import { ago, date, phone } from '../format'
 import { Skeleton } from '../ui'
+import { t } from '../i18n'
 
 /** New shops waiting for approval; the owner's app opens the shop the moment it is approved. */
 export function Requests() {
@@ -14,10 +15,10 @@ export function Requests() {
     <div className="stack">
       {pending.length > 0
         ? <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>{pending.map((s) => <Request key={s.id} shop={s} onDone={reload} />)}</div>
-        : <div className="card empty">Koi nayi request nahi</div>}
+        : <div className="card empty">{t('Koi nayi request nahi')}</div>}
       {rejected.length > 0 && (
         <div className="card wrap-x">
-          <div className="hd"><h3>Reject ki gayi</h3></div>
+          <div className="hd"><h3>{t('Reject ki gayi')}</h3></div>
           <table className="tbl fold"><tbody>
             {rejected.map((s) => (
               <tr key={s.id}>
@@ -53,24 +54,24 @@ function Request({ shop, onDone }: { shop: Shop; onDone: () => void }) {
   return (
     <div className="card req">
       <b style={{ fontSize: 16 }}>{shop.name}</b>
-      <span className="muted">{[shop.mandi, shop.shopNo && `Dukaan ${shop.shopNo}`, shop.commodity === 'amrud' ? 'Amrud' : 'Nariyal', shop.gstin].filter(Boolean).join(' · ')}</span>
-      <span className="muted"><a className="call" href={`tel:+91${shop.owner.phone}`}>☎ {phone(shop.owner.phone)}</a> · {ago(shop.createdAt).replace('Just now', 'abhi').replace(' ago', ' pehle')}</span>
+      <span className="muted">{[shop.mandi, shop.shopNo && t('Dukaan {n}', { n: shop.shopNo }), shop.commodity === 'amrud' ? t('Amrud') : t('Nariyal'), shop.gstin].filter(Boolean).join(' · ')}</span>
+      <span className="muted"><a className="call" href={`tel:+91${shop.owner.phone}`}>☎ {phone(shop.owner.phone)}</a> · {ago(shop.createdAt)}</span>
       {error && <p className="error" role="alert">{error}</p>}
       <div className="actions">
-        <button className="btn primary" disabled={busy} onClick={() => act('approve')}>Approve</button>
-        <button className="btn line" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
+        <button className="btn primary" disabled={busy} onClick={() => act('approve')}>{t('Approve')}</button>
+        <button className="btn line" disabled={busy} onClick={() => setRejecting(true)}>{t('Reject')}</button>
       </div>
       {rejecting && (
         <div className="scrim" onClick={() => !busy && setRejecting(false)}>
           <div className="dialog" role="alertdialog" aria-labelledby={`r-${shop.id}`} onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setRejecting(false) } }}>
-            <h3 id={`r-${shop.id}`}>{shop.name} reject karein?</h3>
-            <p className="muted">Dukaan wale ko app mein yeh wajah dikhegi.</p>
-            <input className="field" placeholder="Wajah (optional)" value={reason} maxLength={200} autoFocus onChange={(e) => setReason(e.target.value)} />
+            <h3 id={`r-${shop.id}`}>{t('{name} reject karein?', { name: shop.name })}</h3>
+            <p className="muted">{t('Dukaan wale ko app mein yeh wajah dikhegi.')}</p>
+            <input className="field" placeholder={t('Wajah (optional)')} value={reason} maxLength={200} autoFocus onChange={(e) => setReason(e.target.value)} />
             {error && <p className="error" role="alert">{error}</p>}
             <div className="actions">
-              <button className="btn ghost" disabled={busy} onClick={() => setRejecting(false)}>Rehne dein</button>
-              <button className="btn danger" disabled={busy} onClick={() => act('reject')}>Reject</button>
+              <button className="btn ghost" disabled={busy} onClick={() => setRejecting(false)}>{t('Rehne dein')}</button>
+              <button className="btn danger" disabled={busy} onClick={() => act('reject')}>{t('Reject')}</button>
             </div>
           </div>
         </div>

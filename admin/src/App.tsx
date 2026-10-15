@@ -14,6 +14,7 @@ import { Suppliers, SupplierKhata } from './pages/Suppliers'
 import { Stock } from './pages/Stock'
 import { Items } from './pages/Items'
 import { Team } from './pages/Team'
+import { Settings } from './pages/Settings'
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
@@ -23,6 +24,9 @@ import { F_KEYS, REPORT_KEYS, lastRow, openHelp, pagePath, periodKey } from './k
 import { Hot } from './Hot'
 import { Help } from './Help'
 import { VoucherHost } from './pages/Voucher'
+import { ExportHost } from './export/Preview'
+import { exportBuilder, openExport, useCanExport } from './export/doc'
+import { t } from './i18n'
 
 type Session = { me: Me | null; shops: Shop[] | null; reload: () => void }
 const SessionContext = createContext<Session>({ me: null, shops: null, reload: () => {} })
@@ -32,21 +36,21 @@ export const useSession = () => useContext(SessionContext)
 /** The reports, in Tally's order; each one's letter (keys.ts) opens it from anywhere. */
 // eslint-disable-next-line react-refresh/only-export-components
 export const REPORTS: { group: string; items: { report: Report; label: string; key: string; icon: () => ReactNode }[] }[] = [
-  { group: '', items: [{ report: 'dashboard', label: 'Dashboard', key: 'H', icon: I.IHome }] },
-  { group: 'Hisab-Kitab', items: [
-    { report: 'daybook', label: 'Day Book', key: 'D', icon: I.IBook },
-    { report: 'cashbook', label: 'Cash / Bank Book', key: 'C', icon: I.ICash },
+  { group: '', items: [{ report: 'dashboard', label: t('Dashboard'), key: 'H', icon: I.IHome }] },
+  { group: t('Hisab-Kitab'), items: [
+    { report: 'daybook', label: t('Day Book'), key: 'D', icon: I.IBook },
+    { report: 'cashbook', label: t('Cash / Bank Book'), key: 'C', icon: I.ICash },
   ] },
-  { group: 'Udhaar', items: [
-    { report: 'outstanding', label: 'Outstanding', key: 'O', icon: I.IUdhaar },
-    { report: 'ledger', label: 'Grahak Ledger', key: 'L', icon: I.ILedger },
+  { group: t('Udhaar'), items: [
+    { report: 'outstanding', label: t('Outstanding'), key: 'O', icon: I.IUdhaar },
+    { report: 'ledger', label: t('Grahak Ledger'), key: 'L', icon: I.ILedger },
   ] },
-  { group: 'Supplier', items: [{ report: 'suppliers', label: 'Supplier Khata', key: 'P', icon: I.ITruck }] },
-  { group: 'Stock', items: [
-    { report: 'stock', label: 'Stock Summary', key: 'S', icon: I.IBox },
-    { report: 'items', label: 'Maal-wise Bikri', key: 'I', icon: I.ITag },
+  { group: t('Supplier'), items: [{ report: 'suppliers', label: t('Supplier Khata'), key: 'P', icon: I.ITruck }] },
+  { group: t('Stock'), items: [
+    { report: 'stock', label: t('Stock Summary'), key: 'S', icon: I.IBox },
+    { report: 'items', label: t('Maal-wise Bikri'), key: 'I', icon: I.ITag },
   ] },
-  { group: 'Dukaan', items: [{ report: 'team', label: 'Team & Machine', key: 'T', icon: I.ITeam }] },
+  { group: t('Dukaan'), items: [{ report: 'team', label: t('Team & Machine'), key: 'T', icon: I.ITeam }] },
 ]
 
 const LAST_SHOP = 'mandipos-shop'
@@ -58,6 +62,7 @@ export default function App() {
   const [shops, setShops] = useState<Shop[] | null>(null)
   const [goto, setGoto] = useState(false)
   const [drawer, setDrawer] = useState(false)
+  const canExport = useCanExport()
 
   const reload = useCallback(() => {
     api<{ shops: Shop[] }>('/v1/admin/shops').then((r) => setShops(r.shops)).catch(() => {})
@@ -107,9 +112,13 @@ export default function App() {
       if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (!typing && !mod && (e.key === '/' || e.key === 'g' || e.key === 'G')) || (e.altKey && e.code === 'KeyG')) {
         e.preventDefault(); setGoto(true); return
       }
-      if (goto || document.querySelector('.scrim')) return
+      if (goto || document.querySelector('.scrim, .export-root')) return
       if (F_KEYS[e.key] && shopId) { e.preventDefault(); openEntry(F_KEYS[e.key]); return }
+      // Tally's Export (E) and Print (Ctrl+P) both open the preview first.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'p' && exportBuilder()) { e.preventDefault(); openExport(); return }
       if (e.key === 'F2') { e.preventDefault(); periodKey('open'); return }
+      // Tally's F12 is Configure.
+      if (e.key === 'F12' && shopId) { e.preventDefault(); go('settings'); return }
       if (typing) {
         if (e.key === 'Escape') el!.blur()
         // ↓ from a search box goes into the list, as in Tally's Go To.
@@ -119,6 +128,7 @@ export default function App() {
       if (!mod && e.key === '?') { e.preventDefault(); openHelp(); return }
       const letter = e.altKey && e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : !mod ? e.key.toLowerCase() : ''
       if (letter === 'n' && shopId) { e.preventDefault(); openEntry(); return }
+      if (letter === 'e' && exportBuilder()) { e.preventDefault(); openExport(); return }
       if (letter && REPORT_KEYS[letter] && shopId) { e.preventDefault(); go(REPORT_KEYS[letter]); return }
       if (!mod && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && document.querySelector('.stepper')) {
         e.preventDefault(); periodKey(e.key === 'ArrowLeft' ? 'prev' : 'next'); return
@@ -171,11 +181,15 @@ export default function App() {
   return (
     <SessionContext.Provider value={{ me, shops, reload }}>
       <div className="app">
-        <aside className={`side${drawer ? ' open' : ''}`} aria-label="Menu">
+        <aside className={`side${drawer ? ' open' : ''}`} aria-label={t('Menu')}>
           <a className="brand" href="#/"><i>M</i>Mandi<span>Plus</span></a>
-          {open.length > 0 && (
+          {/* An owner sees their shop by name; a choice only where there is one to make. */}
+          {open.length > 0 && !me?.admin && open.length === 1 && shop && (
+            <div className="shop-name"><b>{shop.name}</b>{shop.mandi && <small>{shop.mandi}</small>}</div>
+          )}
+          {open.length > 0 && (me?.admin || open.length > 1) && (
             <div className="shop-pick">
-              <select aria-label="Dukaan chunein" value={shopId ?? ''} onChange={(e) => {
+              <select aria-label={t('Dukaan chunein')} value={shopId ?? ''} onChange={(e) => {
                 const report = route.page === 'report' ? route.report : 'dashboard'
                 location.hash = href({ page: 'report', shopId: e.target.value, report }) + periodQuery()
               }}>
@@ -198,30 +212,34 @@ export default function App() {
             {me?.admin && (
               <>
                 <div className="grp">MandiPlus</div>
-                <a href="#/shops" aria-current={route.page === 'shops' ? 'page' : undefined}><I.IStore />Sab Dukaan</a>
-                <a href="#/market" aria-current={route.page === 'market' || route.page === 'person' ? 'page' : undefined}><I.IPeople />Market Grahak</a>
-                <a href="#/requests" aria-current={route.page === 'requests' ? 'page' : undefined}><I.IInbox />Requests{pending > 0 && <span className="badge">{pending}</span>}</a>
+                <a href="#/shops" aria-current={route.page === 'shops' ? 'page' : undefined}><I.IStore />{t('Sab Dukaan')}</a>
+                <a href="#/market" aria-current={route.page === 'market' || route.page === 'person' ? 'page' : undefined}><I.IPeople />{t('Market Grahak')}</a>
+                <a href="#/requests" aria-current={route.page === 'requests' ? 'page' : undefined}><I.IInbox />{t('Requests')}{pending > 0 && <span className="badge">{pending}</span>}</a>
               </>
             )}
           </nav>
-          <div className="who">
-            {me ? phone(me.phone) : ''}
-            <button className="icon-btn hide-sm keys-btn" title="Shortcuts (?)" aria-label="Shortcuts" onClick={openHelp}>⌨</button>
-            <button className="btn ghost" onClick={signOut}>Logout</button>
+          <div className="side-ft">
+            <button type="button" className="hide-sm" onClick={openHelp}><I.IKeys /><span>{t('Shortcuts')}</span><kbd>?</kbd></button>
+            {shopId && (
+              <a href={href({ page: 'report', shopId, report: 'settings' })} aria-current={current === 'settings' ? 'page' : undefined}>
+                <I.ISettings /><span>{t('Settings')}</span>
+              </a>
+            )}
+            <button type="button" onClick={signOut}><I.ILogout /><span>{t('Logout')}</span><small className="inline">{me ? phone(me.phone) : ''}</small></button>
           </div>
         </aside>
         <div className={`scrim-side${drawer ? ' open' : ''}`} onClick={() => setDrawer(false)} />
 
         <header className="top">
-          <button className="icon-btn menu-btn" aria-label="Menu" onClick={() => setDrawer(true)}><I.IMenu /></button>
+          <button className="icon-btn menu-btn" aria-label={t('Menu')} onClick={() => setDrawer(true)}><I.IMenu /></button>
           <div className="title">
             <h1>{title}</h1>
-            {shop && route.page !== 'shops' && route.page !== 'market' && route.page !== 'person' && route.page !== 'requests' && <small>{[shop.name, shop.mandi].filter(Boolean).join(' · ')}</small>}
           </div>
           <span className="spacer" />
-          {shopId && <button className="new-btn top-new" onClick={() => openEntry()}>+ Nayi entry</button>}
-          <button className="goto" onClick={() => setGoto(true)} aria-label="Go To">
-            <I.ISearch /><span className="label">Dhoondhein…</span>
+          {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
+          {shopId && <button className="new-btn top-new" onClick={() => openEntry()}>+ {t('Nayi entry')}</button>}
+          <button className="goto" onClick={() => setGoto(true)} aria-label={t('Go To')}>
+            <I.ISearch /><span className="label">{t('Dhoondhein')}…</span>
           </button>
         </header>
 
@@ -236,18 +254,19 @@ export default function App() {
         </main>
 
         {shopId && (
-          <nav className="tabs" aria-label="Main">
-            <a href={href({ page: 'report', shopId, report: 'dashboard' })} aria-current={current === 'dashboard' ? 'page' : undefined}><I.IHome />Home</a>
-            <a href={href({ page: 'report', shopId, report: 'daybook' }) + periodQuery()} aria-current={current === 'daybook' ? 'page' : undefined}><I.IBook />Day Book</a>
-            <button className="plus" aria-label="Nayi entry" onClick={() => openEntry()}><span>+</span></button>
-            <a href={href({ page: 'report', shopId, report: 'outstanding' })} aria-current={current === 'outstanding' || route.page === 'grahak' ? 'page' : undefined}><I.IUdhaar />Udhaar</a>
-            <button onClick={() => setDrawer(true)}><I.IMenu />Menu{pending > 0 && <span className="badge">{pending}</span>}</button>
+          <nav className="tabs" aria-label={t('Main')}>
+            <a href={href({ page: 'report', shopId, report: 'dashboard' })} aria-current={current === 'dashboard' ? 'page' : undefined}><I.IHome />{t('Home')}</a>
+            <a href={href({ page: 'report', shopId, report: 'daybook' }) + periodQuery()} aria-current={current === 'daybook' ? 'page' : undefined}><I.IBook />{t('Day Book')}</a>
+            <button className="plus" aria-label={t('Nayi entry')} onClick={() => openEntry()}><span>+</span></button>
+            <a href={href({ page: 'report', shopId, report: 'outstanding' })} aria-current={current === 'outstanding' || route.page === 'grahak' ? 'page' : undefined}><I.IUdhaar />{t('Udhaar')}</a>
+            <button onClick={() => setDrawer(true)}><I.IMenu />{t('Menu')}{pending > 0 && <span className="badge">{pending}</span>}</button>
           </nav>
         )}
 
         {goto && <GoTo shopId={shopId} onClose={() => setGoto(false)} />}
         {shopId && <NewEntry key={shopId} shopId={shopId} />}
         <VoucherHost />
+        <ExportHost shop={shop ?? null} />
         <Help />
       </div>
     </SessionContext.Provider>
@@ -264,19 +283,20 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'stock': return <Stock key={shopId} shopId={shopId} />
     case 'items': return <Items key={shopId} shopId={shopId} />
     case 'team': return <Team key={shopId} shopId={shopId} />
+    case 'settings': return <Settings key={shopId} shopId={shopId} />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }
 }
 
 function titleOf(r: Route): string {
   switch (r.page) {
-    case 'report': return REPORTS.flatMap((g) => g.items).find((i) => i.report === r.report)?.label ?? 'Dashboard'
-    case 'grahak': return 'Grahak Khata'
-    case 'supplier': return 'Supplier Khata'
-    case 'shops': return 'Sab Dukaan'
-    case 'market': return 'Market Grahak'
-    case 'person': return 'Market Khata'
-    case 'requests': return 'Requests'
+    case 'report': return r.report === 'settings' ? t('Settings') : REPORTS.flatMap((g) => g.items).find((i) => i.report === r.report)?.label ?? t('Dashboard')
+    case 'grahak': return t('Grahak Khata')
+    case 'supplier': return t('Supplier Khata')
+    case 'shops': return t('Sab Dukaan')
+    case 'market': return t('Market Grahak')
+    case 'person': return t('Market Khata')
+    case 'requests': return t('Requests')
     default: return 'MandiPlus'
   }
 }

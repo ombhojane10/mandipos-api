@@ -51,9 +51,10 @@ export type Shop = {
   todaySalesPaise: number
 }
 
-export type ShopDetail = Shop & {
+export type Device = { code: string | null; label: string; web: boolean; appVersion: string; phone: string; name: string; lastSeenAt: string | null; addedAt: string }
+export type ShopDetail = Omit<Shop, 'devices'> & {
   team: { name: string; phone: string; role: 'admin' | 'accountant'; joinedAt: string }[]
-  devices: { code: string | null; label: string; appVersion: string; phone: string; lastSeenAt: string | null }[]
+  devices: Device[]
 }
 
 export type Summary = {
@@ -68,7 +69,7 @@ export type Summary = {
 }
 
 export type BuyerRow = {
-  id: string; name: string; phone: string; code: string; kind: string; hidden: boolean
+  id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; address?: string; destination?: string
   balancePaise: number; lastSlipOn: string | null; boughtPaise: number
 }
 
@@ -142,4 +143,11 @@ export type SupplierKhata = {
 export type Stock = {
   totals: { left: number; valuePaise: number; gaadis: number; stale: number }
   rows: { truckId: string; number: string; supplier: string; brands: string; arrivedOn: string; ageDays: number; stale: boolean; received: number; sold: number; spoiled: number; left: number; valuePaise: number }[]
+}
+
+export type BankAccount = { holder: string; bank: string; ifsc: string; account: string }
+export type ShopSettings = {
+  name: string; mandi: string; shopNo: string; phad: string; gstin: string; commodity: string
+  phone: string; dispatchPhone: string; slipCode: string; slipLimitPaise: number; udhaarRates: boolean; udhaarAlerts: boolean
+  address: string; bankAccounts: BankAccount[]; printerHost: string; printerDots: number
 }

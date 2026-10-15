@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { rupees, shortDate } from './format'
+import { t } from './i18n'
 
 type Point = { date: string; salesPaise: number; purchasePaise: number }
 
@@ -24,7 +25,7 @@ export function TrendChart({ data }: { data: Point[] }) {
 
   return (
     <div className="chart" onMouseLeave={() => setHover(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Bikri aur kharid, roz ki">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t('Bikri aur kharid, roz ki')}>
         {ticks.map((t) => (
           <g key={t}>
             <line x1={L} x2={W} y1={y(t)} y2={y(t)} className={t === 0 ? 'axis' : 'gl'} />
@@ -45,12 +46,12 @@ export function TrendChart({ data }: { data: Point[] }) {
       </svg>
       {h && hover !== null && (
         <div className="tip" style={{ left: `${((L + hover * step + step / 2) / W) * 100}%`, top: `${(Math.min(y(h.salesPaise), y(h.purchasePaise)) / H) * 100}%` }}>
-          <b>{shortDate(h.date)}</b>Bikri {rupees(h.salesPaise)} · Kharid {rupees(h.purchasePaise)}
+          <b>{shortDate(h.date)}</b>{t('Bikri')} {rupees(h.salesPaise)} · {t('Kharid')} {rupees(h.purchasePaise)}
         </div>
       )}
       <div className="legend" style={{ marginTop: 6 }}>
-        <span><span className="dot" style={{ background: SALES }} />Bikri</span>
-        <span><span className="dot" style={{ background: BUYS }} />Kharid</span>
+        <span><span className="dot" style={{ background: SALES }} />{t('Bikri')}</span>
+        <span><span className="dot" style={{ background: BUYS }} />{t('Kharid')}</span>
       </div>
     </div>
   )

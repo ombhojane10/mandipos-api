@@ -1,12 +1,13 @@
-import { addDays, dayHeader, shortDate, todayIst, date as fullDate } from './format'
+import { addDays, shortDate, todayIst, date as fullDate } from './format'
+import { t } from './i18n'
 
 export type Period = { key: string; from: string; to: string }
 
 export const PRESETS = [
-  { key: 'aaj', label: 'Aaj', days: 1, back: 0 },
-  { key: 'kal', label: 'Kal', days: 1, back: 1 },
-  { key: '7', label: '7 din', days: 7, back: 0 },
-  { key: '30', label: '30 din', days: 30, back: 0 },
+  { key: 'aaj', label: t('Aaj'), days: 1, back: 0 },
+  { key: 'kal', label: t('Kal'), days: 1, back: 1 },
+  { key: '7', label: t('{n} din', { n: 7 }), days: 7, back: 0 },
+  { key: '30', label: t('{n} din', { n: 30 }), days: 30, back: 0 },
 ]
 
 export function preset(key: string): Period {
@@ -17,11 +18,10 @@ export function preset(key: string): Period {
 }
 
 export function periodLabel(p: Period): string {
-  if (p.from === p.to) return p.from === todayIst() ? `Aaj, ${shortDate(p.from)}` : dayHeaderLong(p.from)
+  if (p.from === p.to) return p.from === todayIst() ? `${t('Aaj')}, ${shortDate(p.from)}` : dayHeaderLong(p.from)
   return `${shortDate(p.from)} – ${shortDate(p.to)}`
 }
 function dayHeaderLong(d: string) {
-  const h = dayHeader(d)
-  return h === 'Kal' ? `Kal, ${shortDate(d)}` : fullDate(d)
+  return d === addDays(todayIst(), -1) ? `${t('Kal')}, ${shortDate(d)}` : fullDate(d)
 }
 

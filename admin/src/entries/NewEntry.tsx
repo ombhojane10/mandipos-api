@@ -3,6 +3,7 @@ import { EntryForm } from './Entries'
 import { ENTRY_TYPES, OPEN_ENTRY, type EntryKind } from './kinds'
 import { ENTRY_KEYS, letterOf } from '../keys'
 import { Hot } from '../Hot'
+import { t } from '../i18n'
 
 /** The menu of entries, the open form, and the "saved" note after it. */
 export function NewEntry({ shopId }: { shopId: string }) {
@@ -26,12 +27,12 @@ export function NewEntry({ shopId }: { shopId: string }) {
           const k = ENTRY_KEYS[e.key.toLowerCase()]
           if (k && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setKind(k); setMenu(false) }
         }}>
-          <div className="sheet entry-menu" role="dialog" aria-label="Nayi entry" onClick={(e) => e.stopPropagation()}>
-            <div className="sheet-hd"><h3>Nayi entry</h3><button type="button" className="icon-btn" aria-label="Band karein" onClick={() => setMenu(false)}>✕</button></div>
+          <div className="sheet entry-menu" role="dialog" aria-label={t('Nayi entry')} onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-hd"><h3>{t('Nayi entry')}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={() => setMenu(false)}>✕</button></div>
             <div className="entry-grid">
-              {ENTRY_TYPES.map((t, i) => (
-                <button key={t.kind} type="button" autoFocus={i === 0} onClick={() => { setKind(t.kind); setMenu(false) }}>
-                  <b><Hot label={t.label} k={letterOf(ENTRY_KEYS, t.kind)} /></b><small>{t.sub}</small>
+              {ENTRY_TYPES.map((it, i) => (
+                <button key={it.kind} type="button" autoFocus={i === 0} onClick={() => { setKind(it.kind); setMenu(false) }}>
+                  <b><Hot label={it.label} k={letterOf(ENTRY_KEYS, it.kind)} /></b><small>{it.sub}</small>
                 </button>
               ))}
             </div>

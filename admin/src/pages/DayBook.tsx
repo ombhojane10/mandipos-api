@@ -7,9 +7,11 @@ import { hashQuery, href, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
 import { openVoucher } from '../keys'
 import { PeriodBar, Skeleton } from '../ui'
+import { t } from '../i18n'
+import { fileName, useExport, type ExportRow } from '../export/doc'
 
 const FILTERS = [
-  { key: 'sab', label: 'Sab' }, { key: 'bikri', label: 'Parchi' }, { key: 'vasooli', label: 'Vasooli' }, { key: 'kharcha', label: 'Kharcha' },
+  { key: 'sab', label: t('Sab') }, { key: 'bikri', label: t('Parchi') }, { key: 'vasooli', label: t('Vasooli') }, { key: 'kharcha', label: t('Kharcha') },
 ] as const
 type Filter = (typeof FILTERS)[number]['key']
 
@@ -17,10 +19,10 @@ type Filter = (typeof FILTERS)[number]['key']
 const NOT_KHARCHA = new Set(['handover', 'float', 'bank_jama', 'bank_nikala', 'mazdoori'])
 // eslint-disable-next-line react-refresh/only-export-components
 export const HEADS: Record<string, string> = {
-  kharcha: 'Kharcha', mazdoori: 'Mazdoori', bhada: 'Bhada', kiraya: 'Kiraya', tankhwah: 'Tankhwah', committee_di: 'Committee di',
-  bill: 'Bijli-pani', udhaar_diya: 'Udhaar diya', aur_gaya: 'Aur gaya', supplier: 'Supplier ko diya', handover: 'Malik ko diya',
-  float: 'Galla ko diya', bank_jama: 'Bank jama', bank_nikala: 'Bank se nikala', udhaar_wapas: 'Udhaar wapas',
-  committee_mili: 'Committee mili', aur_aaya: 'Aur aaya',
+  kharcha: t('Kharcha'), mazdoori: t('Mazdoori'), bhada: t('Bhada'), kiraya: t('Kiraya'), tankhwah: t('Tankhwah'), committee_di: t('Committee di'),
+  bill: t('Bijli-pani'), udhaar_diya: t('Udhaar diya'), aur_gaya: t('Aur gaya'), supplier: t('Supplier ko diya'), handover: t('Malik ko diya'),
+  float: t('Galla ko diya'), bank_jama: t('Bank jama'), bank_nikala: t('Bank se nikala'), udhaar_wapas: t('Udhaar wapas'),
+  committee_mili: t('Committee mili'), aur_aaya: t('Aur aaya'),
 }
 
 /** Tally's Day Book: every parchi, vasooli and kharcha, newest first; a cancelled parchi struck through. */
@@ -35,11 +37,28 @@ export function DayBook({ shopId }: { shopId: string }) {
   const sum = (pred: (e: DayEntry) => boolean) => live.filter(pred).reduce((t, e) => t + e.amountPaise, 0)
   const shown = (data ?? []).filter((e) => filter === 'sab' || (filter === 'bikri' && e.kind === 'slip') || (filter === 'vasooli' && e.kind === 'payment') || (filter === 'kharcha' && (e.kind === 'in' || e.kind === 'out')))
 
+  useExport(data ? () => {
+    const rows: ExportRow[] = []
+    let day = ''
+    for (const e of shown) {
+      if (period.from !== period.to && e.date !== day) rows.push({ band: true, cells: [dayHeader(e.date)] })
+      day = e.date
+      const v = describe(e)
+      rows.push({ strike: !!e.voided, cells: [time(e.at), v.type, v.no, [v.name, v.detail].filter(Boolean).join(' · '), e.nags ? count(e.nags) : '', v.amount, e.voided ? '' : v.pay ?? ''] })
+    }
+    return {
+      title: t('Day Book'), period: periodLabel(period), file: fileName(t('Day Book'), period.from, period.to),
+      summary: [[t('Parchi'), rupees(sum((e) => e.kind === 'slip'))], [t('Vasooli'), rupees(sum((e) => e.kind === 'payment'))], [t('Kharcha'), rupees(sum((e) => e.kind === 'out' && !NOT_KHARCHA.has(e.title)))]],
+      columns: [{ label: t('Samay') }, { label: t('Type') }, { label: t('No.') }, { label: t('Naam'), wide: true }, { label: t('Nag'), num: true }, { label: t('Rakam'), num: true }, { label: t('Payment') }],
+      rows,
+    }
+  } : null, [data, filter, period.from, period.to])
+
   return (
     <>
       <div className="toolbar">
         <PeriodBar value={period} onChange={setPeriod} />
-        <div className="seg" role="group" aria-label="Filter">
+        <div className="seg" role="group" aria-label={t('Filter')}>
           {FILTERS.map((f) => <button key={f.key} aria-pressed={filter === f.key} onClick={() => pick(f.key)}>{f.label}</button>)}
         </div>
       </div>
@@ -47,14 +66,14 @@ export function DayBook({ shopId }: { shopId: string }) {
       {!data ? <Skeleton /> : (
         <div className={`stack${loading ? ' dim' : ''}`}>
           <div className="card sum">
-            <div><span className="lb">Parchi</span><span className="v">{rupees(sum((e) => e.kind === 'slip'))}</span></div>
-            <div><span className="lb">Vasooli</span><span className="v jama">{rupees(sum((e) => e.kind === 'payment'))}</span></div>
-            <div><span className="lb">Kharcha</span><span className="v">{rupees(sum((e) => e.kind === 'out' && !NOT_KHARCHA.has(e.title)))}</span></div>
-            {sum((e) => e.kind === 'in' && !NOT_KHARCHA.has(e.title)) > 0 && <div><span className="lb">Aaya</span><span className="v">{rupees(sum((e) => e.kind === 'in' && !NOT_KHARCHA.has(e.title)))}</span></div>}
+            <div><span className="lb">{t('Parchi')}</span><span className="v">{rupees(sum((e) => e.kind === 'slip'))}</span></div>
+            <div><span className="lb">{t('Vasooli')}</span><span className="v jama">{rupees(sum((e) => e.kind === 'payment'))}</span></div>
+            <div><span className="lb">{t('Kharcha')}</span><span className="v">{rupees(sum((e) => e.kind === 'out' && !NOT_KHARCHA.has(e.title)))}</span></div>
+            {sum((e) => e.kind === 'in' && !NOT_KHARCHA.has(e.title)) > 0 && <div><span className="lb">{t('Aaya')}</span><span className="v">{rupees(sum((e) => e.kind === 'in' && !NOT_KHARCHA.has(e.title)))}</span></div>}
           </div>
           <div className="card">
             <EntryTable shopId={shopId} entries={shown} multiDay={period.from !== period.to} />
-            {shown.length === 0 && <p className="empty">{periodLabel(period)} ko koi entry nahi</p>}
+            {shown.length === 0 && <p className="empty">{t('{p} ko koi entry nahi', { p: periodLabel(period) })}</p>}
           </div>
         </div>
       )}
@@ -70,8 +89,8 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
       <table className="tbl fold">
         <thead>
           <tr>
-            <th>Samay</th><th>Type</th><th className="opt-col">No.</th><th>Naam</th>
-            {!compact && <th className="num">Nag</th>}<th className="num">Rakam</th><th>Payment</th>
+            <th>{t('Samay')}</th><th>{t('Type')}</th><th className="opt-col">{t('No.')}</th><th>{t('Naam')}</th>
+            {!compact && <th className="num">{t('Nag')}</th>}<th className="num">{t('Rakam')}</th><th>{t('Payment')}</th>
           </tr>
         </thead>
         <tbody>
@@ -94,7 +113,7 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
                     <span className="name b">{v.name}</span>
                     <small>
                       <span className="show-sm">{time(e.at)} · {v.type}{v.no ? ` ${v.no}` : ''}{e.voided || v.detail ? ' · ' : ''}</span>
-                      {e.voided ? <span className="due">{e.voided === 'edited' ? 'Badli' : 'Hatayi'}</span> : v.detail}
+                      {e.voided ? <span className="due">{e.voided === 'edited' ? t('Badli') : t('Hatayi')}</span> : v.detail}
                     </small>
                   </td>
                   {!compact && <td className="num opt-col muted">{e.nags ? count(e.nags) : ''}</td>}
@@ -109,7 +128,7 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
           })}
         </tbody>
       </table>
-      {compact && entries.length === 0 && <p className="empty">Abhi koi entry nahi</p>}
+      {compact && entries.length === 0 && <p className="empty">{t('Abhi koi entry nahi')}</p>}
     </div>
   )
 }
@@ -121,22 +140,22 @@ function describe(e: DayEntry) {
     const parts = [e.cashPaise && 'Cash', e.upiPaise && 'UPI', e.udhaarPaise && 'Udhaar'].filter(Boolean) as string[]
     const pay = e.payMode === 'free' ? 'Free' : parts.length > 1 ? 'Mixed' : parts[0] ?? 'Udhaar'
     return {
-      type: 'Parchi', tone: 'green', no: e.title.replace(/^Parchi /, ''), name: e.party || 'Cash',
-      detail: [e.nags && `${count(e.nags)} nag`, parts.length > 1 && [e.cashPaise && `Cash ${rupees(e.cashPaise)}`, e.upiPaise && `UPI ${rupees(e.upiPaise)}`, e.udhaarPaise && `Udhaar ${rupees(e.udhaarPaise)}`].filter(Boolean).join(' + '), e.staff].filter(Boolean).join(' · '),
-      amount: rupees(e.amountPaise), pay, payTone: pay === 'Udhaar' ? 'amber' : pay === 'UPI' ? 'blue' : pay === 'Mixed' ? 'grey' : 'green',
+      type: t('Parchi'), tone: 'green', no: e.title.replace(/^Parchi /, ''), name: e.party || t('Cash'),
+      detail: [e.nags && t('{n} nag', { n: count(e.nags) }), parts.length > 1 && [e.cashPaise && `${t('Cash')} ${rupees(e.cashPaise)}`, e.upiPaise && `UPI ${rupees(e.upiPaise)}`, e.udhaarPaise && `${t('Udhaar')} ${rupees(e.udhaarPaise)}`].filter(Boolean).join(' + '), e.staff].filter(Boolean).join(' · '),
+      amount: rupees(e.amountPaise), pay: t(pay), payTone: pay === 'Udhaar' ? 'amber' : pay === 'UPI' ? 'blue' : pay === 'Mixed' ? 'grey' : 'green',
     }
   }
   if (e.kind === 'payment') {
     const pay = e.cashPaise && e.upiPaise ? 'Mixed' : e.upiPaise ? 'UPI' : 'Cash'
     return {
-      type: 'Vasooli', tone: 'blue', no: e.title.replace(/^Raseed /, '').replace('Vasooli', ''), name: e.party, detail: '',
-      amount: rupees(e.amountPaise), pay, payTone: pay === 'UPI' ? 'blue' : pay === 'Mixed' ? 'grey' : 'green',
+      type: t('Vasooli'), tone: 'blue', no: e.title.replace(/^Raseed /, '').replace('Vasooli', ''), name: e.party, detail: '',
+      amount: rupees(e.amountPaise), pay: t(pay), payTone: pay === 'UPI' ? 'blue' : pay === 'Mixed' ? 'grey' : 'green',
     }
   }
   const book = e.mode === 'upi' || e.mode === 'bank' ? 'Bank' : e.mode === 'office' ? 'Office' : 'Galla'
   return {
-    type: e.kind === 'out' ? 'Kharcha' : 'Aaya', tone: e.kind === 'out' ? 'red' : 'grey', no: '',
-    name: HEADS[e.title] ?? (e.title || 'Kharcha'), detail: [e.party, e.note].filter(Boolean).join(' · '),
-    amount: `${e.kind === 'out' ? '−' : '+'}${rupees(e.amountPaise)}`, pay: book, payTone: 'grey',
+    type: e.kind === 'out' ? t('Kharcha') : t('Aaya'), tone: e.kind === 'out' ? 'red' : 'grey', no: '',
+    name: HEADS[e.title] ?? (e.title || t('Kharcha')), detail: [e.party, e.note].filter(Boolean).join(' · '),
+    amount: `${e.kind === 'out' ? '−' : '+'}${rupees(e.amountPaise)}`, pay: t(book), payTone: 'grey',
   }
 }

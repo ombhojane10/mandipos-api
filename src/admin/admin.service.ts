@@ -86,13 +86,16 @@ export class AdminService {
     const team = await this.db.query<{ name: string; phone: string; role: string; created_at: Date }>(
       `SELECT u.name, u.phone, m.role, m.created_at FROM shop_members m JOIN users u ON u.id = m.user_id
        WHERE m.shop_id = $1 ORDER BY m.created_at`, [shopId]);
-    const devices = await this.db.query<{ code: string | null; label: string; app_version: string; last_seen_at: Date | null; phone: string }>(
-      `SELECT d.code, d.label, d.app_version, d.last_seen_at, u.phone FROM devices d JOIN users u ON u.id = d.user_id
-       WHERE d.shop_id = $1 AND d.revoked_at IS NULL ORDER BY d.code`, [shopId]);
+    const devices = await this.db.query<{ code: string | null; label: string; platform: string; app_version: string; last_seen_at: Date | null; created_at: Date; phone: string; name: string }>(
+      `SELECT d.code, d.label, d.platform, d.app_version, d.last_seen_at, d.created_at, u.phone, u.name FROM devices d JOIN users u ON u.id = d.user_id
+       WHERE d.shop_id = $1 AND d.revoked_at IS NULL ORDER BY d.last_seen_at DESC NULLS LAST, d.code`, [shopId]);
     return {
       ...s,
       team: team.map((t) => ({ name: t.name, phone: t.phone, role: t.role === 'owner' ? 'admin' : 'accountant', joinedAt: t.created_at.toISOString() })),
-      devices: devices.map((d) => ({ code: d.code, label: d.label, appVersion: d.app_version, phone: d.phone, lastSeenAt: d.last_seen_at?.toISOString() ?? null })),
+      devices: devices.map((d) => ({
+        code: d.code, label: d.label, web: d.platform === 'web', appVersion: d.app_version, phone: d.phone, name: d.name,
+        lastSeenAt: d.last_seen_at?.toISOString() ?? null, addedAt: d.created_at.toISOString(),
+      })),
     };
   }
 
@@ -175,15 +178,15 @@ export class AdminService {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
       const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-      const rows = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; bal: string | null; last_at: string | null; bought: string }>(
-        `SELECT g.id, g.name, g.phone, g.code, g.kind, g.hidden, x.bal,
+      const rows = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; address: string; destination: string; bal: string | null; last_at: string | null; bought: string }>(
+        `SELECT g.id, g.name, g.phone, g.code, g.kind, g.hidden, g.address, g.destination, x.bal,
                 (SELECT MAX(business_date)::text FROM ${LIVE_BILLS} lb WHERE lb.buyer_id = g.id) AS last_at,
                 (SELECT COALESCE(SUM(total_paise),0) FROM ${LIVE_BILLS} lb WHERE lb.buyer_id = g.id) AS bought
          FROM buyers g LEFT JOIN (${BALANCES}) x ON x.buyer_id = g.id
          WHERE ($1 = '' OR g.name ILIKE $2 OR g.phone LIKE $2 OR g.code ILIKE $2)
          ORDER BY g.hidden, GREATEST(COALESCE(x.bal, 0), 0) DESC, g.name LIMIT 60`, [q, like])).rows;
       return rows.map((r) => ({
-        id: r.id, name: r.name, phone: r.phone, code: r.code, kind: r.kind, hidden: r.hidden,
+        id: r.id, name: r.name, phone: r.phone, code: r.code, kind: r.kind, hidden: r.hidden, address: r.address, destination: r.destination,
         balancePaise: n(r.bal), lastSlipOn: r.last_at ? day(r.last_at) : null, boughtPaise: n(r.bought),
       }));
     });
@@ -390,6 +393,8 @@ export class AdminService {
                 EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id) AS voided
          FROM collections c WHERE c.bill_id = $1 ORDER BY c.created_at`, [billId])).rows;
       const voided = (await tx.query<{ reason: string; at: Date }>(`SELECT reason, created_at AS at FROM bill_voids WHERE bill_id = $1 LIMIT 1`, [billId])).rows[0];
+      const delivery = (await tx.query<{ address: string; destination: string }>(
+        `SELECT address, destination FROM delivery_slips WHERE bill_id = $1 ORDER BY created_at DESC LIMIT 1`, [billId])).rows[0];
       const paidLater = later.filter((c) => !c.voided).reduce((s, c) => s + n(c.amount), 0);
       return {
         id: b.id, number: b.number, slipNo: b.slip_no, at: b.created_at.toISOString(), date: b.day,
@@ -401,6 +406,7 @@ export class AdminService {
         lines: lines.map((l) => ({ brand: l.brand ?? 'Maal', grade: l.grade, qty: l.qty, ratePaise: n(l.rate), leak: l.leak })),
         payments: later.map((c) => ({ id: c.id, at: c.at.toISOString(), amountPaise: n(c.amount), receiptNo: c.receipt_no, voided: c.voided })),
         voided: voided ? { reason: voided.reason, at: voided.at.toISOString() } : null,
+        delivery: delivery ? { address: delivery.address, stand: delivery.destination } : null,
       };
     });
   }

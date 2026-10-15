@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { rupees, count } from '../format'
+import { t } from '../i18n'
 import { booksChanged } from '../useLoad'
-import { BuyerPicker, Field, Money, Seg, Sheet, type PickedBuyer } from './fields'
+import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
 import type { EntryKind } from './kinds'
 
 type Options = {
@@ -55,8 +56,18 @@ type FormProps = { shopId: string; onClose: () => void; onDone: (msg: string) =>
 
 // ---------------------------------------------------------------- Nayi parchi
 
-const GRADES = [{ key: '1', label: '1st' }, { key: '2', label: '2nd' }, { key: '3', label: '3rd' }, { key: 'mix', label: 'Mix' }] as const
+const GRADES = [{ key: '1', label: '1st' }, { key: '2', label: '2nd' }, { key: '3', label: '3rd' }, { key: 'mix', label: t('Mix') }] as const
 type Line = { grade: '1' | '2' | '3' | 'mix'; qty: number; ratePaise: number }
+/** As the app's Packing: which katta (kept as its bag name), and what one holds. */
+const KATTA_NAMES = ['Green', 'Jaipur', 'White'] as const
+const KATTA_SIZES = [{ key: 'katta10', per: 10 }, { key: 'katta15', per: 15 }, { key: 'katta20', per: 20 }] as const
+type KattaSize = (typeof KATTA_SIZES)[number]['key']
+const PANNI_NAMES = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'] as const
+type Pay = 'cash' | 'upi' | 'credit' | 'split' | 'after' | 'free'
+
+/** What this browser remembers between parchis: the accountant's name and the mazdoori rate. */
+const remembered = (key: string, fallback: string) => { try { return localStorage.getItem(key) ?? fallback } catch { return fallback } }
+const remember = (key: string, v: string) => { try { localStorage.setItem(key, v) } catch { /* private window */ } }
 
 function ParchiForm({ shopId, onClose, onDone }: FormProps) {
   const o = useOptions(shopId)
@@ -64,11 +75,24 @@ function ParchiForm({ shopId, onClose, onDone }: FormProps) {
   const [buyer, setBuyer] = useState<PickedBuyer | null>(null)
   const [truckId, setTruckId] = useState('')
   const [lines, setLines] = useState<Line[]>([{ grade: '1', qty: 0, ratePaise: 0 }])
-  const [pay, setPay] = useState<'cash' | 'upi' | 'credit' | 'split' | 'after'>('cash')
+  const [pay, setPay] = useState<Pay>('cash')
   const [cash, setCash] = useState(0)
   const [upi, setUpi] = useState(0)
   const [bank, setBank] = useState('')
-  const [packing, setPacking] = useState<'loose' | 'katta10' | 'panni'>('loose')
+  const [pack, setPack] = useState<'loose' | 'katta' | 'panni'>('loose')
+  const [size, setSize] = useState<KattaSize>('katta10')
+  const [kattaName, setKattaName] = useState('')
+  const [kattas, setKattas] = useState('')
+  const [panniName, setPanniName] = useState('')
+  const [parchune, setParchune] = useState(false)
+  const [labour, setLabour] = useState(false)
+  const [labourQty, setLabourQty] = useState('')
+  const [rate, setRate] = useState(() => Number(remembered('mp.labourRate', '30')) || 30)
+  const [delivery, setDelivery] = useState(false)
+  const [address, setAddress] = useState('')
+  const [stand, setStand] = useState('')
+  const [staff, setStaff] = useState(() => remembered('mp.staff', ''))
+  const [slipNo, setSlipNo] = useState('')
 
   const truck = o?.trucks.find((t) => t.id === truckId) ?? o?.trucks[0]
   useEffect(() => { if (o?.trucks[0] && !truckId) setTruckId(o.trucks[0].id) }, [o, truckId])
@@ -77,63 +101,150 @@ function ParchiForm({ shopId, onClose, onDone }: FormProps) {
   const bhav = (grade: string) => o?.rates.find((r) => r.brandId === truck?.brandId && r.grade === grade)?.ratePaise ?? 0
   useEffect(() => { setLines((ls) => ls.map((l) => (l.ratePaise ? l : { ...l, ratePaise: bhav(l.grade) }))) }, [truck?.id, o]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const free = pay === 'free'
   const qty = lines.reduce((s, l) => s + l.qty, 0)
-  const total = lines.reduce((s, l) => s + l.qty * l.ratePaise, 0)
-  const walkIn = !buyer || (buyer.id === null && buyer.name === 'Cash')
+  const total = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0)
+  const walkIn = !buyer || (buyer.id === null && isWalkInName(buyer.name))
+  const per = KATTA_SIZES.find((k) => k.key === size)!.per
+  const labourNag = labour ? (Number(labourQty) || qty) : 0
   const set = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+  // "Kitne katta" × what one holds becomes the 1st-line nag, as the app's kattaRow.
+  const fillKattas = (count: string, p = per) => {
+    setKattas(count)
+    const k = Number(count) || 0
+    if (k > 0) setLines((ls) => ls.map((l, i) => (i === 0 ? { ...l, qty: k * p } : l)))
+  }
+  const choosePack = (p: typeof pack) => {
+    if (p === pack) return
+    setPack(p)
+    // Tied goods are charged as a matter of course; a loose parchune carries none.
+    setLabour(p !== 'loose'); setLabourQty(''); setKattas('')
+    if (p !== 'panni') setPanniName('')
+    if (p === 'katta') setParchune(false)
+    if (p !== 'katta') setKattaName('')
+  }
+  const pickBuyer = (b: PickedBuyer | null) => {
+    setBuyer(b)
+    if (b?.id === null && b.name === 'Cash') setPay('cash')
+    else if (b?.id === null && b.name === 'Bank') setPay('upi')
+    else if (b?.id && pay === 'cash') setPay('credit')
+    if (b?.id) { setAddress(b.address ?? ''); setStand(b.destination ?? '') }
+  }
 
-  if (o && o.commodity === 'amrud') return <Sheet title="Nayi Parchi" onClose={onClose} onSave={onClose} saving={false} error="" saveLabel="Theek hai"><p className="muted">Amrud ki parchi app se banayein.</p></Sheet>
+  if (o && o.commodity === 'amrud') return <Sheet title={t('Nayi Parchi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki parchi app se banayein.')}</p></Sheet>
   return (
-    <Sheet title="Nayi Parchi" onClose={onClose} saving={saving} error={error} saveLabel={total ? `Save · ${rupees(total)}` : 'Save'}
+    <Sheet title={t('Nayi Parchi')} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
       onSave={() => {
-        if (!truck) return setError('Koi khuli gaadi nahi')
-        if (!qty) return setError('Nag daalein')
-        if (walkIn && (pay === 'credit' || pay === 'after' || (pay === 'split' && cash + upi < total))) return setError('Udhaar ke liye grahak chunein')
+        if (!truck) return setError(t('Koi khuli gaadi nahi'))
+        if (!qty) return setError(t('Nag daalein'))
+        if (!free && walkIn && (pay === 'credit' || pay === 'after' || (pay === 'split' && cash + upi < total))) return setError(t('Udhaar ke liye grahak chunein'))
+        if (delivery && !address.trim() && !stand.trim()) return setError(t('Delivery ka pata daalein'))
+        remember('mp.labourRate', String(rate)); remember('mp.staff', staff.trim())
         void save(`/v1/admin/shops/${shopId}/entries/parchi`, {
           buyerId: buyer?.id ?? undefined, buyerName: buyer && !buyer.id ? buyer.name : undefined, truckId: truck.id,
-          lines: lines.filter((l) => l.qty > 0), pay, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined, packing,
-        }, (r) => `Parchi #${r.slipNo} save hui`)
+          lines: lines.filter((l) => l.qty > 0), pay, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined,
+          packing: pack === 'katta' ? size : pack, kattaName: pack === 'katta' ? kattaName : undefined,
+          panniName: pack === 'panni' ? panniName : undefined, parchune: pack !== 'katta' && parchune,
+          labour, labourQty: labour ? labourNag : 0, labourRatePaise: rate,
+          delivery: delivery ? { address, stand } : undefined, staff: staff.trim() || undefined,
+          slipNo: Number(slipNo) > 0 ? Number(slipNo) : undefined,
+        }, (r) => t('Parchi #{n} save hui', { n: String(r.slipNo) }))
       }}>
-      <Field label="Grahak"><BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} walkIn autoFocus /></Field>
-      <Field label="Gaadi">
-        {!o ? <div className="sk" /> : o.trucks.length === 0 ? <p className="muted">Koi khuli gaadi nahi — pehle Nayi Gaadi jodein</p> : (
+      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus /></Field>
+      <Field label={t('Gaadi')}>
+        {!o ? <div className="sk" /> : o.trucks.length === 0 ? <p className="muted">{t('Koi khuli gaadi nahi — pehle Nayi Gaadi jodein')}</p> : (
           <select className="field" value={truck?.id} onChange={(e) => setTruckId(e.target.value)}>
-            {o.trucks.map((t) => <option key={t.id} value={t.id}>{t.number} · {t.brand} · {count(t.left)} nag baaki</option>)}
+            {o.trucks.map((tr) => <option key={tr.id} value={tr.id}>{tr.number} · {tr.brand} · {t('{n} nag baaki', { n: count(tr.left) })}</option>)}
           </select>
         )}
       </Field>
+
       <div className="fld">
-        <span className="fld-lb">Maal</span>
+        <span className="fld-lb">{t('Packing')}</span>
+        <div className="box">
+          <Seg value={pack} onChange={choosePack} options={[{ key: 'loose', label: t('Loose') }, { key: 'katta', label: t('Katta') }, { key: 'panni', label: t('Panni') }]} />
+          {pack === 'katta' && (
+            <>
+              <span className="fld-lb">{t('Kaunsa katta')}</span>
+              <Chips value={kattaName} onChange={setKattaName} clearable options={KATTA_NAMES.map((k) => ({ key: k, label: k }))} />
+              <span className="fld-lb">{t('Ek katte mein dana')}</span>
+              <Chips value={size} onChange={(v) => { if (!v) return; setSize(v); if (Number(kattas) > 0) fillKattas(kattas, KATTA_SIZES.find((k) => k.key === v)!.per) }}
+                options={KATTA_SIZES.map((k) => ({ key: k.key, label: String(k.per) }))} />
+              <div className="inline-in">
+                <span className="fld-lb">{t('Kitne katta')}</span>
+                <input className="field short" inputMode="numeric" placeholder={qty ? String(Math.ceil(qty / per)) : '0'} value={kattas}
+                  onChange={(e) => fillKattas(e.target.value.replace(/\D/g, '').slice(0, 5))} />
+                <b className="money">× {per}{Number(kattas) > 0 ? ` = ${t('{n} nag', { n: count(Number(kattas) * per) })}` : ''}</b>
+              </div>
+            </>
+          )}
+          {pack === 'panni' && (
+            <>
+              <span className="fld-lb">{t('Kaunsi panni')}</span>
+              <Chips value={panniName} onChange={setPanniName} clearable options={PANNI_NAMES.map((k) => ({ key: k, label: k }))} />
+            </>
+          )}
+          {pack !== 'katta' && <Tick label={t('Parchune')} on={parchune} onChange={(v) => { setParchune(v); if (v && pack === 'loose') setLabour(false) }} />}
+        </div>
+      </div>
+
+      <div className="fld">
+        <span className="fld-lb">{t('Maal')}</span>
         <div className="lines-in">
           {lines.map((l, i) => (
             <div key={i} className="line-in">
-              <select className="field" value={l.grade} aria-label="Grade" onChange={(e) => set(i, { grade: e.target.value as Line['grade'], ratePaise: l.ratePaise || bhav(e.target.value) })}>
+              <select className="field" value={l.grade} aria-label={t('Grade')} onChange={(e) => set(i, { grade: e.target.value as Line['grade'], ratePaise: l.ratePaise || bhav(e.target.value) })}>
                 {GRADES.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
               </select>
-              <input className="field" inputMode="numeric" placeholder="Nag" aria-label="Nag" value={l.qty || ''} onChange={(e) => set(i, { qty: Number(e.target.value.replace(/\D/g, '') || 0) })} />
-              <Money value={l.ratePaise} onChange={(v) => set(i, { ratePaise: v })} placeholder="Bhav" />
-              <span className="money line-amt">{rupees(l.qty * l.ratePaise)}</span>
-              {lines.length > 1 && <button type="button" className="icon-btn" aria-label="Hatayein" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button>}
+              <input className="field" inputMode="numeric" placeholder={t('Nag')} aria-label={t('Nag')} value={l.qty || ''} onChange={(e) => { if (i === 0) setKattas(''); set(i, { qty: Number(e.target.value.replace(/\D/g, '') || 0) }) }} />
+              <Money value={free ? 0 : l.ratePaise} onChange={(v) => set(i, { ratePaise: v })} placeholder={t('Bhav')} />
+              <span className="money line-amt">{rupees(free ? 0 : l.qty * l.ratePaise)}</span>
+              {lines.length > 1 ? <button type="button" className="icon-btn" aria-label={t('Hatayein')} onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button> : <span className="icon-gap" />}
             </div>
           ))}
-          {lines.length < 4 && <button type="button" className="btn ghost" style={{ justifySelf: 'start' }} onClick={() => setLines([...lines, { grade: '2', qty: 0, ratePaise: bhav('2') }])}>+ Aur grade</button>}
+          {lines.length < 4 && <button type="button" className="btn ghost" style={{ justifySelf: 'start' }} onClick={() => setLines([...lines, { grade: '2', qty: 0, ratePaise: bhav('2') }])}>+ {t('Aur grade')}</button>}
         </div>
       </div>
-      <Field label="Packing"><Seg value={packing} onChange={setPacking} options={[{ key: 'loose', label: 'Loose' }, { key: 'katta10', label: 'Katta' }, { key: 'panni', label: 'Panni' }]} /></Field>
-      <Field label="Payment">
-        <Seg value={pay} onChange={setPay} options={[{ key: 'cash', label: 'Cash' }, { key: 'upi', label: 'UPI' }, { key: 'credit', label: 'Udhaar' }, { key: 'split', label: 'Kuch' }, { key: 'after', label: 'Baad mein' }]} />
+
+      <div className="box">
+        <Tick label={t('Mazdoori jodein')} on={labour} onChange={setLabour}>
+          {labour && (
+            <div className="inline-in">
+              <input className="field short" inputMode="numeric" aria-label={t('Kitne dana')} placeholder={String(qty || 0)} value={labourQty}
+                onChange={(e) => setLabourQty(e.target.value.replace(/\D/g, '').slice(0, 5))} />
+              <span className="muted">{t('dana')} ×</span>
+              <span className="short"><Money value={rate} onChange={setRate} /></span>
+              <b className="money">= {rupees(labourNag * rate)}</b>
+            </div>
+          )}
+        </Tick>
+        <Tick label={t('Delivery')} on={delivery} onChange={setDelivery} />
+        {delivery && (
+          <div className="row2">
+            <Field label={t('Pata')}><input className="field" value={address} maxLength={200} onChange={(e) => setAddress(e.target.value)} /></Field>
+            <Field label={t('Stand')}><input className="field" value={stand} maxLength={120} onChange={(e) => setStand(e.target.value)} /></Field>
+          </div>
+        )}
+      </div>
+
+      <Field label={t('Payment')}>
+        <Seg value={pay} onChange={setPay} options={[{ key: 'cash', label: t('Cash') }, { key: 'upi', label: 'UPI' }, { key: 'credit', label: t('Udhaar') }, { key: 'split', label: t('Kuch') }, { key: 'after', label: t('Baad mein') }, { key: 'free', label: t('Free') }]} />
       </Field>
       {pay === 'split' && (
         <div className="row2">
-          <Field label="Cash"><Money value={cash} onChange={setCash} /></Field>
+          <Field label={t('Cash')}><Money value={cash} onChange={setCash} /></Field>
           <Field label="UPI"><Money value={upi} onChange={setUpi} /></Field>
         </div>
       )}
       {(pay === 'upi' || (pay === 'split' && upi > 0)) && o && o.banks.length > 0 && (
-        <Field label="Kis bank mein"><select className="field" value={bank} onChange={(e) => setBank(e.target.value)}>{o.banks.map((b) => <option key={b}>{b}</option>)}</select></Field>
+        <Field label={t('Kis bank mein')}><select className="field" value={bank} onChange={(e) => setBank(e.target.value)}>{o.banks.map((b) => <option key={b}>{b}</option>)}</select></Field>
       )}
-      <div className="total-line"><span>{count(qty)} nag</span><b className="money">{rupees(total)}</b>
-        {pay === 'split' && total > cash + upi && <span className="due">Udhaar {rupees(total - cash - upi)}</span>}</div>
+      <div className="row2">
+        <Field label={t('Accountant')}><input className="field" value={staff} maxLength={60} placeholder="Website" onChange={(e) => setStaff(e.target.value)} /></Field>
+        <Field label={t('Parchi no.')}><input className="field" inputMode="numeric" value={slipNo} placeholder={t('Agla')} onChange={(e) => setSlipNo(e.target.value.replace(/\D/g, '').slice(0, 7))} /></Field>
+      </div>
+      <div className="total-line"><span>{t('{n} nag', { n: count(qty) })}{pack === 'katta' && qty ? ` · ${t('{n} katta', { n: count(Math.ceil(qty / per)) })}` : ''}</span><b className="money">{free ? t('Free') : rupees(total)}</b>
+        {pay === 'split' && total > cash + upi && <span className="due">{t('Udhaar')} {rupees(total - cash - upi)}</span>}</div>
     </Sheet>
   )
 }
@@ -150,25 +261,25 @@ function VasooliForm({ shopId, onClose, onDone }: FormProps) {
   const [ref, setRef] = useState('')
   useEffect(() => { if (o?.banks[0]) setBank(o.banks[0]) }, [o])
   return (
-    <Sheet title="Vasooli" onClose={onClose} saving={saving} error={error} saveLabel={cash + upi ? `Save · ${rupees(cash + upi)}` : 'Save'}
+    <Sheet title={t('Vasooli')} onClose={onClose} saving={saving} error={error} saveLabel={cash + upi ? `${t('Save')} · ${rupees(cash + upi)}` : t('Save')}
       onSave={() => {
-        if (!buyer?.id) return setError('Grahak chunein')
-        if (cash + upi <= 0) return setError('Rakam daalein')
+        if (!buyer?.id) return setError(t('Grahak chunein'))
+        if (cash + upi <= 0) return setError(t('Rakam daalein'))
         void save(`/v1/admin/shops/${shopId}/entries/vasooli`, { buyerId: buyer.id, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined, paymentRef: ref || undefined },
-          (r) => `Raseed #${r.receiptNo} save hui`)
+          (r) => t('Raseed #{n} save hui', { n: String(r.receiptNo) }))
       }}>
-      <Field label="Grahak"><BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus /></Field>
+      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus /></Field>
       <div className="row2">
-        <Field label="Cash"><Money value={cash} onChange={setCash} /></Field>
+        <Field label={t('Cash')}><Money value={cash} onChange={setCash} /></Field>
         <Field label="UPI"><Money value={upi} onChange={setUpi} /></Field>
       </div>
       {upi > 0 && (
         <div className="row2">
-          {o && o.banks.length > 0 && <Field label="Kis bank mein"><select className="field" value={bank} onChange={(e) => setBank(e.target.value)}>{o.banks.map((b) => <option key={b}>{b}</option>)}</select></Field>}
-          <Field label="UTR (optional)"><input className="field" value={ref} maxLength={40} onChange={(e) => setRef(e.target.value)} /></Field>
+          {o && o.banks.length > 0 && <Field label={t('Kis bank mein')}><select className="field" value={bank} onChange={(e) => setBank(e.target.value)}>{o.banks.map((b) => <option key={b}>{b}</option>)}</select></Field>}
+          <Field label={t('UTR (optional)')}><input className="field" value={ref} maxLength={40} onChange={(e) => setRef(e.target.value)} /></Field>
         </div>
       )}
-      {buyer?.balancePaise ? <p className="muted">Abhi baaki {rupees(buyer.balancePaise)} · vasooli ke baad {rupees(buyer.balancePaise - cash - upi)}</p> : null}
+      {buyer?.balancePaise ? <p className="muted">{t('Abhi baaki {due} · vasooli ke baad {after}', { due: rupees(buyer.balancePaise), after: rupees(buyer.balancePaise - cash - upi) })}</p> : null}
     </Sheet>
   )
 }
@@ -176,12 +287,12 @@ function VasooliForm({ shopId, onClose, onDone }: FormProps) {
 // ---------------------------------------------------------------- Kharcha / Aaya
 
 const OUT_HEADS = [
-  ['kharcha', 'Kharcha'], ['mazdoori', 'Mazdoori'], ['bhada', 'Bhada'], ['kiraya', 'Kiraya'], ['tankhwah', 'Tankhwah'],
-  ['committee_di', 'Committee di'], ['bill', 'Bijli-pani'], ['udhaar_diya', 'Udhaar diya'], ['aur_gaya', 'Aur'],
-  ['handover', 'Malik ko diya'], ['float', 'Galla ko diya'], ['bank_jama', 'Bank jama'], ['bank_nikala', 'Bank se nikala'],
+  ['kharcha', t('Kharcha')], ['mazdoori', t('Mazdoori')], ['bhada', t('Bhada')], ['kiraya', t('Kiraya')], ['tankhwah', t('Tankhwah')],
+  ['committee_di', t('Committee di')], ['bill', t('Bijli-pani')], ['udhaar_diya', t('Udhaar diya')], ['aur_gaya', t('Aur')],
+  ['handover', t('Malik ko diya')], ['float', t('Galla ko diya')], ['bank_jama', t('Bank jama')], ['bank_nikala', t('Bank se nikala')],
 ] as const
-const IN_HEADS = [['udhaar_wapas', 'Udhaar wapas'], ['committee_mili', 'Committee mili'], ['aur_aaya', 'Aur aaya']] as const
-const BOOKS = [{ key: 'cash', label: 'Galla' }, { key: 'office', label: 'Office' }, { key: 'upi', label: 'Bank' }] as const
+const IN_HEADS = [['udhaar_wapas', t('Udhaar wapas')], ['committee_mili', t('Committee mili')], ['aur_aaya', t('Aur aaya')]] as const
+const BOOKS = [{ key: 'cash', label: t('Galla') }, { key: 'office', label: t('Office') }, { key: 'upi', label: t('Bank') }] as const
 /** Where a transfer leaves from (the app only offers these books for each). */
 const FROM: Record<string, string> = { handover: 'cash', float: 'office', bank_nikala: 'upi' }
 
@@ -196,28 +307,28 @@ function KharchaForm({ shopId, onClose, onDone }: FormProps) {
   const heads = dir === 'out' ? OUT_HEADS : IN_HEADS
   const fixed = FROM[cat]
   return (
-    <Sheet title="Kharcha / Aaya" onClose={onClose} saving={saving} error={error}
+    <Sheet title={t('Kharcha / Aaya')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
-        if (amount <= 0) return setError('Rakam daalein')
-        if (cat.startsWith('aur_') && !note.trim()) return setError('Wajah likhein')
+        if (amount <= 0) return setError(t('Rakam daalein'))
+        if (cat.startsWith('aur_') && !note.trim()) return setError(t('Wajah likhein'))
         void save(`/v1/admin/shops/${shopId}/entries/daybook`, { direction: dir, category: cat, mode: fixed ?? mode, amountPaise: amount, party, note },
-          () => `${heads.find((h) => h[0] === cat)?.[1]} ${rupees(amount)} save hua`)
+          () => t('{head} {amount} save hua', { head: heads.find((h) => h[0] === cat)?.[1] ?? '', amount: rupees(amount) }))
       }}>
-      <Seg value={dir} onChange={(d) => { setDir(d); setCat(d === 'out' ? 'kharcha' : 'udhaar_wapas') }} options={[{ key: 'out', label: 'Gaya (kharcha)' }, { key: 'in', label: 'Aaya' }]} />
-      <Field label="Kis cheez ka">
+      <Seg value={dir} onChange={(d) => { setDir(d); setCat(d === 'out' ? 'kharcha' : 'udhaar_wapas') }} options={[{ key: 'out', label: t('Gaya (kharcha)') }, { key: 'in', label: t('Aaya') }]} />
+      <Field label={t('Kis cheez ka')}>
         <select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>{heads.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
       </Field>
       <div className="row2">
-        <Field label="Rakam"><Money value={amount} onChange={setAmount} autoFocus /></Field>
-        <Field label={fixed ? 'Se' : 'Kahan se'}>
+        <Field label={t('Rakam')}><Money value={amount} onChange={setAmount} autoFocus /></Field>
+        <Field label={fixed ? t('Se') : t('Kahan se')}>
           <select className="field" value={fixed ?? mode} disabled={!!fixed} onChange={(e) => setMode(e.target.value as typeof mode)}>
             {BOOKS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
           </select>
         </Field>
       </div>
       <div className="row2">
-        <Field label="Kisko / kisse (optional)"><input className="field" value={party} maxLength={120} onChange={(e) => setParty(e.target.value)} /></Field>
-        <Field label={cat.startsWith('aur_') ? 'Wajah' : 'Note (optional)'}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
+        <Field label={t('Kisko / kisse (optional)')}><input className="field" value={party} maxLength={120} onChange={(e) => setParty(e.target.value)} /></Field>
+        <Field label={cat.startsWith('aur_') ? t('Wajah') : t('Note (optional)')}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
       </div>
     </Sheet>
   )
@@ -233,21 +344,21 @@ function SupplierForm({ shopId, onClose, onDone }: FormProps) {
   const [amount, setAmount] = useState(0)
   const [note, setNote] = useState('')
   return (
-    <Sheet title="Supplier ko diya" onClose={onClose} saving={saving} error={error}
+    <Sheet title={t('Supplier ko diya')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
-        if (!supplier.trim()) return setError('Supplier chunein')
-        if (amount <= 0) return setError('Rakam daalein')
-        void save(`/v1/admin/shops/${shopId}/entries/supplier-payment`, { supplier, mode, amountPaise: amount, note }, () => `${supplier} ko ${rupees(amount)} save hua`)
+        if (!supplier.trim()) return setError(t('Supplier chunein'))
+        if (amount <= 0) return setError(t('Rakam daalein'))
+        void save(`/v1/admin/shops/${shopId}/entries/supplier-payment`, { supplier, mode, amountPaise: amount, note }, () => t('{name} ko {amount} save hua', { name: supplier, amount: rupees(amount) }))
       }}>
-      <Field label="Supplier">
-        <input className="field" list="sup-list" value={supplier} autoFocus onChange={(e) => setSupplier(e.target.value)} placeholder="Naam" />
+      <Field label={t('Supplier')}>
+        <input className="field" list="sup-list" value={supplier} autoFocus onChange={(e) => setSupplier(e.target.value)} placeholder={t('Naam')} />
         <datalist id="sup-list">{o?.suppliers.map((s) => <option key={s} value={s} />)}</datalist>
       </Field>
       <div className="row2">
-        <Field label="Rakam"><Money value={amount} onChange={setAmount} /></Field>
-        <Field label="Kahan se"><select className="field" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>{BOOKS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}</select></Field>
+        <Field label={t('Rakam')}><Money value={amount} onChange={setAmount} /></Field>
+        <Field label={t('Kahan se')}><select className="field" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>{BOOKS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}</select></Field>
       </div>
-      <Field label="Note (optional)"><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
+      <Field label={t('Note (optional)')}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
     </Sheet>
   )
 }
@@ -266,44 +377,44 @@ function GaadiForm({ shopId, onClose, onDone }: FormProps) {
   useEffect(() => { if (o?.brands[0]) setLots((ls) => ls.map((l) => (l.brandId || l.brandName ? l : { ...l, brandId: o.brands[0].id }))) }, [o])
   const set = (i: number, patch: Partial<Lot>) => setLots(lots.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const total = lots.reduce((s, l) => s + l.qty * l.ratePaise, 0) + freight
-  if (o && o.commodity === 'amrud') return <Sheet title="Nayi Gaadi" onClose={onClose} onSave={onClose} saving={false} error="" saveLabel="Theek hai"><p className="muted">Amrud ki party app se jodein.</p></Sheet>
+  if (o && o.commodity === 'amrud') return <Sheet title={t('Nayi Gaadi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki party app se jodein.')}</p></Sheet>
   return (
-    <Sheet title="Nayi Gaadi" onClose={onClose} saving={saving} error={error}
+    <Sheet title={t('Nayi Gaadi')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
-        if (!number.trim()) return setError('Gaadi number daalein')
-        if (!lots.some((l) => l.qty > 0)) return setError('Dana daalein')
+        if (!number.trim()) return setError(t('Gaadi number daalein'))
+        if (!lots.some((l) => l.qty > 0)) return setError(t('Dana daalein'))
         void save(`/v1/admin/shops/${shopId}/entries/gaadi`, {
           number, supplier, freightPaise: freight,
           lots: lots.filter((l) => l.qty > 0).map((l) => ({ brandId: l.brandId || undefined, brandName: l.brandId ? undefined : l.brandName, grade: l.grade, qty: l.qty, ratePaise: l.ratePaise })),
-        }, () => `Gaadi ${number.toUpperCase().replace(/\s+/g, '')} jud gayi`)
+        }, () => t('Gaadi {n} jud gayi', { n: number.toUpperCase().replace(/\s+/g, '') }))
       }}>
       <div className="row2">
-        <Field label="Gaadi number"><input className="field" value={number} autoFocus onChange={(e) => setNumber(e.target.value.toUpperCase())} placeholder="RJ14AB1234" /></Field>
-        <Field label="Supplier">
+        <Field label={t('Gaadi number')}><input className="field" value={number} autoFocus onChange={(e) => setNumber(e.target.value.toUpperCase())} placeholder="RJ14AB1234" /></Field>
+        <Field label={t('Supplier')}>
           <input className="field" list="gaadi-sup" value={supplier} onChange={(e) => setSupplier(e.target.value)} />
           <datalist id="gaadi-sup">{o?.suppliers.map((s) => <option key={s} value={s} />)}</datalist>
         </Field>
       </div>
       <div className="fld">
-        <span className="fld-lb">Maal</span>
+        <span className="fld-lb">{t('Maal')}</span>
         <div className="lines-in">
           {lots.map((l, i) => (
             <div key={i} className="line-in">
-              <select className="field" value={l.brandId || '__new'} aria-label="Maal" onChange={(e) => set(i, e.target.value === '__new' ? { brandId: '' } : { brandId: e.target.value, brandName: '' })}>
+              <select className="field" value={l.brandId || '__new'} aria-label={t('Maal')} onChange={(e) => set(i, e.target.value === '__new' ? { brandId: '' } : { brandId: e.target.value, brandName: '' })}>
                 {o?.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                <option value="__new">+ Naya maal</option>
+                <option value="__new">+ {t('Naya maal')}</option>
               </select>
-              {!l.brandId && <input className="field" placeholder="Maal ka naam" value={l.brandName} onChange={(e) => set(i, { brandName: e.target.value })} />}
-              <input className="field" inputMode="numeric" placeholder="Dana" aria-label="Dana" value={l.qty || ''} onChange={(e) => set(i, { qty: Number(e.target.value.replace(/\D/g, '') || 0) })} />
-              <Money value={l.ratePaise} onChange={(v) => set(i, { ratePaise: v })} placeholder="Kharid bhav" />
-              {lots.length > 1 && <button type="button" className="icon-btn" aria-label="Hatayein" onClick={() => setLots(lots.filter((_, j) => j !== i))}>✕</button>}
+              {!l.brandId && <input className="field" placeholder={t('Maal ka naam')} value={l.brandName} onChange={(e) => set(i, { brandName: e.target.value })} />}
+              <input className="field" inputMode="numeric" placeholder={t('Dana')} aria-label={t('Dana')} value={l.qty || ''} onChange={(e) => set(i, { qty: Number(e.target.value.replace(/\D/g, '') || 0) })} />
+              <Money value={l.ratePaise} onChange={(v) => set(i, { ratePaise: v })} placeholder={t('Kharid bhav')} />
+              {lots.length > 1 && <button type="button" className="icon-btn" aria-label={t('Hatayein')} onClick={() => setLots(lots.filter((_, j) => j !== i))}>✕</button>}
             </div>
           ))}
-          {lots.length < 6 && <button type="button" className="btn ghost" style={{ justifySelf: 'start' }} onClick={() => setLots([...lots, { brandId: o?.brands[0]?.id ?? '', brandName: '', grade: '1', qty: 0, ratePaise: 0 }])}>+ Aur maal</button>}
+          {lots.length < 6 && <button type="button" className="btn ghost" style={{ justifySelf: 'start' }} onClick={() => setLots([...lots, { brandId: o?.brands[0]?.id ?? '', brandName: '', grade: '1', qty: 0, ratePaise: 0 }])}>+ {t('Aur maal')}</button>}
         </div>
       </div>
-      <Field label="Bhada (optional)"><Money value={freight} onChange={setFreight} /></Field>
-      <div className="total-line"><span>{count(lots.reduce((s, l) => s + l.qty, 0))} dana</span><b className="money">{rupees(total)}</b></div>
+      <Field label={t('Bhada (optional)')}><Money value={freight} onChange={setFreight} /></Field>
+      <div className="total-line"><span>{t('{n} dana', { n: count(lots.reduce((s, l) => s + l.qty, 0)) })}</span><b className="money">{rupees(total)}</b></div>
     </Sheet>
   )
 }
@@ -314,18 +425,18 @@ function GrahakForm({ shopId, onClose, onDone }: FormProps) {
   const { saving, error, setError, save } = useSave(onDone)
   const [f, setF] = useState({ name: '', phone: '', code: '', address: '', opening: 0 })
   return (
-    <Sheet title="Naya Grahak" onClose={onClose} saving={saving} error={error}
+    <Sheet title={t('Naya Grahak')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
-        if (!f.name.trim()) return setError('Naam daalein')
-        void save(`/v1/admin/shops/${shopId}/entries/grahak`, { name: f.name, phone: f.phone, code: f.code, address: f.address, openingPaise: f.opening || undefined }, () => `${f.name} ka khata khul gaya`)
+        if (!f.name.trim()) return setError(t('Naam daalein'))
+        void save(`/v1/admin/shops/${shopId}/entries/grahak`, { name: f.name, phone: f.phone, code: f.code, address: f.address, openingPaise: f.opening || undefined }, () => t('{name} ka khata khul gaya', { name: f.name }))
       }}>
-      <Field label="Naam"><input className="field" value={f.name} autoFocus maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+      <Field label={t('Naam')}><input className="field" value={f.name} autoFocus maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <div className="row2">
-        <Field label="Mobile"><input className="field" inputMode="tel" value={f.phone} maxLength={10} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
-        <Field label="A/C code"><input className="field" value={f.code} maxLength={20} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
+        <Field label={t('Mobile')}><input className="field" inputMode="tel" value={f.phone} maxLength={10} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
+        <Field label={t('A/C code')}><input className="field" value={f.code} maxLength={20} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
       </div>
-      <Field label="Dukaan / pata"><input className="field" value={f.address} maxLength={200} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
-      <Field label="Purana udhaar (optional)"><Money value={f.opening} onChange={(v) => setF({ ...f, opening: v })} /></Field>
+      <Field label={t('Dukaan / pata')}><input className="field" value={f.address} maxLength={200} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+      <Field label={t('Purana udhaar (optional)')}><Money value={f.opening} onChange={(v) => setF({ ...f, opening: v })} /></Field>
     </Sheet>
   )
 }
@@ -337,17 +448,17 @@ function UdhaarForm({ shopId, onClose, onDone }: FormProps) {
   const [amount, setAmount] = useState(0)
   const [note, setNote] = useState('')
   return (
-    <Sheet title="Udhaar / Jama" onClose={onClose} saving={saving} error={error}
+    <Sheet title={t('Udhaar / Jama')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
-        if (!buyer?.id) return setError('Grahak chunein')
-        if (amount <= 0) return setError('Rakam daalein')
-        void save(`/v1/admin/shops/${shopId}/entries/udhaar`, { buyerId: buyer.id, amountPaise: type === 'udhaar' ? amount : -amount, note }, () => `${buyer.name}: ${rupees(amount)} ${type} save hua`)
+        if (!buyer?.id) return setError(t('Grahak chunein'))
+        if (amount <= 0) return setError(t('Rakam daalein'))
+        void save(`/v1/admin/shops/${shopId}/entries/udhaar`, { buyerId: buyer.id, amountPaise: type === 'udhaar' ? amount : -amount, note }, () => t(type === 'udhaar' ? '{name}: {amount} udhaar save hua' : '{name}: {amount} jama save hua', { name: buyer.name, amount: rupees(amount) }))
       }}>
-      <Field label="Grahak"><BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus /></Field>
-      <Seg value={type} onChange={setType} options={[{ key: 'udhaar', label: 'Udhaar (lena)' }, { key: 'jama', label: 'Jama (unka paisa)' }]} />
+      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus /></Field>
+      <Seg value={type} onChange={setType} options={[{ key: 'udhaar', label: t('Udhaar (lena)') }, { key: 'jama', label: t('Jama (unka paisa)') }]} />
       <div className="row2">
-        <Field label="Rakam"><Money value={amount} onChange={setAmount} /></Field>
-        <Field label="Note (optional)"><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder={type === 'udhaar' ? 'Purana udhaar' : ''} /></Field>
+        <Field label={t('Rakam')}><Money value={amount} onChange={setAmount} /></Field>
+        <Field label={t('Note (optional)')}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder={type === 'udhaar' ? t('Purana udhaar') : ''} /></Field>
       </div>
     </Sheet>
   )

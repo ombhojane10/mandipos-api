@@ -3,6 +3,7 @@ import { AdminAuthController, AdminController, AdminGuard } from './admin/admin.
 import { AdminService } from './admin/admin.service';
 import { ReportsService } from './admin/reports.service';
 import { EntriesService } from './admin/entries.service';
+import { SettingsService } from './admin/settings.service';
 import { UdhaarAlertsService } from './alerts/udhaar-alerts.service';
 import { AccountsService } from './auth/accounts.service';
 import { AuthController } from './auth/auth.controller';
@@ -30,6 +31,6 @@ import { SyncService } from './sync/sync.service';
 
 @Module({
   controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController],
-  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
+  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient],
 })
 export class AppModule {}

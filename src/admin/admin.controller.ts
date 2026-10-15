@@ -12,6 +12,7 @@ import { Db } from '../db/db.service';
 import { AdminService } from './admin.service';
 import { ReportsService, type Pot } from './reports.service';
 import { EntriesService } from './entries.service';
+import { SettingsService } from './settings.service';
 
 /** Portal tokens are signed with the app's secret but for their own audience, so neither works as the other. */
 const AUDIENCE = 'mandipos-admin';
@@ -74,7 +75,26 @@ const ParchiBody = z.object({
   pay: z.enum(['cash', 'upi', 'credit', 'after', 'split', 'free']), cashPaise: paise.optional(), upiPaise: paise.optional(),
   upiBank: z.string().max(80).optional(),
   packing: z.enum(['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni']).default('loose'), panniName: z.string().max(40).optional(),
+  kattaName: z.string().max(20).optional(), parchune: z.boolean().optional(),
+  labour: z.boolean().optional(), labourQty: z.number().int().min(0).max(100_000).optional(), labourRatePaise: z.number().int().min(0).max(10_000).optional(),
+  delivery: z.object({ address: z.string().max(200), stand: z.string().max(120) }).optional(),
+  staff: z.string().max(60).optional(), slipNo: z.number().int().positive().max(9_999_999).optional(),
 });
+const mobileOrBlank = z.union([z.literal(''), phone]);
+const SettingsBody = z.object({
+  name: z.string().trim().min(1).max(120), mandi: z.string().trim().max(80), shopNo: z.string().trim().max(20),
+  phad: z.string().trim().max(40), gstin: z.string().trim().toUpperCase().max(15),
+  phone: mobileOrBlank, dispatchPhone: mobileOrBlank,
+  slipCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9&]{0,6}$/, 'up to 6 letters or digits'),
+  slipLimitPaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), udhaarRates: z.boolean(), udhaarAlerts: z.boolean(),
+  address: z.string().trim().max(200),
+  bankAccounts: z.array(z.object({
+    holder: z.string().trim().max(80).default(''), bank: z.string().trim().max(80).default(''),
+    ifsc: z.string().trim().toUpperCase().max(11).default(''), account: z.string().trim().max(34).default(''),
+  })).max(4),
+  printerHost: z.string().trim().regex(/^(\d{1,3}(\.\d{1,3}){3})?$/, 'an IP like 192.168.1.50'),
+  printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
+}).partial();
 const VasooliBody = z.object({ buyerId: z.uuid(), cashPaise: paise, upiPaise: paise, upiBank: z.string().max(80).optional(), paymentRef: z.string().max(40).optional() });
 const OUT_HEADS = ['kharcha', 'mazdoori', 'bhada', 'kiraya', 'tankhwah', 'committee_di', 'bill', 'udhaar_diya', 'aur_gaya', 'handover', 'float', 'bank_jama', 'bank_nikala'] as const;
 const IN_HEADS = ['udhaar_wapas', 'committee_mili', 'aur_aaya'] as const;
@@ -132,7 +152,10 @@ export class AdminAuthController {
 @Controller('v1/admin')
 @UseGuards(AdminGuard)
 export class AdminController {
-  constructor(private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService) {}
+  constructor(
+    private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
+    private readonly settings: SettingsService,
+  ) {}
 
   /** Who is signed in, and which shops they may open. */
   @Get('me')
@@ -192,6 +215,18 @@ export class AdminController {
   daybook(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
     const r = parse(Range, query);
     return this.admin.daybook(mine(v, id), r.from, r.to);
+  }
+
+  /** The shop's settings, as the app's Settings screen shows them. */
+  @Get('shops/:id/settings')
+  getSettings(@See() v: Viewer, @Param('id') id: string) {
+    return this.settings.get(mine(v, id));
+  }
+
+  @Post('shops/:id/settings')
+  @HttpCode(200)
+  saveSettings(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.settings.save(mine(v, id), parse(SettingsBody, body));
   }
 
   /** One parchi in full, as Tally opens a voucher. */
