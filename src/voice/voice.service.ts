@@ -49,7 +49,8 @@ export class VoiceService {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 1024,
+        // A full slip is ~300 tokens with its nulls; the cap only stops a runaway reply sooner.
+        maxOutputTokens: 512,
         responseMimeType: 'application/json',
         responseJsonSchema: RESPONSE_SCHEMA,
         // Thinking costs a second or more and buys nothing for slot-filling.

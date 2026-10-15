@@ -77,6 +77,7 @@ export class GeminiClient {
           (e: unknown) => {
             if (done) return;
             failures++;
+            this.log.warn(`attempt failed: ${(e as Error).message}`);
             // A quick failure (429, 5xx) hedges at once instead of waiting out the timer.
             if (started < 2) fire('retry');
             else if (failures >= started) { finish(); reject(e); }
@@ -107,6 +108,12 @@ export class GeminiClient {
     const cand = body.candidates?.[0];
     const text = (cand?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? '').join('');
     if (!text) throw new GeminiError(`${model} returned nothing (${cand?.finishReason ?? 'no candidate'})`, 502);
+    // JSON mode now and then runs away (whitespace or a repeated field) until the token cap. A
+    // reply that was cut off or does not parse counts as a failure, so the other call or the
+    // retry answers instead of the counter getting "unclear".
+    if (cand?.finishReason === 'MAX_TOKENS' || !parses(text)) {
+      throw new GeminiError(`${model} ran away (${cand?.finishReason}, ${body.usageMetadata?.candidatesTokenCount ?? '?'} tokens): ${text.slice(0, 120).replace(/\s+/g, ' ')}`, 502);
+    }
     return {
       text,
       model,
@@ -114,4 +121,8 @@ export class GeminiClient {
       tokensOut: body.usageMetadata?.candidatesTokenCount ?? 0,
     };
   }
+}
+
+function parses(text: string): boolean {
+  try { JSON.parse(text); return true; } catch { return false; }
 }
