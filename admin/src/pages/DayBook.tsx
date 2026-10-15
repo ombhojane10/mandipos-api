@@ -3,9 +3,9 @@ import { api, type DayEntry } from '../api'
 import { usePeriod } from '../hooks'
 import { count, dayHeader, rupees, time } from '../format'
 import { periodLabel } from '../period'
-import { hashQuery, href, setHashQuery } from '../routes'
+import { hashQuery, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
-import { openVoucher } from '../keys'
+import { openRaseed, openVoucher } from '../keys'
 import { PeriodBar, Skeleton } from '../ui'
 import { t } from '../i18n'
 import { dayRange, fileName, longDay, rs, type ExportRow, useExport } from '../export/doc'
@@ -98,9 +98,9 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
             const header = multiDay && e.date !== lastDay ? <tr className="day"><td colSpan={compact ? 6 : 7}>{dayHeader(e.date)}</td></tr> : null
             lastDay = e.date
             const v = describe(e)
-            // Enter opens what the line is: a parchi as its voucher, a vasooli as the grahak's khata.
+            // Enter opens what the line is: a parchi as its voucher, a vasooli as its raseed.
             const go = e.kind === 'slip' ? () => openVoucher(shopId, e.id)
-              : e.buyerId ? () => { location.hash = href({ page: 'grahak', shopId, buyerId: e.buyerId! }) } : undefined
+              : e.kind === 'payment' ? () => openRaseed(shopId, e.id) : undefined
             return (
               <Rows key={`${e.kind}-${e.id}`}>
                 {header}

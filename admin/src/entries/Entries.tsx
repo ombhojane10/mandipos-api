@@ -4,7 +4,7 @@ import { rupees, count } from '../format'
 import { t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
-import type { EntryKind } from './kinds'
+import type { EditBill, EditRaseed, EntryKind, Editing } from './kinds'
 
 type Options = {
   commodity: string
@@ -39,11 +39,11 @@ function useOptions(shopId: string) {
   return o
 }
 
-export function EntryForm({ kind, shopId, onClose, onSaved }: { kind: EntryKind; shopId: string; onClose: () => void; onSaved: (msg: string) => void }) {
+export function EntryForm({ kind, shopId, editing, onClose, onSaved }: { kind: EntryKind; shopId: string; editing?: Editing | null; onClose: () => void; onSaved: (msg: string) => void }) {
   const done = (m: string) => { onSaved(m); onClose() }
   switch (kind) {
-    case 'parchi': return <ParchiForm shopId={shopId} onClose={onClose} onDone={done} />
-    case 'vasooli': return <VasooliForm shopId={shopId} onClose={onClose} onDone={done} />
+    case 'parchi': return <ParchiForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'parchi' ? editing.bill : undefined} />
+    case 'vasooli': return <VasooliForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'vasooli' ? editing.raseed : undefined} />
     case 'kharcha': return <KharchaForm shopId={shopId} onClose={onClose} onDone={done} />
     case 'supplier': return <SupplierForm shopId={shopId} onClose={onClose} onDone={done} />
     case 'gaadi': return <GaadiForm shopId={shopId} onClose={onClose} onDone={done} />
@@ -61,7 +61,9 @@ type Line = { grade: '1' | '2' | '3' | 'mix'; qty: number; ratePaise: number }
 /** As the app's Packing: which katta (kept as its bag name), and what one holds. */
 const KATTA_NAMES = ['Green', 'Jaipur', 'White'] as const
 const KATTA_SIZES = [{ key: 'katta10', per: 10 }, { key: 'katta15', per: 15 }, { key: 'katta20', per: 20 }] as const
-type KattaSize = (typeof KATTA_SIZES)[number]['key']
+/** katta25 is only ever met on an older slip being altered. */
+type KattaSize = (typeof KATTA_SIZES)[number]['key'] | 'katta25'
+const perKatta = (size: KattaSize) => Number(size.slice(5))
 const PANNI_NAMES = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'] as const
 type Pay = 'cash' | 'upi' | 'credit' | 'split' | 'after' | 'free'
 
@@ -69,43 +71,84 @@ type Pay = 'cash' | 'upi' | 'credit' | 'split' | 'after' | 'free'
 const remembered = (key: string, fallback: string) => { try { return localStorage.getItem(key) ?? fallback } catch { return fallback } }
 const remember = (key: string, v: string) => { try { localStorage.setItem(key, v) } catch { /* private window */ } }
 
-function ParchiForm({ shopId, onClose, onDone }: FormProps) {
+/** The parchune's word on panni_name, and the one older slips carry. */
+const PARCHUNE_TAGS = ['Parchune', 'Panchuri']
+
+/**
+ * A slip as ParchiScreen opens it to alter: one line per grade and bhav, the packing taken back
+ * apart from panni_name, the payment as it was picked, the mazdoori count and rate.
+ */
+function fromBill(b: EditBill) {
+  const lines: Line[] = []
+  for (const l of b.lines.filter((x) => !x.leak)) {
+    const same = lines.find((x) => x.grade === l.grade && x.ratePaise === l.ratePaise)
+    if (same) same.qty += l.qty
+    else lines.push({ grade: l.grade as Line['grade'], qty: l.qty, ratePaise: l.ratePaise })
+  }
+  const packing = b.packing.startsWith('katta') ? 'katta' as const : b.packing === 'panni' ? 'panni' as const : 'loose' as const
+  let panni = packing === 'katta' ? '' : b.panniName
+  const tag = PARCHUNE_TAGS.find((x) => panni === x || panni.endsWith(` + ${x}`))
+  if (tag) panni = panni.slice(0, -tag.length).replace(/ \+ $/, '').trim()
+  const pay: Pay = b.payMode === 'free' ? 'free' : b.payMode === 'after' ? 'after'
+    : b.totalPaise === 0 ? (b.payMode === 'credit' ? 'credit' : b.payMode === 'upi' ? 'upi' : 'cash')
+    : b.paidPaise === 0 ? 'credit' : b.cashPaise === b.totalPaise ? 'cash' : b.upiPaise === b.totalPaise ? 'upi' : 'split'
+  // A walk-in comes back as the counter's Cash or Bank.
+  const buyer: PickedBuyer = b.buyerId ? { id: b.buyerId, name: b.buyerName }
+    : { id: null, name: isWalkInName(b.buyerName) ? b.buyerName : b.upiPaise > 0 && b.cashPaise === 0 ? 'Bank' : 'Cash' }
+  return {
+    buyer, lines: lines.length ? lines : [{ grade: '1' as const, qty: 0, ratePaise: 0 }], pay, packing, panni,
+    size: (packing === 'katta' ? b.packing : 'katta10') as KattaSize, kattaName: packing === 'katta' ? b.panniName : '', parchune: !!tag,
+    labour: b.labourPaise > 0, labourQty: b.labourPaise > 0 && b.packs > 0 ? String(b.packs) : '',
+    rate: b.labourPaise > 0 && b.packs > 0 ? Math.round(b.labourPaise / b.packs) : null,
+  }
+}
+
+function ParchiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?: EditBill }) {
   const o = useOptions(shopId)
   const { saving, error, setError, save } = useSave(onDone)
-  const [buyer, setBuyer] = useState<PickedBuyer | null>(null)
-  const [truckId, setTruckId] = useState('')
-  const [lines, setLines] = useState<Line[]>([{ grade: '1', qty: 0, ratePaise: 0 }])
-  const [pay, setPay] = useState<Pay>('cash')
-  const [cash, setCash] = useState(0)
-  const [upi, setUpi] = useState(0)
-  const [bank, setBank] = useState('')
-  const [pack, setPack] = useState<'loose' | 'katta' | 'panni'>('loose')
-  const [size, setSize] = useState<KattaSize>('katta10')
-  const [kattaName, setKattaName] = useState('')
+  const [was] = useState(() => (editing ? fromBill(editing) : null))
+  const [buyer, setBuyer] = useState<PickedBuyer | null>(was?.buyer ?? null)
+  const [truckId, setTruckId] = useState(editing?.truckId ?? '')
+  const [lines, setLines] = useState<Line[]>(was?.lines ?? [{ grade: '1', qty: 0, ratePaise: 0 }])
+  const [pay, setPay] = useState<Pay>(was?.pay ?? 'cash')
+  const [cash, setCash] = useState(editing && was?.pay === 'split' ? editing.cashPaise : 0)
+  const [upi, setUpi] = useState(editing && was?.pay === 'split' ? editing.upiPaise : 0)
+  const [bank, setBank] = useState(editing?.upiBank ?? '')
+  const [pack, setPack] = useState<'loose' | 'katta' | 'panni'>(was?.packing ?? 'loose')
+  const [size, setSize] = useState<KattaSize>(was?.size ?? 'katta10')
+  const [kattaName, setKattaName] = useState(was?.kattaName ?? '')
   const [kattas, setKattas] = useState('')
-  const [panniName, setPanniName] = useState('')
-  const [parchune, setParchune] = useState(false)
-  const [labour, setLabour] = useState(false)
-  const [labourQty, setLabourQty] = useState('')
-  const [rate, setRate] = useState(() => Number(remembered('mp.labourRate', '30')) || 30)
-  const [delivery, setDelivery] = useState(false)
-  const [address, setAddress] = useState('')
-  const [stand, setStand] = useState('')
-  const [staff, setStaff] = useState(() => remembered('mp.staff', ''))
-  const [slipNo, setSlipNo] = useState('')
+  const [panniName, setPanniName] = useState(was?.panni ?? '')
+  const [parchune, setParchune] = useState(was?.parchune ?? false)
+  const [labour, setLabour] = useState(was?.labour ?? false)
+  const [labourQty, setLabourQty] = useState(was?.labourQty ?? '')
+  const [rate, setRate] = useState(() => was?.rate ?? (Number(remembered('mp.labourRate', '30')) || 30))
+  const [delivery, setDelivery] = useState(!!editing?.delivery)
+  const [address, setAddress] = useState(editing?.delivery?.address ?? '')
+  const [stand, setStand] = useState(editing?.delivery?.stand ?? '')
+  const [staff, setStaff] = useState(() => editing ? (editing.staff === 'Website' ? '' : editing.staff) : remembered('mp.staff', ''))
+  const [slipNo, setSlipNo] = useState(editing?.slipNo ? String(editing.slipNo) : '')
 
-  const truck = o?.trucks.find((t) => t.id === truckId) ?? o?.trucks[0]
-  useEffect(() => { if (o?.trucks[0] && !truckId) setTruckId(o.trucks[0].id) }, [o, truckId])
-  useEffect(() => { if (o?.banks[0]) setBank(o.banks[0]) }, [o])
+  // Altering: the slip's own gaadi stays on offer (even closed or sold out), and the dana it took come back.
+  const trucks = !o ? [] : !editing?.truckId ? o.trucks : (() => {
+    const own = editing.lines.reduce((s, l) => s + l.qty, 0)
+    const listed = o.trucks.some((tr) => tr.id === editing.truckId)
+    return listed ? o.trucks.map((tr) => (tr.id === editing.truckId ? { ...tr, left: tr.left + own } : tr))
+      : [{ id: editing.truckId, number: editing.truck ?? '—', supplier: '', arrivedAt: '', left: own, brandId: null, brand: '' }, ...o.trucks]
+  })()
+  const truck = trucks.find((t) => t.id === truckId) ?? trucks[0]
+  useEffect(() => { if (trucks[0] && !truckId) setTruckId(trucks[0].id) }, [o, truckId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (o?.banks[0] && !editing?.upiBank) setBank(o.banks[0]) }, [o]) // eslint-disable-line react-hooks/exhaustive-deps
   // Today's bhav for this gaadi's maal fills in a line's rate until it is typed.
   const bhav = (grade: string) => o?.rates.find((r) => r.brandId === truck?.brandId && r.grade === grade)?.ratePaise ?? 0
-  useEffect(() => { setLines((ls) => ls.map((l) => (l.ratePaise ? l : { ...l, ratePaise: bhav(l.grade) }))) }, [truck?.id, o]) // eslint-disable-line react-hooks/exhaustive-deps
+  // (Not on a slip being altered: a line written without bhav stays as written until typed.)
+  useEffect(() => { if (!editing) setLines((ls) => ls.map((l) => (l.ratePaise ? l : { ...l, ratePaise: bhav(l.grade) }))) }, [truck?.id, o]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const free = pay === 'free'
   const qty = lines.reduce((s, l) => s + l.qty, 0)
   const total = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0)
   const walkIn = !buyer || (buyer.id === null && isWalkInName(buyer.name))
-  const per = KATTA_SIZES.find((k) => k.key === size)!.per
+  const per = perKatta(size)
   const labourNag = labour ? (Number(labourQty) || qty) : 0
   const set = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   // "Kitne katta" × what one holds becomes the 1st-line nag, as the app's kattaRow.
@@ -131,30 +174,31 @@ function ParchiForm({ shopId, onClose, onDone }: FormProps) {
     if (b?.id) { setAddress(b.address ?? ''); setStand(b.destination ?? '') }
   }
 
-  if (o && o.commodity === 'amrud') return <Sheet title={t('Nayi Parchi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki parchi app se banayein.')}</p></Sheet>
+  const title = editing ? t('Parchi #{n} badlein', { n: String(editing.slipNo ?? '') }) : t('Nayi Parchi')
+  if (o && o.commodity === 'amrud') return <Sheet title={title} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki parchi app se banayein.')}</p></Sheet>
   return (
-    <Sheet title={t('Nayi Parchi')} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
+    <Sheet title={title} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
       onSave={() => {
         if (!truck) return setError(t('Koi khuli gaadi nahi'))
         if (!qty) return setError(t('Nag daalein'))
         if (!free && walkIn && (pay === 'credit' || pay === 'after' || (pay === 'split' && cash + upi < total))) return setError(t('Udhaar ke liye grahak chunein'))
         if (delivery && !address.trim() && !stand.trim()) return setError(t('Delivery ka pata daalein'))
         remember('mp.labourRate', String(rate)); remember('mp.staff', staff.trim())
-        void save(`/v1/admin/shops/${shopId}/entries/parchi`, {
+        void save(editing ? `/v1/admin/shops/${shopId}/bills/${editing.id}/edit` : `/v1/admin/shops/${shopId}/entries/parchi`, {
           buyerId: buyer?.id ?? undefined, buyerName: buyer && !buyer.id ? buyer.name : undefined, truckId: truck.id,
           lines: lines.filter((l) => l.qty > 0), pay, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined,
           packing: pack === 'katta' ? size : pack, kattaName: pack === 'katta' ? kattaName : undefined,
           panniName: pack === 'panni' ? panniName : undefined, parchune: pack !== 'katta' && parchune,
           labour, labourQty: labour ? labourNag : 0, labourRatePaise: rate,
           delivery: delivery ? { address, stand } : undefined, staff: staff.trim() || undefined,
-          slipNo: Number(slipNo) > 0 ? Number(slipNo) : undefined,
-        }, (r) => t('Parchi #{n} save hui', { n: String(r.slipNo) }))
+          slipNo: !editing && Number(slipNo) > 0 ? Number(slipNo) : undefined,
+        }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) }) : t('Parchi #{n} save hui', { n: String(r.slipNo) })))
       }}>
       <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus /></Field>
       <Field label={t('Gaadi')}>
-        {!o ? <div className="sk" /> : o.trucks.length === 0 ? <p className="muted">{t('Koi khuli gaadi nahi — pehle Nayi Gaadi jodein')}</p> : (
+        {!o ? <div className="sk" /> : trucks.length === 0 ? <p className="muted">{t('Koi khuli gaadi nahi — pehle Nayi Gaadi jodein')}</p> : (
           <select className="field" value={truck?.id} onChange={(e) => setTruckId(e.target.value)}>
-            {o.trucks.map((tr) => <option key={tr.id} value={tr.id}>{tr.number} · {tr.brand} · {t('{n} nag baaki', { n: count(tr.left) })}</option>)}
+            {trucks.map((tr) => <option key={tr.id} value={tr.id}>{tr.number} · {tr.brand} · {t('{n} nag baaki', { n: count(tr.left) })}</option>)}
           </select>
         )}
       </Field>
@@ -168,7 +212,7 @@ function ParchiForm({ shopId, onClose, onDone }: FormProps) {
               <span className="fld-lb">{t('Kaunsa katta')}</span>
               <Chips value={kattaName} onChange={setKattaName} clearable options={KATTA_NAMES.map((k) => ({ key: k, label: k }))} />
               <span className="fld-lb">{t('Ek katte mein dana')}</span>
-              <Chips value={size} onChange={(v) => { if (!v) return; setSize(v); if (Number(kattas) > 0) fillKattas(kattas, KATTA_SIZES.find((k) => k.key === v)!.per) }}
+              <Chips value={size} onChange={(v) => { if (!v) return; setSize(v); if (Number(kattas) > 0) fillKattas(kattas, perKatta(v)) }}
                 options={KATTA_SIZES.map((k) => ({ key: k.key, label: String(k.per) }))} />
               <div className="inline-in">
                 <span className="fld-lb">{t('Kitne katta')}</span>
@@ -241,7 +285,7 @@ function ParchiForm({ shopId, onClose, onDone }: FormProps) {
       )}
       <div className="row2">
         <Field label={t('Accountant')}><input className="field" value={staff} maxLength={60} placeholder="Website" onChange={(e) => setStaff(e.target.value)} /></Field>
-        <Field label={t('Parchi no.')}><input className="field" inputMode="numeric" value={slipNo} placeholder={t('Agla')} onChange={(e) => setSlipNo(e.target.value.replace(/\D/g, '').slice(0, 7))} /></Field>
+        <Field label={t('Parchi no.')}><input className="field" inputMode="numeric" value={slipNo} placeholder={t('Agla')} disabled={!!editing} onChange={(e) => setSlipNo(e.target.value.replace(/\D/g, '').slice(0, 7))} /></Field>
       </div>
       <div className="total-line"><span>{t('{n} nag', { n: count(qty) })}{pack === 'katta' && qty ? ` · ${t('{n} katta', { n: count(Math.ceil(qty / per)) })}` : ''}</span><b className="money">{free ? t('Free') : rupees(total)}</b>
         {pay === 'split' && total > cash + upi && <span className="due">{t('Udhaar')} {rupees(total - cash - upi)}</span>}</div>
@@ -251,26 +295,29 @@ function ParchiForm({ shopId, onClose, onDone }: FormProps) {
 
 // ---------------------------------------------------------------- Vasooli
 
-function VasooliForm({ shopId, onClose, onDone }: FormProps) {
+/** Vasooli; altering a raseed keeps its grahak, number and time — only the money changes (CollectScreen's Badlein). */
+function VasooliForm({ shopId, onClose, onDone, editing }: FormProps & { editing?: EditRaseed }) {
   const o = useOptions(shopId)
   const { saving, error, setError, save } = useSave(onDone)
-  const [buyer, setBuyer] = useState<PickedBuyer | null>(null)
-  const [cash, setCash] = useState(0)
-  const [upi, setUpi] = useState(0)
-  const [bank, setBank] = useState('')
-  const [ref, setRef] = useState('')
-  useEffect(() => { if (o?.banks[0]) setBank(o.banks[0]) }, [o])
+  const [buyer, setBuyer] = useState<PickedBuyer | null>(editing ? { id: editing.buyerId, name: editing.buyerName } : null)
+  const [cash, setCash] = useState(editing?.cashPaise ?? 0)
+  const [upi, setUpi] = useState(editing?.upiPaise ?? 0)
+  const [bank, setBank] = useState(editing?.upiBank ?? '')
+  const [ref, setRef] = useState(editing?.ref ?? '')
+  useEffect(() => { if (o?.banks[0] && !editing?.upiBank) setBank(o.banks[0]) }, [o]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <Sheet title={t('Vasooli')} onClose={onClose} saving={saving} error={error} saveLabel={cash + upi ? `${t('Save')} · ${rupees(cash + upi)}` : t('Save')}
+    <Sheet title={editing ? t('Raseed #{n} badlein', { n: String(editing.receiptNo ?? '') }) : t('Vasooli')} onClose={onClose} saving={saving} error={error} saveLabel={cash + upi ? `${t('Save')} · ${rupees(cash + upi)}` : t('Save')}
       onSave={() => {
         if (!buyer?.id) return setError(t('Grahak chunein'))
         if (cash + upi <= 0) return setError(t('Rakam daalein'))
+        if (editing) return void save(`/v1/admin/shops/${shopId}/collections/${editing.id}/edit`, { cashPaise: cash, upiPaise: upi, upiBank: bank || undefined, paymentRef: ref || undefined },
+          (r) => t('Raseed #{n} badli', { n: String(r.receiptNo) }))
         void save(`/v1/admin/shops/${shopId}/entries/vasooli`, { buyerId: buyer.id, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined, paymentRef: ref || undefined },
           (r) => t('Raseed #{n} save hui', { n: String(r.receiptNo) }))
       }}>
-      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus /></Field>
+      <Field label={t('Grahak')}>{editing ? <b>{editing.buyerName}</b> : <BuyerPicker shopId={shopId} value={buyer} onChange={setBuyer} autoFocus />}</Field>
       <div className="row2">
-        <Field label={t('Cash')}><Money value={cash} onChange={setCash} /></Field>
+        <Field label={t('Cash')}><Money value={cash} onChange={setCash} autoFocus={!!editing} /></Field>
         <Field label="UPI"><Money value={upi} onChange={setUpi} /></Field>
       </div>
       {upi > 0 && (
@@ -279,7 +326,7 @@ function VasooliForm({ shopId, onClose, onDone }: FormProps) {
           <Field label={t('UTR (optional)')}><input className="field" value={ref} maxLength={40} onChange={(e) => setRef(e.target.value)} /></Field>
         </div>
       )}
-      {buyer?.balancePaise ? <p className="muted">{t('Abhi baaki {due} · vasooli ke baad {after}', { due: rupees(buyer.balancePaise), after: rupees(buyer.balancePaise - cash - upi) })}</p> : null}
+      {!editing && buyer?.balancePaise ? <p className="muted">{t('Abhi baaki {due} · vasooli ke baad {after}', { due: rupees(buyer.balancePaise), after: rupees(buyer.balancePaise - cash - upi) })}</p> : null}
     </Sheet>
   )
 }

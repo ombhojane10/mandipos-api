@@ -359,6 +359,8 @@ a.kpi:hover { border-color: #cfd3da; }
 .entry-grid button { text-align: left; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); cursor: pointer; }
 .entry-grid button:hover, .entry-grid button:focus-visible { border-color: var(--accent); background: var(--accent-soft); outline: none; }
 .entry-grid b { display: block; }
+.entry-grid.one { grid-template-columns: 1fr; padding: 0; }
+.entry-grid.one small { display: block; margin-top: 2px; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 600; z-index: 60; box-shadow: 0 8px 24px rgb(0 0 0 / 0.2); }
 .tabs .plus { color: #fff; }
 .tabs .plus span { width: 44px; height: 44px; border-radius: 14px; background: var(--accent); display: grid; place-items: center; font-size: 26px; line-height: 1; margin-top: -6px; }
@@ -676,6 +678,7 @@ b, .b { font-weight: 700; }
 .btn.ghost { background: var(--keybar); color: var(--ink); }
 .btn.ghost:not(:disabled):hover { background: #b8dbb0; }
 .btn kbd { all: unset; text-decoration: underline; }
+.entry-grid kbd { all: unset; text-decoration: underline; }
 .btn.primary kbd { color: #fff; }
 .seg { padding: 0; gap: 0; border: 1px solid var(--line); background: #fff; }
 .seg button { height: 24px; padding: 0 10px; font-size: 11.5px; font-weight: 700; color: var(--ink); }

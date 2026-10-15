@@ -7,7 +7,7 @@ import { t } from '../i18n'
 import { hashQuery, href, setHashQuery } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { Bal, PeriodBar, Skeleton } from '../ui'
-import { openVoucher } from '../keys'
+import { openRaseed, openVoucher } from '../keys'
 import { dayRange, dmy, fileName, rs, useExport } from '../export/doc'
 import { HEADS } from './DayBook'
 
@@ -338,14 +338,16 @@ export function SalesRegister({ shopId }: { shopId: string }) {
 // ================================================================ Nigrani (exceptions)
 
 type Nig = {
-  voids: { billId: string; slipNo: number | null; number: string; buyer: string; totalPaise: number; reason: string; at: string; date: string; machine: string }[]
-  receipts: { id: string; receiptNo: number | null; buyer: string; amountPaise: number; reason: string; at: string }[]
+  voids: { billId: string; slipNo: number | null; number: string; buyer: string; totalPaise: number; reason: string; at: string; date: string; machine: string; by: string }[]
+  receipts: { id: string; receiptNo: number | null; buyer: string; amountPaise: number; reason: string; at: string; by: string }[]
   belowBhav: { billId: string; slipNo: number | null; buyer: string; date: string; brand: string; grade: string; qty: number; ratePaise: number; bhavPaise: number; lossPaise: number; machine: string }[]
   overLimit: { buyerId: string; name: string; phone: string; code: string; balancePaise: number; limitPaise: number }[]
   night: { billId: string; slipNo: number | null; buyer: string; totalPaise: number; at: string; machine: string }[]
   bigKharcha: { id: string; head: string; party: string; note: string; amountPaise: number; mode: string; date: string }[]
 }
 const REASON: Record<string, string> = { deleted: 'Hatayi', edited: 'Badli', refunded: 'Paisa wapas', advance: 'Advance mein' }
+/** Who changed it: the machine that voided it, else (older rows) the one that made it. */
+const changedBy = (v: { by?: string; machine?: string }) => v.by || v.machine || ''
 const clock = (iso: string) => new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })
 
 /** Tally's Exception Reports for a mandi: what the owner should look at before trusting the day. */
@@ -359,7 +361,7 @@ export function Nigrani({ shopId }: { shopId: string }) {
     columns: [{ label: t('Kya') }, { label: t('Kaun'), wide: true }, { label: t('Kab') }, { label: t('Machine') }, { label: t('Rakam'), num: true }],
     rows: [
       { kind: 'band' as const, cells: [`${t('Hatayi / badli parchi')} (${data.voids.length})`] },
-      ...data.voids.map((v) => ({ cells: [`${t('Parchi')} ${v.slipNo ?? v.number} · ${t(REASON[v.reason] ?? v.reason)}`, v.buyer, clock(v.at), v.machine, rs(v.totalPaise)] })),
+      ...data.voids.map((v) => ({ cells: [`${t('Parchi')} ${v.slipNo ?? v.number} · ${t(REASON[v.reason] ?? v.reason)}`, v.buyer, clock(v.at), changedBy(v), rs(v.totalPaise)] })),
       { kind: 'band' as const, cells: [`${t('Bhav se kam')} (${data.belowBhav.length})`] },
       ...data.belowBhav.map((b) => ({ cells: [`${t('Parchi')} ${b.slipNo ?? ''} · ${b.qty} × ${(b.ratePaise / 100).toFixed(2)} (${t('bhav')} ${(b.bhavPaise / 100).toFixed(2)})`, b.buyer, dmy(b.date), b.machine, rs(b.lossPaise)] })),
       { kind: 'band' as const, cells: [`${t('Limit se upar udhaar')} (${data.overLimit.length})`] },
@@ -367,7 +369,7 @@ export function Nigrani({ shopId }: { shopId: string }) {
       { kind: 'band' as const, cells: [`${t('Raat ki parchi')} (${data.night.length})`] },
       ...data.night.map((x) => ({ cells: [`${t('Parchi')} ${x.slipNo ?? ''}`, x.buyer, clock(x.at), x.machine, rs(x.totalPaise)] })),
       { kind: 'band' as const, cells: [`${t('Hatayi raseed')} (${data.receipts.length})`] },
-      ...data.receipts.map((r) => ({ cells: [`${t('Raseed')} ${r.receiptNo ?? ''} · ${t(REASON[r.reason] ?? r.reason)}`, r.buyer, clock(r.at), '', rs(r.amountPaise)] })),
+      ...data.receipts.map((r) => ({ cells: [`${t('Raseed')} ${r.receiptNo ?? ''} · ${t(REASON[r.reason] ?? r.reason)}`, r.buyer, clock(r.at), changedBy(r), rs(r.amountPaise)] })),
       { kind: 'band' as const, cells: [`${t('Bade kharche')} (${data.bigKharcha.length})`] },
       ...data.bigKharcha.map((k) => ({ cells: [HEADS[k.head] ?? k.head, [k.party, k.note].filter(Boolean).join(' · '), dmy(k.date), k.mode, rs(k.amountPaise)] })),
     ],
@@ -385,11 +387,11 @@ export function Nigrani({ shopId }: { shopId: string }) {
             <div><span className="lb">{t('Limit se upar')}</span><span className={`v${data.overLimit.length ? ' due' : ''}`}>{data.overLimit.length}</span></div>
             <div><span className="lb">{t('Raat ki parchi')}</span><span className="v">{data.night.length}</span></div>
           </div>
-          <Section title={t('Hatayi / badli parchi')} n={data.voids.length} cols={[t('Parchi'), t('Grahak'), t('Kab'), t('Machine'), t('Rakam')]}>
+          <Section title={t('Hatayi / badli parchi')} n={data.voids.length} cols={[t('Parchi'), t('Grahak'), t('Kab'), t('Kisne'), t('Rakam')]}>
             {data.voids.map((v) => (
               <tr key={v.billId} data-row tabIndex={0} onClick={() => openVoucher(shopId, v.billId)} onKeyDown={(e) => { if (e.key === 'Enter') openVoucher(shopId, v.billId) }}>
                 <td className="main-col"><b>{v.slipNo ?? v.number}</b> <span className="due">{t(REASON[v.reason] ?? v.reason)}</span><small className="show-sm">{v.buyer} · {clock(v.at)}</small></td>
-                <td className="opt-col">{v.buyer}</td><td className="opt-col muted">{clock(v.at)}</td><td className="opt-col muted">{v.machine}</td>
+                <td className="opt-col">{v.buyer}</td><td className="opt-col muted">{clock(v.at)}</td><td className="opt-col muted">{changedBy(v)}</td>
                 <td className="num amt-col money">{rupees(v.totalPaise)}</td>
               </tr>
             ))}
@@ -422,11 +424,11 @@ export function Nigrani({ shopId }: { shopId: string }) {
               </tr>
             ))}
           </Section>
-          <Section title={t('Hatayi raseed')} n={data.receipts.length} cols={[t('Raseed'), t('Grahak'), t('Kab'), '', t('Rakam')]}>
+          <Section title={t('Hatayi raseed')} n={data.receipts.length} cols={[t('Raseed'), t('Grahak'), t('Kab'), t('Kisne'), t('Rakam')]}>
             {data.receipts.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.id} data-row tabIndex={0} onClick={() => openRaseed(shopId, r.id)} onKeyDown={(e) => { if (e.key === 'Enter') openRaseed(shopId, r.id) }}>
                 <td className="main-col"><b>{r.receiptNo ?? '—'}</b> <span className="due">{t(REASON[r.reason] ?? r.reason)}</span><small className="show-sm">{r.buyer} · {clock(r.at)}</small></td>
-                <td className="opt-col">{r.buyer}</td><td className="opt-col muted">{clock(r.at)}</td><td className="opt-col" />
+                <td className="opt-col">{r.buyer}</td><td className="opt-col muted">{clock(r.at)}</td><td className="opt-col muted">{changedBy(r)}</td>
                 <td className="num amt-col money">{rupees(r.amountPaise)}</td>
               </tr>
             ))}

@@ -129,13 +129,14 @@ export class InsightsService {
     if (from > to) throw new BadRequestException('from must be on or before to');
     return this.db.withShop(shopId, async (tx) => {
       const machine = `COALESCE(NULLIF(CONCAT_WS(' · ', d.code, NULLIF(d.label, '')), ''), '—')`;
-      const voids = (await tx.query<{ id: string; slip_no: number | null; number: string; buyer: string; total: string; reason: string; at: Date; day: string; machine: string }>(
-        `SELECT b.id, b.slip_no, b.number, b.buyer_name AS buyer, b.total_paise AS total, v.reason, v.created_at AS at, b.business_date::text AS day, ${machine} AS machine
-         FROM bill_voids v JOIN bills b ON b.id = v.bill_id LEFT JOIN devices d ON d.id = b.device_id
+      const voids = (await tx.query<{ id: string; slip_no: number | null; number: string; buyer: string; total: string; reason: string; at: Date; day: string; machine: string; by: string }>(
+        `SELECT b.id, b.slip_no, b.number, b.buyer_name AS buyer, b.total_paise AS total, v.reason, v.created_at AS at, b.business_date::text AS day, ${machine} AS machine,
+                ${machine.replace(/\bd\./g, 'vd.')} AS by
+         FROM bill_voids v JOIN bills b ON b.id = v.bill_id LEFT JOIN devices d ON d.id = b.device_id LEFT JOIN devices vd ON vd.id = v.device_id
          WHERE ${IST_DAY('v.created_at')} BETWEEN $1 AND $2 ORDER BY v.created_at DESC LIMIT 200`, [from, to])).rows;
-      const receipts = (await tx.query<{ id: string; receipt_no: number | null; buyer: string; amount: string; reason: string; at: Date }>(
-        `SELECT c.id, c.receipt_no, g.name AS buyer, c.amount_paise AS amount, v.reason, v.created_at AS at
-         FROM collection_voids v JOIN collections c ON c.id = v.collection_id LEFT JOIN buyers g ON g.id = c.buyer_id
+      const receipts = (await tx.query<{ id: string; receipt_no: number | null; buyer: string; amount: string; reason: string; at: Date; by: string }>(
+        `SELECT c.id, c.receipt_no, g.name AS buyer, c.amount_paise AS amount, v.reason, v.created_at AS at, ${machine} AS by
+         FROM collection_voids v JOIN collections c ON c.id = v.collection_id LEFT JOIN buyers g ON g.id = c.buyer_id LEFT JOIN devices d ON d.id = v.device_id
          WHERE ${IST_DAY('v.created_at')} BETWEEN $1 AND $2 ORDER BY v.created_at DESC LIMIT 200`, [from, to])).rows;
       const below = (await tx.query<{ id: string; slip_no: number | null; buyer: string; day: string; grade: string; brand: string | null; qty: number; rate: string; bhav: string; machine: string }>(
         `SELECT lb.id, lb.slip_no, lb.buyer_name AS buyer, lb.business_date::text AS day, l.grade, br.name AS brand, l.qty, l.rate_paise AS rate, r.rate_paise AS bhav, ${machine} AS machine
@@ -161,8 +162,8 @@ export class InsightsService {
          ORDER BY amount_paise DESC LIMIT 100`, [from, to, BIG_KHARCHA_PAISE])).rows;
       return {
         from, to,
-        voids: voids.map((v) => ({ billId: v.id, slipNo: v.slip_no, number: v.number, buyer: v.buyer, totalPaise: n(v.total), reason: v.reason, at: v.at.toISOString(), date: v.day, machine: v.machine })),
-        receipts: receipts.map((r) => ({ id: r.id, receiptNo: r.receipt_no, buyer: r.buyer ?? '', amountPaise: n(r.amount), reason: r.reason, at: r.at.toISOString() })),
+        voids: voids.map((v) => ({ billId: v.id, slipNo: v.slip_no, number: v.number, buyer: v.buyer, totalPaise: n(v.total), reason: v.reason, at: v.at.toISOString(), date: v.day, machine: v.machine, by: v.by })),
+        receipts: receipts.map((r) => ({ id: r.id, receiptNo: r.receipt_no, buyer: r.buyer ?? '', amountPaise: n(r.amount), reason: r.reason, at: r.at.toISOString(), by: r.by })),
         belowBhav: below.map((b) => ({ billId: b.id, slipNo: b.slip_no, buyer: b.buyer, date: b.day, brand: b.brand ?? 'Maal', grade: b.grade, qty: b.qty,
           ratePaise: n(b.rate), bhavPaise: n(b.bhav), lossPaise: b.qty * (n(b.bhav) - n(b.rate)), machine: b.machine })),
         overLimit: overLimit.map((o) => ({ buyerId: o.id, name: o.name, phone: o.phone, code: o.code, balancePaise: n(o.bal), limitPaise: n(o.limit_paise) })),

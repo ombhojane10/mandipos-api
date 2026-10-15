@@ -92,6 +92,8 @@ async function createApproved(token: string, body: object) {
 
 const now = () => new Date().toISOString();
 const today = () => new Date().toISOString().slice(0, 10);
+/** The shop's business day, in IST — what the server dates website entries and voids by. */
+const istDay = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 describe('team', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -637,7 +639,7 @@ describe('shop approval and the admin portal', () => {
   it('makes entries on the website exactly as a terminal would, and the terminals pull them', async () => {
     const shop = await registerShop('9877700008', 'Web Entry Traders');
     const id = shop.me.shop.id as string;
-    const t = new Date().toISOString(), d = t.slice(0, 10);
+    const t = new Date().toISOString(), d = istDay();
     const brandId = uuidv7(), truckId = uuidv7(), raju = uuidv7();
     await http().post('/v1/sync/push').set(auth(shop.accessToken)).send({ items: [
       { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Pollachi' } },
@@ -773,6 +775,131 @@ describe('shop approval and the admin portal', () => {
     expect(reg.days).toEqual([expect.objectContaining({ date: d, slips: 5, totalPaise: 177500 })]);
   });
 
+  it('alters and deletes a parchi or raseed from the website the way the app does, and terminals pick it up', async () => {
+    const shop = await registerShop('9877700020', 'Badlein Traders');
+    const id = shop.me.shop.id as string;
+    const term = auth(shop.accessToken);
+    const t = new Date().toISOString(), d = istDay();
+    const brandId = uuidv7(), truckId = uuidv7(), raju = uuidv7();
+    await http().post('/v1/sync/push').set(term).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Pollachi' } },
+      { table: 'buyers', row: { id: raju, created_at: t, updated_at: t, name: 'Raju Fruits', phone: '9876500001' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'TN09', supplier: 'Mani', arrived_at: t } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 100, received_qty: 100, rate_paise: 2000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9877700020' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9877700020', code: OtpService.issuedForTests.get('9877700020') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const parchi = (body: object) => http().post(`${base}/entries/parchi`).set(web).send({ truckId, packing: 'loose', ...body }).expect(201).then((r) => r.body);
+    const pull = async () => (await http().get('/v1/sync/pull?after=0&limit=500').set(term).expect(200)).body.changes as any[];
+    const left = async () => (await http().get(`${base}/stock`).set(web).expect(200)).body.rows.find((r: any) => r.truckId === truckId).left;
+    const balance = async () => (await http().get(`${base}/buyers/${raju}`).set(web).expect(200)).body.totals.balancePaise;
+
+    // Badlein: 10 nag at ₹25 on udhaar becomes 12 at ₹26 — same slip number, new row, old one voided 'edited'.
+    const a = await parchi({ buyerId: raju, lines: [{ grade: '1', qty: 10, ratePaise: 2500 }], pay: 'credit' });
+    expect(a.slipNo).toBe(1);
+    // All 90 dana left plus the 10 this slip already took: the edit may take up to 100, not more.
+    await http().post(`${base}/bills/${a.billId}/edit`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 101, ratePaise: 2600 }], pay: 'credit', packing: 'loose' }).expect(422);
+    const a2 = (await http().post(`${base}/bills/${a.billId}/edit`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 12, ratePaise: 2600 }], pay: 'credit', packing: 'loose' }).expect(201)).body;
+    expect(a2).toMatchObject({ slipNo: 1, replaced: a.billId });
+    expect(a2.billId).not.toBe(a.billId);
+    await http().post(`${base}/bills/${a.billId}/edit`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 1, ratePaise: 1 }], pay: 'credit', packing: 'loose' }).expect(409);
+    await http().post(`${base}/bills/${a.billId}/void`).set(web).send({}).expect(409);
+    expect((await http().get(`${base}/bills/${a.billId}`).set(web).expect(200)).body.voided).toMatchObject({ reason: 'edited', by: expect.stringMatching(/Website$/) });
+    expect(await left()).toBe(88);
+    expect(await balance()).toBe(31200);
+    let rows = await pull();
+    // The terminal gets the void and the corrected slip together, the void first.
+    const voidAt = rows.findIndex((c) => c.table === 'bill_voids' && c.row.bill_id === a.billId);
+    const newAt = rows.findIndex((c) => c.table === 'bills' && c.row.id === a2.billId);
+    expect(rows[voidAt].row).toMatchObject({ reason: 'edited', slip_no: 1 });
+    expect(newAt).toBeGreaterThan(voidAt);
+    expect(rows[newAt].row).toMatchObject({ slip_no: 1, total_paise: 31200, buyer_id: raju });
+
+    // Hatayein, nothing paid: just voided, the dana back on the gaadi.
+    const b = await parchi({ buyerId: raju, lines: [{ grade: '1', qty: 5, ratePaise: 2500 }], pay: 'credit' });
+    await http().post(`${base}/bills/${b.billId}/void`).set(web).send({ reason: 'refunded' }).expect(422);
+    expect((await http().post(`${base}/bills/${b.billId}/void`).set(web).send({}).expect(200)).body).toMatchObject({ slipNo: 2, reason: 'deleted', refundPaise: 0, advance: null });
+    await http().post(`${base}/bills/${b.billId}/void`).set(web).send({}).expect(409);
+    expect(await left()).toBe(88);
+
+    // Paid at the counter: say what happens to the money. Kept as advance: a raseed with no slip.
+    const c = await parchi({ buyerId: raju, lines: [{ grade: '1', qty: 2, ratePaise: 2500 }], pay: 'split', cashPaise: 3000, upiPaise: 2000 });
+    await http().post(`${base}/bills/${c.billId}/void`).set(web).send({ reason: 'deleted' }).expect(422);
+    const adv = (await http().post(`${base}/bills/${c.billId}/void`).set(web).send({ reason: 'advance' }).expect(200)).body;
+    expect(adv.advance).toMatchObject({ receiptNo: 1, amountPaise: 5000 });
+    rows = await pull();
+    expect(rows.find((x) => x.table === 'collections' && x.row.id === adv.advance.id).row).toMatchObject({ bill_id: null, amount_paise: 5000, cash_paise: 3000, upi_paise: 2000, receipt_no: 1, buyer_id: raju });
+    expect(rows.find((x) => x.table === 'bill_voids' && x.row.bill_id === c.billId).row.reason).toBe('advance');
+    expect(await balance()).toBe(31200 - 5000);
+
+    // A walk-in has no khata to keep it in: refunded. The UPI stays in the bank, the galla pays it out.
+    const dd = await parchi({ buyerName: 'Bank', lines: [{ grade: '1', qty: 2, ratePaise: 2500 }], pay: 'upi' });
+    await http().post(`${base}/bills/${dd.billId}/void`).set(web).send({ reason: 'advance' }).expect(422);
+    expect((await http().post(`${base}/bills/${dd.billId}/void`).set(web).send({ reason: 'refunded' }).expect(200)).body.refundPaise).toBe(5000);
+    const day = (await http().get(`${base}/daybook?from=${d}&to=${d}`).set(web).expect(200)).body.entries;
+    expect(day.filter((e: any) => e.kind === 'in' || e.kind === 'out').map((e: any) => [e.kind, e.title, e.mode, e.amountPaise, e.note]).sort()).toEqual([
+      ['in', 'aur_aaya', 'upi', 5000, `Parchi #${dd.slipNo} wapas · UPI aaya tha`], ['out', 'aur_gaya', 'cash', 5000, `Parchi #${dd.slipNo} refund · cash diya`],
+    ]);
+
+    // Vasooli taken on a slip (at a terminal): it can't be altered any more; deleted with a refund, that vasooli goes too.
+    const e = await parchi({ buyerId: raju, lines: [{ grade: '1', qty: 4, ratePaise: 2500 }], pay: 'credit' });
+    const onE = uuidv7();
+    await http().post('/v1/sync/push').set(term).send({ items: [
+      { table: 'collections', row: { id: onE, created_at: now(), buyer_id: raju, amount_paise: 4000, pay_mode: 'upi', business_date: d, bill_id: e.billId, receipt_no: 2, upi_paise: 4000 } },
+    ] }).expect(200);
+    expect((await http().get(`${base}/bills/${e.billId}`).set(web).expect(200)).body.collected).toEqual({ cashPaise: 0, upiPaise: 4000 });
+    await http().post(`${base}/bills/${e.billId}/edit`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 4, ratePaise: 2400 }], pay: 'credit', packing: 'loose' }).expect(422);
+    expect((await http().post(`${base}/bills/${e.billId}/void`).set(web).send({ reason: 'refunded' }).expect(200)).body.refundPaise).toBe(4000);
+    rows = await pull();
+    expect(rows.find((x) => x.table === 'collection_voids' && x.row.collection_id === onE).row).toMatchObject({ receipt_no: 2, reason: 'deleted' });
+    expect(rows.filter((x) => x.table === 'daybook_entries' && x.row.amount_paise === 4000).map((x) => x.row.category).sort()).toEqual(['aur_aaya', 'aur_gaya']);
+    expect(await balance()).toBe(31200 - 5000);
+
+    // Raseed: Badlein keeps its number and time; Hatayein puts the money back on what they owe.
+    const v = (await http().post(`${base}/entries/vasooli`).set(web).send({ buyerId: raju, cashPaise: 5000, upiPaise: 0 }).expect(201)).body;
+    expect((await http().get(`${base}/collections/${v.id}`).set(web).expect(200)).body).toMatchObject({ receiptNo: v.receiptNo, cashPaise: 5000, buyerName: 'Raju Fruits', voided: null });
+    const v2 = (await http().post(`${base}/collections/${v.id}/edit`).set(web).send({ cashPaise: 2000, upiPaise: 5000, upiBank: 'ICICI ··4521' }).expect(201)).body;
+    expect(v2.receiptNo).toBe(v.receiptNo);
+    await http().post(`${base}/collections/${v.id}/void`).set(web).expect(409);
+    rows = await pull();
+    const origAt = rows.find((x) => x.table === 'collections' && x.row.id === v.id).row.created_at;
+    const fixed = rows.filter((x) => x.table === 'collections' && x.row.receipt_no === v.receiptNo && x.row.id !== v.id);
+    expect(fixed.map((x) => x.row)).toEqual([expect.objectContaining({ amount_paise: 7000, cash_paise: 2000, upi_paise: 5000, pay_mode: 'mixed', bill_id: null, upi_bank: 'ICICI ··4521', created_at: origAt })]);
+    expect(rows.find((x) => x.table === 'collection_voids' && x.row.collection_id === v.id).row.reason).toBe('edited');
+    expect(await balance()).toBe(31200 - 5000 - 7000);
+    await http().post(`${base}/collections/${fixed[0].row.id}/void`).set(web).expect(200);
+    expect(await balance()).toBe(31200 - 5000);
+
+    // A raseed taken on slips is taken again over the same slips, oldest first, cash before UPI.
+    const f = await parchi({ buyerId: raju, lines: [{ grade: '1', qty: 4, ratePaise: 2500 }], pay: 'credit' });
+    const g = await parchi({ buyerId: raju, lines: [{ grade: '1', qty: 4, ratePaise: 2500 }], pay: 'credit' });
+    const at2 = now(), r1 = uuidv7(), r2 = uuidv7();
+    await http().post('/v1/sync/push').set(term).send({ items: [
+      { table: 'collections', row: { id: r1, created_at: at2, buyer_id: raju, amount_paise: 3000, pay_mode: 'cash', business_date: d, bill_id: f.billId, receipt_no: 9, cash_paise: 3000 } },
+      { table: 'collections', row: { id: r2, created_at: at2, buyer_id: raju, amount_paise: 3000, pay_mode: 'cash', business_date: d, bill_id: g.billId, cash_paise: 3000 } },
+    ] }).expect(200);
+    expect((await http().get(`${base}/collections/${r2}`).set(web).expect(200)).body).toMatchObject({ receiptNo: 9, cashPaise: 6000, slips: expect.arrayContaining([expect.objectContaining({ billId: f.billId }), expect.objectContaining({ billId: g.billId })]) });
+    await http().post(`${base}/collections/${r2}/edit`).set(web).send({ cashPaise: 12000, upiPaise: 2000 }).expect(201);
+    rows = await pull();
+    const again = rows.filter((x) => x.table === 'collections' && x.row.created_at === rows.find((y) => y.row.id === r1).row.created_at && ![r1, r2].includes(x.row.id)).map((x) => x.row);
+    // Raju's ₹50 advance settles his oldest slip (the Badlein one), so both are owed in full: the
+    // older takes ₹100 in cash, the last one whatever is left.
+    expect(again.map((r) => [r.bill_id, r.amount_paise, r.cash_paise, r.upi_paise, r.receipt_no])).toEqual([
+      [f.billId, 10000, 10000, 0, 9], [g.billId, 4000, 2000, 2000, null],
+    ]);
+
+    // Nigrani lists every slip and raseed changed, and which machine changed it.
+    const nig = (await http().get(`${base}/nigrani?from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(nig.voids.map((x: any) => [x.slipNo, x.reason]).sort()).toEqual([[1, 'edited'], [2, 'deleted'], [3, 'advance'], [4, 'refunded'], [5, 'refunded']]);
+    expect(nig.voids.every((x: any) => /Website$/.test(x.by))).toBe(true);
+    expect(nig.receipts.map((x: any) => x.reason).sort()).toEqual(['deleted', 'deleted', 'edited', 'edited', 'edited']);
+    // The Day Book strikes the corrected raseed through as changed, not deleted.
+    const book = (await http().get(`${base}/daybook?from=${d}&to=${d}`).set(web).expect(200)).body.entries;
+    expect(book.find((x: any) => x.id === v.id).voided).toBe('edited');
+    expect(book.find((x: any) => x.id === a.billId).voided).toBe('edited');
+  });
+
   it('turns a request down and frees the number to register again', async () => {
     const s = await login('9877700002');
     const created = await http().post('/v1/shops').set(auth(s.accessToken)).send({ name: 'Fake Shop' }).expect(201);
@@ -808,7 +935,7 @@ describe('shop approval and the admin portal', () => {
 
   it('shows a shop the same figures the app does, and a grahak’s whole history', async () => {
     const shop = await registerShop('9877700003', 'Stats Traders');
-    const t = new Date().toISOString(), d = t.slice(0, 10);
+    const t = new Date().toISOString(), d = istDay();
     const brandId = uuidv7(), truckId = uuidv7(), raju = uuidv7();
     const [paid, udhaar, voided] = [uuidv7(), uuidv7(), uuidv7()];
     const colId = uuidv7(), deadCol = uuidv7();

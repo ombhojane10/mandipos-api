@@ -378,8 +378,8 @@ export class AdminService {
   async bill(shopId: string, billId: string) {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
-      const b = (await tx.query<{ id: string; number: string; slip_no: number | null; created_at: Date; day: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; labour: string; chungi: string; packing: string; panni_name: string; packs: number; staff_name: string; upi_bank: string; truck: string | null; device: string | null; device_label: string | null }>(
-        `SELECT b.id, b.number, b.slip_no, b.created_at, b.business_date::text AS day, b.buyer_id, b.buyer_name, b.pay_mode,
+      const b = (await tx.query<{ id: string; number: string; slip_no: number | null; created_at: Date; day: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; labour: string; chungi: string; packing: string; panni_name: string; packs: number; staff_name: string; upi_bank: string; truck_id: string | null; truck: string | null; device: string | null; device_label: string | null }>(
+        `SELECT b.id, b.number, b.truck_id, b.slip_no, b.created_at, b.business_date::text AS day, b.buyer_id, b.buyer_name, b.pay_mode,
                 b.total_paise AS total, b.paid_paise AS paid, b.cash_paise AS cash, b.upi_paise AS upi, b.labour_paise AS labour,
                 b.chungi_paise AS chungi, b.packing, b.panni_name, b.packs, b.staff_name, b.upi_bank,
                 t.number AS truck, d.code AS device, d.label AS device_label
@@ -388,24 +388,31 @@ export class AdminService {
       const lines = (await tx.query<{ brand: string | null; grade: string; qty: number; rate: string; leak: boolean }>(
         `SELECT br.name AS brand, l.grade, l.qty, l.rate_paise AS rate, l.leak FROM bill_lines l LEFT JOIN brands br ON br.id = l.brand_id
          WHERE l.bill_id = $1 ORDER BY l.created_at`, [billId])).rows;
-      const later = (await tx.query<{ id: string; at: Date; amount: string; receipt_no: number | null; voided: boolean }>(
+      const later = (await tx.query<{ id: string; at: Date; amount: string; cash: string; upi: string; receipt_no: number | null; voided: boolean }>(
         `SELECT c.id, c.created_at AS at, c.amount_paise AS amount, c.receipt_no,
+                ${CASH_PART.replace(/\b(cash_paise|upi_paise|pay_mode|amount_paise)\b/g, 'c.$1')} AS cash,
+                ${UPI_PART.replace(/\b(cash_paise|upi_paise|pay_mode|amount_paise)\b/g, 'c.$1')} AS upi,
                 EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id) AS voided
          FROM collections c WHERE c.bill_id = $1 ORDER BY c.created_at`, [billId])).rows;
-      const voided = (await tx.query<{ reason: string; at: Date }>(`SELECT reason, created_at AS at FROM bill_voids WHERE bill_id = $1 LIMIT 1`, [billId])).rows[0];
+      const voided = (await tx.query<{ reason: string; at: Date; by: string | null }>(
+        `SELECT v.reason, v.created_at AS at, CONCAT_WS(' · ', d.code, NULLIF(d.label, '')) AS by
+         FROM bill_voids v LEFT JOIN devices d ON d.id = v.device_id WHERE v.bill_id = $1 LIMIT 1`, [billId])).rows[0];
       const delivery = (await tx.query<{ address: string; destination: string }>(
         `SELECT address, destination FROM delivery_slips WHERE bill_id = $1 ORDER BY created_at DESC LIMIT 1`, [billId])).rows[0];
-      const paidLater = later.filter((c) => !c.voided).reduce((s, c) => s + n(c.amount), 0);
+      const live = later.filter((c) => !c.voided);
+      const paidLater = live.reduce((s, c) => s + n(c.amount), 0);
       return {
         id: b.id, number: b.number, slipNo: b.slip_no, at: b.created_at.toISOString(), date: b.day,
         buyerId: b.buyer_id, buyerName: b.buyer_name, payMode: b.pay_mode,
-        totalPaise: n(b.total), cashPaise: n(b.cash), upiPaise: n(b.upi), labourPaise: n(b.labour), chungiPaise: n(b.chungi),
+        totalPaise: n(b.total), paidPaise: n(b.paid), cashPaise: n(b.cash), upiPaise: n(b.upi), labourPaise: n(b.labour), chungiPaise: n(b.chungi),
         openPaise: Math.max(0, n(b.total) - n(b.paid) - paidLater),
-        packing: b.packing, panniName: b.panni_name, packs: b.packs, staff: b.staff_name, upiBank: b.upi_bank, truck: b.truck,
+        packing: b.packing, panniName: b.panni_name, packs: b.packs, staff: b.staff_name, upiBank: b.upi_bank, truckId: b.truck_id, truck: b.truck,
+        // Vasooli still standing on the slip: an edit is refused, a delete hands it back or keeps it.
+        collected: { cashPaise: live.reduce((s, c) => s + n(c.cash), 0), upiPaise: live.reduce((s, c) => s + n(c.upi), 0) },
         machine: [b.device, b.device_label].filter(Boolean).join(' · '),
         lines: lines.map((l) => ({ brand: l.brand ?? 'Maal', grade: l.grade, qty: l.qty, ratePaise: n(l.rate), leak: l.leak })),
         payments: later.map((c) => ({ id: c.id, at: c.at.toISOString(), amountPaise: n(c.amount), receiptNo: c.receipt_no, voided: c.voided })),
-        voided: voided ? { reason: voided.reason, at: voided.at.toISOString() } : null,
+        voided: voided ? { reason: voided.reason, at: voided.at.toISOString(), by: voided.by ?? '' } : null,
         delivery: delivery ? { address: delivery.address, stand: delivery.destination } : null,
       };
     });
@@ -421,10 +428,10 @@ export class AdminService {
                 (SELECT COALESCE(SUM(qty), 0) FROM bill_lines l WHERE l.bill_id = b.id) AS nags,
                 (SELECT v.reason FROM bill_voids v WHERE v.bill_id = b.id LIMIT 1) AS void_reason
          FROM bills b WHERE b.business_date BETWEEN $1 AND $2 ORDER BY b.created_at DESC LIMIT 1000`, [from, to])).rows;
-      const pays = (await tx.query<{ id: string; at: Date; day: string; buyer_id: string; name: string | null; amount: string; cash: string; upi: string; receipt_no: number | null; voided: boolean }>(
+      const pays = (await tx.query<{ id: string; at: Date; day: string; buyer_id: string; name: string | null; amount: string; cash: string; upi: string; receipt_no: number | null; voided: string | null }>(
         `SELECT c.id, c.created_at AS at, c.business_date::text AS day, c.buyer_id, g.name, c.amount_paise AS amount,
                 ${CASH_PART} AS cash, ${UPI_PART} AS upi,
-                c.receipt_no, EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id) AS voided
+                c.receipt_no, (SELECT v.reason FROM collection_voids v WHERE v.collection_id = c.id LIMIT 1) AS voided
          FROM collections c LEFT JOIN buyers g ON g.id = c.buyer_id
          WHERE c.business_date BETWEEN $1 AND $2 ORDER BY c.created_at DESC LIMIT 1000`, [from, to])).rows;
       const book = (await tx.query<{ id: string; at: Date; day: string; direction: string; mode: string; category: string; party: string; note: string; amount: string }>(
@@ -443,7 +450,7 @@ export class AdminService {
           kind: 'payment' as const, id: c.id, at: c.at.toISOString(), date: c.day,
           title: c.receipt_no ? `Raseed ${c.receipt_no}` : 'Vasooli', party: c.name ?? '', buyerId: c.buyer_id, nags: 0,
           amountPaise: n(c.amount), cashPaise: n(c.cash), upiPaise: n(c.upi), udhaarPaise: 0,
-          payMode: '', staff: '', voided: c.voided ? 'deleted' : null,
+          payMode: '', staff: '', voided: c.voided,
         })),
         ...book.map((e) => ({
           kind: (e.direction === 'in' ? 'in' : 'out') as 'in' | 'out', id: e.id, at: e.at.toISOString(), date: e.day,

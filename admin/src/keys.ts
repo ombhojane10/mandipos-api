@@ -22,7 +22,10 @@ export const letterOf = (map: Record<string, string>, value: string) => Object.k
 export const PERIOD_EVENT = 'mandipos:period'
 export const periodKey = (what: 'open' | 'prev' | 'next') => dispatchEvent(new CustomEvent(PERIOD_EVENT, { detail: what }))
 export const VOUCHER_EVENT = 'mandipos:voucher'
-export const openVoucher = (shopId: string, billId: string) => dispatchEvent(new CustomEvent(VOUCHER_EVENT, { detail: { shopId, billId } }))
+export type VoucherRef = { shopId: string; billId: string } | { shopId: string; raseedId: string }
+export const openVoucher = (shopId: string, billId: string) => dispatchEvent(new CustomEvent<VoucherRef>(VOUCHER_EVENT, { detail: { shopId, billId } }))
+/** A vasooli opens as its raseed, with Alter and Delete, as a parchi does. */
+export const openRaseed = (shopId: string, raseedId: string) => dispatchEvent(new CustomEvent<VoucherRef>(VOUCHER_EVENT, { detail: { shopId, raseedId } }))
 export const HELP_EVENT = 'mandipos:help'
 export const openHelp = () => dispatchEvent(new Event(HELP_EVENT))
 

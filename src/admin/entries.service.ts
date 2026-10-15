@@ -1,11 +1,11 @@
-import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { AccountsService } from '../auth/accounts.service';
 import { Principal } from '../auth/tokens.service';
 import { uuidv7 } from '../common/uuid';
 import { Db, Tx } from '../db/db.service';
 import { SyncHub } from '../sync/sync.hub';
 import { PushItem, PushResult, SyncService } from '../sync/sync.service';
-import { LIVE_BILLS, n } from './sql';
+import { CASH_PART, LIVE_BILLS, LIVE_COLS, UPI_PART, n } from './sql';
 import { nameKey } from './reports.service';
 
 /**
@@ -104,7 +104,26 @@ export class EntriesService {
   // ---------------------------------------------------------------- Nayi parchi
 
   async parchi(phone: string, shopId: string, input: ParchiInput) {
+    return this.writeParchi(await this.device(phone, shopId), shopId, input, null);
+  }
+
+  /**
+   * Badlein, as ParchiScreen saves an edit: the old slip is voided ('edited') and the corrected
+   * one written in the same entry, keeping its slip number (Store.voidBill + saveParchi with
+   * keepSlipNo) — so a terminal sees the number freed and taken again together, or not at all.
+   * Like the app, a slip with vasooli on it stays as written; it can only be deleted.
+   */
+  async editParchi(phone: string, shopId: string, billId: string, input: ParchiInput) {
     const p = await this.device(phone, shopId);
+    const old = await this.db.withShop(shopId, async (tx) => {
+      const b = await liveBill(tx, billId);
+      if ((await collectedOn(tx, billId)).rows.length) throw new UnprocessableEntityException('Is parchi par vasooli ho chuki hai — badal nahi sakte, sirf hata sakte hain');
+      return b;
+    });
+    return this.writeParchi(p, shopId, input, old);
+  }
+
+  private async writeParchi(p: Principal, shopId: string, input: ParchiInput, editing: LiveBill | null) {
     const lines = input.lines.filter((l) => l.qty > 0);
     if (!lines.length) throw new BadRequestException('Kam se kam ek line daalein');
     const now = new Date().toISOString();
@@ -119,9 +138,12 @@ export class EntriesService {
                   - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'spoiled') AS spoiled
-         FROM trucks t WHERE t.id = $1 AND t.closed_at IS NULL`, [input.truckId])).rows[0];
+         FROM trucks t WHERE t.id = $1 AND (t.closed_at IS NULL OR t.id = $2)`, [input.truckId, editing?.truck_id ?? null])).rows[0];
       if (!truck) throw new BadRequestException('Yeh gaadi khuli nahi hai');
-      const left = n(truck.recv) - n(truck.sold) - n(truck.spoiled);
+      // The dana the slip being edited took off this gaadi come back when it is replaced.
+      const own = editing ? n((await tx.query<{ q: string }>(
+        `SELECT COALESCE(SUM(qty), 0) AS q FROM bill_lines WHERE bill_id = $1 AND truck_id = $2`, [editing.id, input.truckId])).rows[0].q) : 0;
+      const left = n(truck.recv) - n(truck.sold) - n(truck.spoiled) + own;
       const qty = lines.reduce((s, l) => s + l.qty, 0);
       if (qty > left) throw new UnprocessableEntityException(`Gaadi mein sirf ${left} nag baaki hain`);
       const brand = (await tx.query<{ brand_id: string }>(
@@ -169,11 +191,16 @@ export class EntriesService {
     const delivery = input.delivery && (input.delivery.address.trim() || input.delivery.stand.trim()) ? input.delivery : null;
     const billId = uuidv7();
     const txn = uuidv7();
+    // An edit keeps the number the customer's copy carries; a slip without one takes the next.
+    const slipNo = editing ? (editing.slip_no ?? pre.slipNo) : (input.slipNo ?? pre.slipNo);
+    if (editing) items.push({ table: 'bill_voids', txn, row: {
+      id: uuidv7(), created_at: now, bill_id: editing.id, slip_no: editing.slip_no, reason: 'edited',
+    } });
     items.push({
       table: 'bills', txn, row: {
         id: billId, created_at: now, number: pre.number, kind: 'kachchi', buyer_id: buyerId, buyer_name: buyerName,
         business_date: todayIst(), pay_mode: payMode, total_paise: goods, paid_paise: cash + upi, cash_paise: cash, upi_paise: upi,
-        payment_ref: '', slip_no: input.slipNo ?? pre.slipNo, truck_id: input.truckId,
+        payment_ref: '', slip_no: slipNo, truck_id: input.truckId,
         labour_paise: labourQty * (input.labourRatePaise ?? LABOUR_PAISE_PER_NAG),
         packing: input.packing, panni_name: panniName, packs: labourQty,
         delivery: !!delivery, staff_name: (input.staff ?? '').trim().slice(0, 60) || 'Website', chungi_paise: 0,
@@ -192,7 +219,7 @@ export class EntriesService {
     } });
     const results = await this.push(p, shopId, items);
     const bill = results.find((r) => r.id === billId)!;
-    return { billId, number: pre.number, slipNo: bill.renumbered?.to ?? input.slipNo ?? pre.slipNo, buyerId, results };
+    return { billId, number: pre.number, slipNo: bill.renumbered?.to ?? slipNo, buyerId, replaced: editing?.id ?? null, results };
   }
 
   // ---------------------------------------------------------------- Vasooli
@@ -213,6 +240,155 @@ export class EntriesService {
       upi_bank: input.upiPaise > 0 ? (input.upiBank ?? '') : '',
     } }]);
     return { id, receiptNo: results[0].renumbered?.to ?? receiptNo, results };
+  }
+
+  // ---------------------------------------------------------------- Hatayein (delete) and Badlein (alter)
+
+  /**
+   * Deletes a parchi as ParchiDoneScreen does. A slip with no money on it is simply voided
+   * (Store.voidBill): its dana go back on the gaadi. A slip with money on it — paid at the
+   * counter, or vasooli taken on it later — asks what happens to the money:
+   *  - refunded (Store.refundBill): the vasooli on it is cancelled too; cash leaves with the slip,
+   *    and UPI, which can't go back over the counter, stays in the bank while the same amount
+   *    leaves the galla in cash — an 'aur_aaya' UPI line in and an 'aur_gaya' cash line out.
+   *  - advance (Store.billToAdvance): the counter money becomes a raseed with no slip; vasooli
+   *    on the slip turns loose by itself and settles other dues. A walk-in has no khata for it.
+   * Every row lands in one entry, so a terminal applies the whole delete or none of it.
+   */
+  async voidBill(phone: string, shopId: string, billId: string, reason: 'deleted' | 'refunded' | 'advance') {
+    const p = await this.device(phone, shopId);
+    const { b, later, receiptNo } = await this.db.withShop(shopId, async (tx) => {
+      const b = await liveBill(tx, billId);
+      return { b, later: await collectedOn(tx, billId), receiptNo: await nextNumber(tx, 'collections', 'receipt_no', 'collection_voids') };
+    });
+    const [cash, upi] = billMoney(b);
+    const money = n(b.paid_paise) + later.cash + later.upi;
+    if (reason === 'deleted' && money > 0) throw new UnprocessableEntityException('Is parchi par paisa liya gaya hai — refund ya advance chunein');
+    if (reason !== 'deleted' && money === 0) throw new UnprocessableEntityException('Is parchi par koi paisa nahi — seedha hatayein');
+    if (reason === 'advance' && !b.buyer_id) throw new UnprocessableEntityException('Cash grahak ka khata nahi — refund chunein');
+    const now = new Date().toISOString();
+    const txn = uuidv7();
+    const items: PushItem[] = [];
+    const voidRow = { table: 'bill_voids', txn, row: { id: uuidv7(), created_at: now, bill_id: b.id, slip_no: b.slip_no, reason } };
+    let advance: { id: string; receiptNo: number } | null = null;
+    if (reason === 'refunded') {
+      for (const c of later.rows) items.push({ table: 'collection_voids', txn, row: {
+        id: uuidv7(), created_at: now, collection_id: c.id, receipt_no: c.receipt_no, reason: 'deleted',
+      } });
+      const upiBack = upi + later.upi;
+      if (upiBack > 0) {
+        const slip = `Parchi #${b.slip_no ?? 0}`;
+        const party = b.buyer_id ? b.buyer_name : '';
+        for (const [direction, mode, category, note] of [['in', 'upi', 'aur_aaya', `${slip} wapas · UPI aaya tha`], ['out', 'cash', 'aur_gaya', `${slip} refund · cash diya`]]) {
+          items.push({ table: 'daybook_entries', txn, row: {
+            id: uuidv7(), created_at: now, updated_at: now, direction, mode, category, party_name: party, note,
+            amount_paise: upiBack, business_date: todayIst(), hidden: false,
+          } });
+        }
+      }
+      items.push(voidRow);
+    } else {
+      items.push(voidRow);
+      // Only the counter money becomes the raseed; vasooli taken on the slip is already a raseed.
+      if (reason === 'advance' && cash + upi > 0) {
+        advance = { id: uuidv7(), receiptNo };
+        items.push({ table: 'collections', txn, row: {
+          id: advance.id, created_at: now, buyer_id: b.buyer_id, amount_paise: cash + upi, pay_mode: payModeCode(cash, upi),
+          payment_ref: '', business_date: todayIst(), bill_id: null, receipt_no: receiptNo, cash_paise: cash, upi_paise: upi, upi_bank: '',
+        } });
+      }
+    }
+    const results = await this.push(p, shopId, items);
+    return {
+      billId: b.id, slipNo: b.slip_no, reason,
+      // What goes back over the counter: all of it in cash (the UPI part stays in the bank).
+      refundPaise: reason === 'refunded' ? money : 0,
+      advance: advance && { ...advance, receiptNo: results.find((r) => r.id === advance!.id)?.renumbered?.to ?? advance.receiptNo, amountPaise: cash + upi },
+      results,
+    };
+  }
+
+  /** A raseed as one payment: the rows taken together (same grahak, same moment), as Store.pastCollections groups them. */
+  async collection(shopId: string, collectionId: string) {
+    return this.db.withShop(shopId, async (tx) => {
+      const g = await paymentRows(tx, collectionId);
+      const head = g.rows[0];
+      const buyer = (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE id = $1`, [head.buyer_id])).rows[0];
+      const machine = (await tx.query<{ m: string }>(
+        `SELECT CONCAT_WS(' · ', d.code, NULLIF(d.label, '')) AS m FROM devices d WHERE d.id = $1`, [head.device_id])).rows[0]?.m ?? '';
+      const voided = (await tx.query<{ reason: string; at: Date }>(
+        `SELECT reason, created_at AS at FROM collection_voids WHERE collection_id = $1 LIMIT 1`, [collectionId])).rows[0];
+      return {
+        id: collectionId, receiptNo: g.receiptNo, buyerId: head.buyer_id, buyerName: buyer?.name ?? '', at: head.created_at.toISOString(), date: head.day,
+        cashPaise: g.rows.reduce((s, r) => s + n(r.cash), 0), upiPaise: g.rows.reduce((s, r) => s + n(r.upi), 0),
+        ref: g.rows.map((r) => r.payment_ref).find(Boolean) ?? '', upiBank: g.rows.map((r) => r.upi_bank).find(Boolean) ?? '', machine,
+        slips: g.rows.filter((r) => r.bill_id).map((r) => ({ billId: r.bill_id!, slipNo: r.slip_no, amountPaise: n(r.amount_paise) })),
+        voided: voided ? { reason: voided.reason, at: voided.at.toISOString() } : null,
+      };
+    });
+  }
+
+  /** Hatayein on a raseed (Store.voidCollection): a void per row; the slips it paid are owed again. */
+  async voidCollection(phone: string, shopId: string, collectionId: string) {
+    const p = await this.device(phone, shopId);
+    const g = await this.db.withShop(shopId, (tx) => paymentRows(tx, collectionId, true));
+    const now = new Date().toISOString();
+    const txn = uuidv7();
+    const results = await this.push(p, shopId, g.rows.map((r) => ({ table: 'collection_voids', txn, row: {
+      id: uuidv7(), created_at: now, collection_id: r.id, receipt_no: r.receipt_no ?? g.receiptNo, reason: 'deleted',
+    } })));
+    return { receiptNo: g.receiptNo, amountPaise: g.rows.reduce((s, r) => s + n(r.amount_paise), 0), results };
+  }
+
+  /**
+   * Badlein on a raseed (Store.editCollection): the old rows are voided ('edited') and the money
+   * taken again with the same raseed number and time — over the slips it paid, as they would stand
+   * without it (duesIfVoided), oldest first, cash before UPI; on no slip, one loose row.
+   */
+  async editCollection(phone: string, shopId: string, collectionId: string, input: Omit<VasooliInput, 'buyerId'>) {
+    if (input.cashPaise + input.upiPaise <= 0) throw new BadRequestException('Rakam daalein');
+    const p = await this.device(phone, shopId);
+    const { g, dues } = await this.db.withShop(shopId, async (tx) => {
+      const g = await paymentRows(tx, collectionId, true);
+      const bills = new Set(g.rows.map((r) => r.bill_id).filter(Boolean));
+      const dues = bills.size ? (await openDues(tx, g.rows[0].buyer_id, g.rows.map((r) => r.id))).filter((d) => bills.has(d.billId)) : [];
+      return { g, dues };
+    });
+    const head = g.rows[0];
+    const at = head.created_at.toISOString();
+    const now = new Date().toISOString();
+    const txn = uuidv7();
+    const items: PushItem[] = g.rows.map((r) => ({ table: 'collection_voids', txn, row: {
+      id: uuidv7(), created_at: now, collection_id: r.id, receipt_no: r.receipt_no ?? g.receiptNo, reason: 'edited',
+    } }));
+    const ref = (input.paymentRef ?? '').slice(0, 40);
+    const bank = (u: number) => (u > 0 ? (input.upiBank ?? '').trim() : '');
+    const row = (amount: number, c: number, u: number, billId: string | null, first: boolean) => ({ table: 'collections', txn, row: {
+      id: uuidv7(), created_at: at, buyer_id: head.buyer_id, amount_paise: amount, pay_mode: payModeCode(c, u),
+      payment_ref: first ? ref : '', business_date: head.day, bill_id: billId, receipt_no: first ? g.receiptNo : null,
+      cash_paise: c, upi_paise: u, upi_bank: bank(u),
+    } });
+    if (!dues.length) items.push(row(input.cashPaise + input.upiPaise, input.cashPaise, input.upiPaise, null, true));
+    else {
+      // Slips with no bhav go last and share what is left over by their dana (collectDues).
+      const ordered = [...dues].sort((a, b) => Number(a.unpriced) - Number(b.unpriced) || a.at - b.at);
+      const pricedOwed = ordered.filter((d) => !d.unpriced).reduce((s, d) => s + d.openPaise, 0);
+      const spare = Math.max(0, input.cashPaise + input.upiPaise - pricedOwed);
+      const unpricedQty = Math.max(1, ordered.filter((d) => d.unpriced).reduce((s, d) => s + d.qty, 0));
+      let cash = input.cashPaise, upi = input.upiPaise, first = true;
+      ordered.forEach((d, i) => {
+        const share = d.unpriced ? Math.floor(spare * d.qty / unpricedQty) : d.openPaise;
+        const want = i === ordered.length - 1 ? cash + upi : Math.min(share, cash + upi);
+        if (want <= 0) return;
+        const c = Math.min(cash, want), u = want - c;
+        cash -= c; upi -= u;
+        items.push(row(want, c, u, d.billId, first));
+        first = false;
+      });
+    }
+    const results = await this.push(p, shopId, items);
+    const first = items.find((i) => i.table === 'collections')!;
+    return { receiptNo: results.find((r) => r.id === first.row.id)?.renumbered?.to ?? g.receiptNo, results };
   }
 
   // ---------------------------------------------------------------- Daybook, supplier payment
@@ -401,6 +577,92 @@ export class EntriesService {
     if (bad) throw new UnprocessableEntityException(`Save nahi hua: ${bad.error}`);
     return results;
   }
+}
+
+type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string };
+
+/** A slip still on the books; a voided one can't be voided or edited again. */
+async function liveBill(tx: Tx, billId: string): Promise<LiveBill> {
+  const b = (await tx.query<LiveBill & { voided: boolean }>(
+    `SELECT b.id, b.slip_no, b.buyer_id, b.buyer_name, b.truck_id, b.pay_mode, b.paid_paise, b.cash_paise, b.upi_paise,
+            EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id) AS voided
+     FROM bills b WHERE b.id = $1`, [billId])).rows[0];
+  if (!b) throw new NotFoundException('Parchi nahi mili');
+  if (b.voided) throw new ConflictException('Yeh parchi pehle hi hatayi ya badli ja chuki hai');
+  return b;
+}
+
+/** A slip's cash and UPI; a row from before the split was kept reads it off its pay mode. */
+function billMoney(b: LiveBill): [number, number] {
+  const cash = n(b.cash_paise), upi = n(b.upi_paise), paid = n(b.paid_paise);
+  if (cash + upi > 0 || paid === 0) return [cash, upi];
+  return b.pay_mode === 'upi' || b.pay_mode === 'card' ? [0, paid] : [paid, 0];
+}
+
+/** Vasooli taken on one slip and still standing (Store.collectedOn): its rows, cash and UPI. */
+async function collectedOn(tx: Tx, billId: string) {
+  const rows = (await tx.query<{ id: string; receipt_no: number | null; cash: string; upi: string }>(
+    `SELECT c.id, c.receipt_no, ${CASH_PART} AS cash, ${UPI_PART} AS upi FROM ${LIVE_COLS} c WHERE c.bill_id = $1`, [billId])).rows;
+  return { rows, cash: rows.reduce((s, r) => s + n(r.cash), 0), upi: rows.reduce((s, r) => s + n(r.upi), 0) };
+}
+
+type PaymentRow = { id: string; buyer_id: string; created_at: Date; day: string; bill_id: string | null; slip_no: number | null; receipt_no: number | null;
+  amount_paise: string; cash: string; upi: string; payment_ref: string; upi_bank: string; device_id: string; voided: boolean };
+
+/**
+ * The rows one payment wrote (same grahak, same moment), its own first. [live]: refuse a raseed
+ * already cancelled, and leave out rows of it cancelled before.
+ */
+async function paymentRows(tx: Tx, collectionId: string, live = false) {
+  const rows = (await tx.query<PaymentRow>(
+    `SELECT c.id, c.buyer_id, c.created_at, c.business_date::text AS day, c.bill_id, b.slip_no, c.receipt_no, c.amount_paise,
+            ${CASH_PART.replace(/\b(cash_paise|upi_paise|pay_mode|amount_paise)\b/g, 'c.$1')} AS cash,
+            ${UPI_PART.replace(/\b(cash_paise|upi_paise|pay_mode|amount_paise)\b/g, 'c.$1')} AS upi,
+            c.payment_ref, c.upi_bank, c.device_id, EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id) AS voided
+     FROM collections c JOIN collections o ON o.id = $1 AND o.buyer_id = c.buyer_id AND o.created_at = c.created_at
+     LEFT JOIN bills b ON b.id = c.bill_id
+     ORDER BY (c.id = $1) DESC, c.receipt_no NULLS LAST, c.id`, [collectionId])).rows;
+  if (!rows.length) throw new NotFoundException('Raseed nahi mili');
+  if (live && rows[0].voided) throw new ConflictException('Yeh raseed pehle hi hatayi ya badli ja chuki hai');
+  const kept = live ? rows.filter((r) => !r.voided) : rows;
+  // The raseed number the printed copy carries: the highest of its rows (Store.pastCollections).
+  const nos = rows.map((r) => r.receipt_no).filter((x): x is number => x != null);
+  return { rows: kept, receiptNo: nos.length ? Math.max(...nos) : null };
+}
+
+type Due = { billId: string | null; at: number; qty: number; openPaise: number; unpriced: boolean };
+
+/**
+ * A grahak's open dues as Store.openDues works them out — leaving out the payment rows in
+ * [without], as duesIfVoided does. Money not on a live slip (no slip, or a slip since voided)
+ * and jama entries settle purana udhaar first, then the oldest slips.
+ */
+async function openDues(tx: Tx, buyerId: string, without: string[]): Promise<Due[]> {
+  const cols = `(SELECT * FROM ${LIVE_COLS} lc WHERE NOT (lc.id = ANY($2::uuid[])))`;
+  const slips = (await tx.query<{ id: string; at: Date; qty: string; open: string }>(
+    `SELECT b.id, b.created_at AS at, (SELECT COALESCE(SUM(qty), 0) FROM bill_lines l WHERE l.bill_id = b.id) AS qty,
+            b.total_paise - b.paid_paise - COALESCE((SELECT SUM(c.amount_paise) FROM ${cols} c WHERE c.bill_id = b.id), 0) AS open
+     FROM ${LIVE_BILLS} b WHERE b.buyer_id = $1 AND b.total_paise > b.paid_paise`, [buyerId, without])).rows;
+  const unpriced = (await tx.query<{ id: string; at: Date; qty: string }>(
+    `SELECT b.id, b.created_at AS at, (SELECT COALESCE(SUM(qty), 0) FROM bill_lines l WHERE l.bill_id = b.id) AS qty
+     FROM ${LIVE_BILLS} b WHERE b.buyer_id = $1 AND b.total_paise = 0 AND b.pay_mode IN ('credit', 'after')
+       AND NOT EXISTS (SELECT 1 FROM ${cols} c WHERE c.bill_id = b.id)`, [buyerId, without])).rows;
+  const entries = (await tx.query<{ at: Date; amount: string }>(
+    `SELECT created_at AS at, amount_paise AS amount FROM udhaar_entries WHERE buyer_id = $1`, [buyerId])).rows;
+  const loose = n((await tx.query<{ s: string }>(
+    `SELECT COALESCE(SUM(c.amount_paise), 0) AS s FROM ${cols} c
+     WHERE c.buyer_id = $1 AND (c.bill_id IS NULL OR NOT EXISTS (SELECT 1 FROM ${LIVE_BILLS} lb WHERE lb.id = c.bill_id))`, [buyerId, without])).rows[0].s);
+  let pool = loose + entries.filter((e) => n(e.amount) < 0).reduce((s, e) => s - n(e.amount), 0);
+  const dues: Due[] = [
+    ...entries.filter((e) => n(e.amount) > 0).map((e) => ({ billId: null, at: e.at.getTime(), qty: 0, openPaise: n(e.amount), unpriced: false })),
+    ...slips.map((b) => ({ billId: b.id, at: b.at.getTime(), qty: n(b.qty), openPaise: n(b.open), unpriced: false })),
+  ].sort((a, b) => Number(a.billId !== null) - Number(b.billId !== null) || a.at - b.at);
+  const settled = dues.map((d) => {
+    const off = Math.min(pool, Math.max(0, d.openPaise));
+    pool -= off;
+    return { ...d, openPaise: d.openPaise - off };
+  });
+  return [...settled.filter((d) => d.openPaise > 0), ...unpriced.map((b) => ({ billId: b.id, at: b.at.getTime(), qty: n(b.qty), openPaise: 0, unpriced: true }))];
 }
 
 /** The shop's bank account as the app labels it on a UPI payment: "ICICI ··4521". */

@@ -97,6 +97,7 @@ const SettingsBody = z.object({
   printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
 }).partial();
 const BhavBody = z.object({ date: DayIso, rates: z.array(z.object({ brandId: z.uuid(), grade: z.enum(['1', '2', '3']), ratePaise: paise })).min(1).max(300) });
+const VoidBody = z.object({ reason: z.enum(['deleted', 'refunded', 'advance']).default('deleted') });
 const VasooliBody = z.object({ buyerId: z.uuid(), cashPaise: paise, upiPaise: paise, upiBank: z.string().max(80).optional(), paymentRef: z.string().max(40).optional() });
 const OUT_HEADS = ['kharcha', 'mazdoori', 'bhada', 'kiraya', 'tankhwah', 'committee_di', 'bill', 'udhaar_diya', 'aur_gaya', 'handover', 'float', 'bank_jama', 'bank_nikala'] as const;
 const IN_HEADS = ['udhaar_wapas', 'committee_mili', 'aur_aaya'] as const;
@@ -362,6 +363,38 @@ export class AdminController {
   @Post('shops/:id/entries/supplier-payment')
   supplierPayment(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
     return this.entries.supplierPayment(v.phone, mine(v, id), parse(SupplierPayBody, body));
+  }
+
+  // ---------------------------------------------------------------- Badlein / Hatayein, as the app's slip and raseed screens
+
+  /** Hatayein: a slip with money on it must say what happens to the money (refunded or advance). */
+  @Post('shops/:id/bills/:billId/void')
+  @HttpCode(200)
+  voidBill(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string, @Body() body: unknown) {
+    return this.entries.voidBill(v.phone, mine(v, id), parse(Id, billId), parse(VoidBody, body ?? {}).reason);
+  }
+
+  /** Badlein: the corrected slip, as Nayi Parchi takes it; it keeps the slip's number. */
+  @Post('shops/:id/bills/:billId/edit')
+  editBill(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string, @Body() body: unknown) {
+    return this.entries.editParchi(v.phone, mine(v, id), parse(Id, billId), parse(ParchiBody, body));
+  }
+
+  /** One raseed in full: every row of the payment, and the slips it paid. */
+  @Get('shops/:id/collections/:cid')
+  collection(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string) {
+    return this.entries.collection(mine(v, id), parse(Id, cid));
+  }
+
+  @Post('shops/:id/collections/:cid/void')
+  @HttpCode(200)
+  voidCollection(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string) {
+    return this.entries.voidCollection(v.phone, mine(v, id), parse(Id, cid));
+  }
+
+  @Post('shops/:id/collections/:cid/edit')
+  editCollection(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown) {
+    return this.entries.editCollection(v.phone, mine(v, id), parse(Id, cid), parse(VasooliBody.omit({ buyerId: true }), body));
   }
 
   @Get('shops/:id/items')

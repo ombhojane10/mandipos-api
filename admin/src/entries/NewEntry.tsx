@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { EntryForm } from './Entries'
-import { ENTRY_TYPES, OPEN_ENTRY, type EntryKind } from './kinds'
+import { EDIT_ENTRY, ENTRY_TYPES, OPEN_ENTRY, type EntryKind, type Editing } from './kinds'
 import { ENTRY_KEYS, letterOf } from '../keys'
 import { Hot } from '../Hot'
 import { t } from '../i18n'
@@ -9,12 +9,15 @@ import { t } from '../i18n'
 export function NewEntry({ shopId }: { shopId: string }) {
   const [menu, setMenu] = useState(false)
   const [kind, setKind] = useState<EntryKind | null>(null)
+  const [editing, setEditing] = useState<Editing | null>(null)
   const [toast, setToast] = useState('')
 
   useEffect(() => {
-    const on = (e: Event) => { const k = (e as CustomEvent<EntryKind | undefined>).detail; if (k) { setKind(k); setMenu(false) } else setMenu(true) }
+    const on = (e: Event) => { const k = (e as CustomEvent<EntryKind | undefined>).detail; setEditing(null); if (k) { setKind(k); setMenu(false) } else setMenu(true) }
+    const edit = (e: Event) => { const x = (e as CustomEvent<Editing>).detail; setEditing(x); setKind(x.kind); setMenu(false) }
     addEventListener(OPEN_ENTRY, on)
-    return () => removeEventListener(OPEN_ENTRY, on)
+    addEventListener(EDIT_ENTRY, edit)
+    return () => { removeEventListener(OPEN_ENTRY, on); removeEventListener(EDIT_ENTRY, edit) }
   }, [])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 3500); return () => clearTimeout(t) }, [toast])
 
@@ -39,7 +42,8 @@ export function NewEntry({ shopId }: { shopId: string }) {
           </div>
         </div>
       )}
-      {kind && <EntryForm kind={kind} shopId={shopId} onClose={() => setKind(null)} onSaved={setToast} />}
+      {kind && <EntryForm key={editing ? `edit-${editing.kind === 'parchi' ? editing.bill.id : editing.raseed.id}` : kind} kind={kind} editing={editing?.kind === kind ? editing : null} shopId={shopId}
+        onClose={() => { setKind(null); setEditing(null) }} onSaved={setToast} />}
       {toast && <div className="toast" role="status">✓ {toast}</div>}
     </>
   )
