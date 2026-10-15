@@ -80,6 +80,9 @@ const schema = z
     VOICE_HEDGE_MS: z.coerce.number().int().min(500).default(3000),
     // How hard the model thinks before answering: minimal is fastest; low reads fields more carefully.
     VOICE_THINKING: z.enum(['minimal', 'low', 'medium']).default('minimal'),
+    // Answers read out: Gemini TTS (the API key works for it; Cloud TTS needs a service account).
+    VOICE_TTS_MODEL: z.string().default('gemini-2.5-flash-tts'),
+    VOICE_TTS_VOICE: z.string().default('Kore'),
     // Turns per shop per minute; a stuck mic or a loop cannot run up the bill.
     VOICE_PER_MINUTE: z.coerce.number().int().min(1).default(30),
   })

@@ -15,7 +15,8 @@ const pick = () => {
 }
 if (synth) { voice = pick(); synth.addEventListener('voiceschanged', () => { voice = pick() }) }
 
-export function speak(text: string) {
+/** The device's own voice: only the fallback now (player.ts streams the server's to every device). */
+export function speakLocal(text: string) {
   if (!synth || !text.trim()) return
   synth.cancel()
   const u = new SpeechSynthesisUtterance(text)
@@ -24,7 +25,6 @@ export function speak(text: string) {
   synth.speak(u)
 }
 
-export const hush = () => synth?.cancel()
 
 const inr = new Intl.NumberFormat('en-IN')
 const words = (paise: number) => `${inr.format(Math.round(Math.abs(paise) / 100))} रुपये`

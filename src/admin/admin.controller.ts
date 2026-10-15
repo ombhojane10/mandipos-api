@@ -1,8 +1,8 @@
 import {
-  Body, CanActivate, Controller, ExecutionContext, ForbiddenException, Get, HttpCode, Injectable, Param, Post, Query,
+  Body, CanActivate, Controller, ExecutionContext, ForbiddenException, Get, HttpCode, Injectable, Param, Post, Query, Res,
   UnauthorizedException, UseGuards, createParamDecorator,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { OtpService } from '../auth/otp.service';
@@ -15,6 +15,9 @@ import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
 import { InsightsService } from './insights.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
+import { GeminiClient } from '../voice/gemini.client';
+
+const SpeakBody = z.object({ text: z.string().trim().min(1).max(500) });
 
 /** Portal tokens are signed with the app's secret but for their own audience, so neither works as the other. */
 const AUDIENCE = 'mandipos-admin';
@@ -158,7 +161,7 @@ export class AdminAuthController {
 export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
-    private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService,
+    private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
   ) {}
 
   // ---------------------------------------------------------------- Bolo (voice), as on the terminal
@@ -168,6 +171,30 @@ export class AdminController {
   @HttpCode(200)
   voiceWarm(@See() v: Viewer, @Param('id') id: string) {
     return this.voice.warm(v.phone, mine(v, id));
+  }
+
+  /**
+   * The answer read out, for any browser: 16-bit mono PCM at 24 kHz, streamed as it is made
+   * (the page plays it through Web Audio). no-transform keeps compression from holding it back.
+   */
+  @Post('shops/:id/voice/speak')
+  async voiceSpeak(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown, @Res() res: Response) {
+    mine(v, id);
+    const { text } = parse(SpeakBody, body);
+    const ctl = new AbortController();
+    res.on('close', () => ctl.abort());
+    let started = false;
+    try {
+      for await (const pcm of this.gemini.speak(text, ctl.signal)) {
+        if (!started) { res.status(200).set({ 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store, no-transform' }); started = true; }
+        res.write(pcm);
+      }
+      if (!started) res.status(502);
+      res.end();
+    } catch (e) {
+      if (!started) res.status(502).json({ message: (e as Error).message.slice(0, 120) });
+      else res.end();
+    }
   }
 
   /** One recording in; a draft for the entry form, or the answer's figures, out. Nothing is saved. */

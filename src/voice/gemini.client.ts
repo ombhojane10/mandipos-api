@@ -51,6 +51,40 @@ export class GeminiClient {
     }
   }
 
+  /**
+   * Speech for an answer: Gemini TTS, streamed. Yields raw 16-bit mono PCM at 24 kHz as it is made,
+   * so the first sound plays in about a second instead of after the whole clip (~2 s).
+   */
+  async *speak(text: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+    if (!this.enabled) throw new ServiceUnavailableException('Voice is not switched on');
+    const c = config();
+    const loc = c.GEMINI_VERTEX_LOCATION;
+    const host = loc === 'global' ? 'https://aiplatform.googleapis.com' : `https://${loc}-aiplatform.googleapis.com`;
+    const res = await fetch(`${host}/v1/projects/${encodeURIComponent(c.GEMINI_VERTEX_PROJECT_ID!)}/locations/${encodeURIComponent(loc)}/publishers/google/models/${encodeURIComponent(c.VOICE_TTS_MODEL)}:streamGenerateContent?alt=sse`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': c.GEMINI_VERTEX_API_KEY!, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text }] }],
+        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: c.VOICE_TTS_VOICE } } } },
+      }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+    });
+    if (!res.ok || !res.body) throw new GeminiError(`tts ${res.status}: ${(await res.text().catch(() => '')).slice(0, 160)}`, res.status);
+    const dec = new TextDecoder();
+    let buf = '';
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buf += dec.decode(chunk, { stream: true });
+      let cut: RegExpExecArray | null;
+      while ((cut = /\r?\n\r?\n/.exec(buf))) {
+        const event = buf.slice(0, cut.index).replace(/^data: ?/, '');
+        buf = buf.slice(cut.index + cut[0].length);
+        const data = (JSON.parse(event || '{}') as { candidates?: { content?: { parts?: { inlineData?: { data?: string } }[] } }[] })
+          .candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (data) yield Buffer.from(data, 'base64');
+      }
+    }
+  }
+
   private unavailable(e: unknown): Error {
     this.log.error(`voice model failed: ${(e as Error).message}`);
     return new ServiceUnavailableException('Abhi samajh nahi paaye, dobara boliye');

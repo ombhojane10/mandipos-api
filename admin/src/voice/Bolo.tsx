@@ -6,7 +6,8 @@ import { editEntry, openEntry, type EditBill, type EntryKind, type VoiceDraft } 
 import { exportWhenReady } from '../export/doc'
 import { AnswerTable, VoiceCard, type Answer, type Card } from './Cards'
 import { MicIcon } from './MicIcon'
-import { hush, sayCard, speak } from './speak'
+import { sayCard, speakLocal } from './speak'
+import { hush, speakText, unlock } from './player'
 import { toBase64, useRecorder } from './useRecorder'
 
 type Reply = { transcript: string; kind: string; say: string }
@@ -36,6 +37,7 @@ const DOWNLOAD: Record<string, Report> = {
  * entry form filled in — nothing is saved until Save; a question is answered from the books.
  */
 export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onDraft: (d: VoiceDraft) => void; onClose: () => void }) {
+  const speak = useCallback((text: string) => { void speakText(shopId, text, speakLocal) }, [shopId])
   const [phase, setPhase] = useState<Phase>('listening')
   const [title, setTitle] = useState('')
   const [turn, setTurn] = useState<Turn | null>(null)
@@ -138,8 +140,8 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
         </div>
         <div className="bolo-ft">
           {phase === 'listening'
-            ? <button type="button" className="btn primary" autoFocus onClick={() => send.current()}>{t('Ho gaya')}</button>
-            : phase !== 'thinking' && <button type="button" className="btn primary" autoFocus onClick={() => void listen()}>{t('Phir boliye')}</button>}
+            ? <button type="button" className="btn primary" autoFocus onClick={() => { unlock(); send.current() }}>{t('Ho gaya')}</button>
+            : phase !== 'thinking' && <button type="button" className="btn primary" autoFocus onClick={() => { unlock(); void listen() }}>{t('Phir boliye')}</button>}
         </div>
       </div>
     </div>

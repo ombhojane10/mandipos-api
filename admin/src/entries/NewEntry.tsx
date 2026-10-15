@@ -5,6 +5,7 @@ import { ENTRY_KEYS, letterOf } from '../keys'
 import { Hot } from '../Hot'
 import { t } from '../i18n'
 import { MicIcon } from '../voice/MicIcon'
+import { unlock } from '../voice/player'
 
 /** A fresh key per draft, so a second spoken slip opens a fresh form rather than keeping the first's state. */
 const seq = new WeakMap<VoiceDraft, number>()
@@ -43,7 +44,7 @@ export function NewEntry({ shopId }: { shopId: string }) {
         }}>
           <div className="sheet entry-menu" role="dialog" aria-label={t('Nayi entry')} onClick={(e) => e.stopPropagation()}>
             <div className="sheet-hd"><h3>{t('Nayi entry')}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={() => setMenu(false)}>✕</button></div>
-            <button type="button" className="bolo-tile" autoFocus onClick={() => { setMenu(false); setVoice(true) }}>
+            <button type="button" className="bolo-tile" autoFocus onClick={() => { unlock(); setMenu(false); setVoice(true) }}>
               <MicIcon /><b>{t('Bolo')}</b>
             </button>
             <div className="entry-grid">

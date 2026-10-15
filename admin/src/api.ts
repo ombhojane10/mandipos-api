@@ -43,6 +43,18 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return (res.status === 204 ? undefined : await res.json()) as T
 }
 
+/** A POST whose answer is read as a stream (Bolo's speech), with the same sign-in as [api]. */
+export async function apiStream(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  const token = getToken()
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok || !res.body) throw new ApiError(`Speech failed (${res.status})`, res.status)
+  return res
+}
+
 export type ShopStatus = 'pending' | 'approved' | 'rejected'
 
 export type Shop = {
