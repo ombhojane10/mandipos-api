@@ -14,7 +14,7 @@ export function ShopPage({ shopId, tab }: { shopId: string; tab: Tab }) {
 
   return (
     <>
-      <a className="back" href="#/">‹ Shops</a>
+      <a className="back" href="#/shops">‹ Shops</a>
       <h1>{shop.name}</h1>
       <p className="muted sub">
         {[shop.mandi, shop.shopNo && `Shop ${shop.shopNo}`, shop.owner.name, phone(shop.owner.phone)].filter(Boolean).join(' · ')}

@@ -42,6 +42,7 @@ const Id = z.uuid();
 const Day = z.iso.date();
 const Range = z.object({ from: Day, to: Day });
 const Code = z.object({ phone, code: z.string().regex(/^\d{4,8}$/, 'must be the OTP digits') });
+const CustomerKey = z.union([z.string().regex(/^[6-9]\d{9}$/), z.string().regex(/^[0-9a-f-]{36}~[0-9a-f-]{36}$/)]);
 const RejectBody = z.object({ reason: z.string().trim().max(200).default('') });
 
 /** Sign-in for the MandiPlus admin portal: OTP to a number on ADMIN_PHONES. */
@@ -114,6 +115,18 @@ export class AdminController {
   summary(@Param('id') id: string, @Query() query: unknown) {
     const r = parse(Range, query);
     return this.admin.summary(parse(Id, id), r.from, r.to);
+  }
+
+  /** Grahak across every shop, matched by mobile; empty q = the market's biggest debtors. */
+  @Get('customers')
+  async customers(@Query('q') q?: string) {
+    return { customers: await this.admin.customers((q ?? '').trim().slice(0, 60)) };
+  }
+
+  /** One person: a 10-digit mobile, or "shopId~buyerId" for a grahak with none. */
+  @Get('customers/:key')
+  customer(@Param('key') key: string) {
+    return this.admin.customer(parse(CustomerKey, key));
   }
 
   @Get('shops/:id/buyers')

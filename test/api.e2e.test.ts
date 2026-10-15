@@ -596,6 +596,44 @@ describe('shop approval and the admin portal', () => {
     await http().post('/v1/shops/switch').set(auth(sneaky.accessToken)).send({ shopId: stranger.me.shop.id }).expect(403);
   });
 
+  it('finds one grahak across every shop by mobile: who they owe, and all their trades', async () => {
+    const t = new Date().toISOString(), d = t.slice(0, 10);
+    let slip = 0;
+    const owe = async (shop: Awaited<ReturnType<typeof registerShop>>, buyer: object, total: number, paid: number) => {
+      const buyerId = uuidv7(), billId = uuidv7(), no = ++slip;
+      await http().post('/v1/sync/push').set(auth(shop.accessToken)).send({ items: [
+        { table: 'buyers', row: { id: buyerId, created_at: t, updated_at: t, ...buyer } },
+        { table: 'bills', row: { id: billId, created_at: t, number: `A1/${no}`, kind: 'kachchi', buyer_id: buyerId, buyer_name: (buyer as any).name, business_date: d, pay_mode: paid ? 'cash' : 'credit', total_paise: total, paid_paise: paid, cash_paise: paid, slip_no: no } },
+      ] }).expect(200);
+      return buyerId;
+    };
+    const a = await registerShop('9877700006', 'Market Trader A');
+    const b = await registerShop('9877700007', 'Market Trader B');
+    await owe(a, { name: 'Salim Bhai', phone: '9123400001', market_paise: 500000 }, 300000, 0);
+    await owe(b, { name: 'Salim', phone: '9123400001' }, 120000, 20000);
+    const lone = await owe(b, { name: 'Walk-in Ramesh' }, 5000, 0);
+    const admin = await adminLogin();
+
+    const found = (await http().get('/v1/admin/customers?q=salim').set(admin).expect(200)).body.customers;
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ key: '9123400001', name: 'Salim Bhai', balancePaise: 400000, boughtPaise: 420000 });
+    expect(found[0].shops.map((s: any) => s.shopName).sort()).toEqual(['Market Trader A', 'Market Trader B']);
+
+    const p = (await http().get('/v1/admin/customers/9123400001').set(admin).expect(200)).body;
+    expect(p.totals).toMatchObject({ balancePaise: 400000, duePaise: 400000, traders: 2, owedTo: 2, slips: 2 });
+    expect(p.traders.map((x: any) => [x.shopName, x.balancePaise])).toEqual([['Market Trader A', 300000], ['Market Trader B', 100000]]);
+    expect(p.traders[0].marketPaise).toBe(500000);
+    expect(p.history.map((r: any) => r.shopName).sort()).toEqual(['Market Trader A', 'Market Trader B']);
+    expect(p.history[0].balancePaise).toBe(400000);
+
+    // No mobile: still found, as its own entry.
+    const walkIn = (await http().get('/v1/admin/customers?q=ramesh').set(admin)).body.customers;
+    expect(walkIn).toEqual([expect.objectContaining({ key: `${b.me.shop.id}~${lone}`, phone: '' })]);
+    expect((await http().get(`/v1/admin/customers/${b.me.shop.id}~${lone}`).set(admin).expect(200)).body.totals.balancePaise).toBe(5000);
+    await http().get('/v1/admin/customers/9999999999').set(admin).expect(404);
+    await http().get('/v1/admin/customers/nonsense').set(admin).expect(400);
+  });
+
   it('turns a request down and frees the number to register again', async () => {
     const s = await login('9877700002');
     const created = await http().post('/v1/shops').set(auth(s.accessToken)).send({ name: 'Fake Shop' }).expect(201);

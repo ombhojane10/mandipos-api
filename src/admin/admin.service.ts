@@ -23,6 +23,8 @@ const BALANCES = `
 const IST_DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kolkata')::date`;
 
 const n = (v: unknown) => Number(v ?? 0);
+/** A grahak's mobile, the one thing that says two shops' buyers are the same person. */
+const MOBILE = /^[6-9]\d{9}$/;
 // Dates come back as text (::text in SQL): a DATE parsed into a JS Date shifts with the server's zone.
 const day = (v: string) => v.slice(0, 10);
 
@@ -284,6 +286,92 @@ export class AdminService {
     const exists = await this.db.one(`SELECT 1 FROM shops WHERE id = $1`, [shopId]);
     if (!exists) throw new NotFoundException('Dukaan nahi mili');
     throw new ConflictException(conflict);
+  }
+
+  /**
+   * Grahak across every shop. The same person is a separate buyer row in each shop they buy
+   * from, so they are matched by mobile number; a buyer without a valid mobile stays its own
+   * entry (key "shopId~buyerId"). Empty [q] = the biggest debtors of the whole market.
+   */
+  async customers(q: string) {
+    const groups = new Map<string, {
+      key: string; name: string; phone: string; balancePaise: number; boughtPaise: number; lastSlipOn: string | null;
+      shops: { shopId: string; shopName: string; buyerId: string; balancePaise: number }[]; topBought: number;
+    }>();
+    for (const s of await this.openShops()) {
+      for (const b of await this.buyers(s.id, q)) {
+        const key = MOBILE.test(b.phone) ? b.phone : `${s.id}~${b.id}`;
+        const g = groups.get(key) ?? { key, name: b.name, phone: MOBILE.test(b.phone) ? b.phone : '', balancePaise: 0, boughtPaise: 0, lastSlipOn: null, shops: [], topBought: -1 };
+        // The name the busiest shop knows them by.
+        if (b.boughtPaise > g.topBought) { g.name = b.name; g.topBought = b.boughtPaise; }
+        g.balancePaise += b.balancePaise;
+        g.boughtPaise += b.boughtPaise;
+        if (b.lastSlipOn && (!g.lastSlipOn || b.lastSlipOn > g.lastSlipOn)) g.lastSlipOn = b.lastSlipOn;
+        g.shops.push({ shopId: s.id, shopName: s.name, buyerId: b.id, balancePaise: b.balancePaise });
+        groups.set(key, g);
+      }
+    }
+    return [...groups.values()]
+      .sort((a, b) => Math.max(b.balancePaise, 0) - Math.max(a.balancePaise, 0) || b.boughtPaise - a.boughtPaise || a.name.localeCompare(b.name))
+      .slice(0, 60)
+      .map(({ topBought: _, ...g }) => g);
+  }
+
+  /** One person across the market: what they owe each trader, and every slip and payment, newest first. */
+  async customer(key: string) {
+    const shops = await this.openShops();
+    const found: { shop: { id: string; name: string; mandi: string }; buyerId: string }[] = [];
+    if (MOBILE.test(key)) {
+      for (const s of shops) {
+        const ids = await this.db.withShop(s.id, async (tx) =>
+          (await tx.query<{ id: string }>(`SELECT id FROM buyers WHERE phone = $1 ORDER BY created_at`, [key])).rows);
+        for (const r of ids) found.push({ shop: s, buyerId: r.id });
+      }
+    } else {
+      const [shopId, buyerId] = key.split('~');
+      const shop = shops.find((s) => s.id === shopId);
+      if (shop && buyerId) found.push({ shop, buyerId });
+    }
+    if (!found.length) throw new NotFoundException('Grahak nahi mila');
+
+    const traders = [];
+    const rows = [];
+    let first: Awaited<ReturnType<AdminService['buyer']>>['buyer'] | null = null;
+    for (const f of found) {
+      const d = await this.buyer(f.shop.id, f.buyerId);
+      first ??= d.buyer;
+      traders.push({
+        shopId: f.shop.id, shopName: f.shop.name, mandi: f.shop.mandi, buyerId: f.buyerId, name: d.buyer.name, code: d.buyer.code,
+        balancePaise: d.totals.balancePaise, boughtPaise: d.totals.boughtPaise, slips: d.totals.slips, nags: d.totals.nags,
+        lastSlipOn: d.totals.lastSlipOn, marketPaise: d.buyer.marketPaise, creditLimitPaise: d.buyer.creditLimitPaise,
+      });
+      for (const r of d.history) rows.push({ ...r, shopId: f.shop.id, shopName: f.shop.name });
+    }
+    // One running balance for the whole market, oldest first.
+    rows.sort((a, b) => a.at.localeCompare(b.at));
+    let bal = 0;
+    const history = rows.map((r) => ({ ...r, balancePaise: (bal += r.debitPaise - r.creditPaise) })).reverse();
+    const busiest = [...traders].sort((a, b) => b.boughtPaise - a.boughtPaise)[0];
+    return {
+      key, name: busiest.name, phone: MOBILE.test(key) ? key : first!.phone,
+      profile: { address: first!.address, destination: first!.destination, vehicle: first!.vehicle, kind: first!.kind },
+      totals: {
+        balancePaise: traders.reduce((s, t) => s + t.balancePaise, 0),
+        duePaise: traders.reduce((s, t) => s + Math.max(0, t.balancePaise), 0),
+        boughtPaise: traders.reduce((s, t) => s + t.boughtPaise, 0),
+        slips: traders.reduce((s, t) => s + t.slips, 0),
+        nags: traders.reduce((s, t) => s + t.nags, 0),
+        traders: traders.length,
+        owedTo: traders.filter((t) => t.balancePaise > 0).length,
+      },
+      traders: traders.sort((a, b) => b.balancePaise - a.balancePaise),
+      history,
+    };
+  }
+
+  private openShops() {
+    return this.db.query<{ id: string; name: string; mandi: string }>(
+      `SELECT id, name, mandi FROM shops WHERE approved_at IS NOT NULL ORDER BY created_at`);
   }
 
   private async requireApproved(shopId: string) {

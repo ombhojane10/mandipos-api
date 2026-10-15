@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, type BuyerDetail, type HistoryRow } from '../api'
 import { href } from '../routes'
-import { count, date, phone, rate, rupees } from '../format'
+import { count, date, phone, rate, rupees, shortDate } from '../format'
 import { useLoad } from '../useLoad'
 import { Balance } from './Shop'
 
@@ -26,6 +26,7 @@ export function CustomerPage({ shopId, buyerId }: { shopId: string; buyerId: str
     <>
       <a className="back" href={href({ page: 'shop', shopId, tab: 'customers' })}>‹ Customers</a>
       <h1>{b.name}</h1>
+      {/^[6-9]\d{9}$/.test(b.phone) && <a className="back" href={href({ page: 'person', key: b.phone })}>Whole market ›</a>}
       <dl className="facts">
         {facts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
       </dl>
@@ -42,7 +43,7 @@ export function CustomerPage({ shopId, buyerId }: { shopId: string; buyerId: str
 
       <h2>History</h2>
       <div className="table history">
-        <div className="tr th"><span>Date</span><span>Entry</span><span className="num hide-sm">Nag</span><span className="num">Debit</span><span className="num">Credit</span><span className="num">Balance</span></div>
+        <div className="tr th"><span className="hide-sm">Date</span><span>Entry</span><span className="num hide-sm">Nag</span><span className="num">Debit</span><span className="num">Credit</span><span className="num">Balance</span></div>
         {history.map((r) => <Row key={r.id} r={r} />)}
         {history.length === 0 && <p className="empty">Nothing yet</p>}
       </div>
@@ -63,8 +64,8 @@ function Row({ r }: { r: HistoryRow }) {
         tabIndex={lines.length ? 0 : undefined}
         onKeyDown={(e) => { if (lines.length && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen(!open) } }}
       >
-        <span className="muted">{date(r.date)}</span>
-        <span>{r.title}<small>{r.detail}</small></span>
+        <span className="muted hide-sm">{date(r.date)}</span>
+        <span>{r.title}<small><span className="show-sm">{shortDate(r.date)} · </span>{r.detail}</small></span>
         <span className="num hide-sm">{r.nags ? count(r.nags) : ''}</span>
         <span className="num">{r.debitPaise ? rupees(r.debitPaise) : ''}</span>
         <span className="num">{r.creditPaise ? rupees(r.creditPaise) : ''}</span>

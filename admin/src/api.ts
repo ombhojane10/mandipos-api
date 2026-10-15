@@ -83,3 +83,21 @@ export type BuyerDetail = {
   totals: { balancePaise: number; boughtPaise: number; nags: number; slips: number; paidPaise: number; lastSlipOn: string | null }
   history: HistoryRow[]
 }
+
+/** One person across every shop, matched by mobile (key), or a single shop's grahak with none. */
+export type MarketCustomer = {
+  key: string; name: string; phone: string; balancePaise: number; boughtPaise: number; lastSlipOn: string | null
+  shops: { shopId: string; shopName: string; buyerId: string; balancePaise: number }[]
+}
+
+export type Person = {
+  key: string; name: string; phone: string
+  profile: { address: string; destination: string; vehicle: string; kind: string }
+  totals: { balancePaise: number; duePaise: number; boughtPaise: number; slips: number; nags: number; traders: number; owedTo: number }
+  traders: {
+    shopId: string; shopName: string; mandi: string; buyerId: string; name: string; code: string
+    balancePaise: number; boughtPaise: number; slips: number; nags: number; lastSlipOn: string | null
+    marketPaise: number | null; creditLimitPaise: number
+  }[]
+  history: (HistoryRow & { shopId: string; shopName: string })[]
+}
