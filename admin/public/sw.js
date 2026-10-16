@@ -10,7 +10,7 @@ const SHELL = 'shell-v1'
 const ASSETS = 'assets-v1'
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon.svg'])).then(() => self.skipWaiting()))
+  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(['/', '/manifest.json', '/icon.svg'])).then(() => self.skipWaiting()))
 })
 
 self.addEventListener('activate', (e) => {
