@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "MandiPlus Admin",
+  "short_name": "MandiPlus",
+  "description": "Dukaan ka hisab-kitab — parchi, vasooli, udhaar, munafa",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f7ea",
+  "theme_color": "#2a6b73",
+  "lang": "hi-Latn",
+  "categories": ["business", "finance", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Nayi Parchi", "url": "/?go=parchi", "icons": [{ "src": "/icons/maskable-192.png", "sizes": "192x192" }] },
+    { "name": "Vasooli", "url": "/?go=vasooli", "icons": [{ "src": "/icons/maskable-192.png", "sizes": "192x192" }] },
+    { "name": "Day Book", "url": "/?go=daybook", "icons": [{ "src": "/icons/maskable-192.png", "sizes": "192x192" }] },
+    { "name": "Aaj ka Bhav", "url": "/?go=bhav", "icons": [{ "src": "/icons/maskable-192.png", "sizes": "192x192" }] }
+  ]
+}

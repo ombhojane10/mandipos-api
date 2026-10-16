@@ -17,9 +17,9 @@ if (!dir || !url) {
 const meta = JSON.parse(await readFile(path.join(dir, 'output-metadata.json'), 'utf8'));
 const out = meta.elements?.[0];
 const flavor = meta.variantName?.replace(/Release$/, '');
-const ids = { pos: 'com.mandiplus.pos.uat', daybook: 'com.mandiplus.daybook' };
+const ids = { pos: 'com.mandiplus.pos.uat', daybook: 'com.mandiplus.daybook', admin: 'com.mandiplus.admin' };
 if (!out || !meta.variantName?.endsWith('Release') || ids[flavor] !== meta.applicationId) {
-  console.error(`Not a pos/daybook release build: ${meta.variantName} ${meta.applicationId}`);
+  console.error(`Not a pos/daybook/admin release build: ${meta.variantName} ${meta.applicationId}`);
   process.exit(1);
 }
 const apk = await readFile(path.join(dir, out.outputFile));

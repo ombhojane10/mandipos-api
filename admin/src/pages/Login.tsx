@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { api } from '../api'
+import { api, APP_DOWNLOAD, inApp } from '../api'
 import { t } from '../i18n'
 
 /** Mobile number, then the OTP sent to it. Only numbers on the server's admin list get one. */
@@ -50,6 +50,7 @@ export function Login({ onDone }: { onDone: (token: string) => void }) {
         </button>
         {sent && <button type="button" className="btn ghost" onClick={() => { setSent(false); setCode(''); setError('') }}>{t('Number badlein')}</button>}
       </form>
+      {!inApp() && /Android/i.test(navigator.userAgent) && <a className="app-link" href={APP_DOWNLOAD}>📱 {t('Android app download karein')}</a>}
     </div>
   )
 }

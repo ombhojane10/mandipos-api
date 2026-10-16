@@ -845,3 +845,8 @@ a.vc-row:hover { background: var(--accent-soft); }
 .vc-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .vc-table tr.link { cursor: pointer; }
 .vc-table tr.link:hover td { background: var(--accent-soft); }
+
+/* The app download, offered in a browser only. */
+.login { display: grid; place-items: center; align-content: center; gap: 14px; }
+.app-link { color: var(--accent); font-weight: 700; text-decoration: underline; }
+@media (min-width: 900px) { .hide-lg { display: none !important; } }

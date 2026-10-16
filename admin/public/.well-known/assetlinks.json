@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.mandiplus.admin",
+      "sha256_cert_fingerprints": ["A8:AE:CD:F1:74:C4:BB:F7:72:79:0E:64:25:D4:9B:F8:15:99:E2:61:73:2D:60:6A:FD:FD:60:55:89:27:8A:13"]
+    }
+  }
+]

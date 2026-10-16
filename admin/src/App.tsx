@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { api, getToken, setToken, whenSignedOut, type Me, type Shop } from './api'
+import { api, APP_DOWNLOAD, getToken, inApp, setToken, whenSignedOut, type Me, type Shop } from './api'
 import { Login } from './pages/Login'
 import { GoTo } from './GoTo'
 import { href, parse, periodQuery, type Report, type Route } from './routes'
@@ -103,6 +103,15 @@ export default function App() {
   const remembered = (() => { try { return localStorage.getItem(LAST_SHOP) } catch { return null } })()
   const shopId = routeShop ?? (open.find((s) => s.id === remembered)?.id ?? open[0]?.id ?? null)
   useEffect(() => { if (routeShop) try { localStorage.setItem(LAST_SHOP, routeShop) } catch { /* private mode */ } }, [routeShop])
+
+  // A home-screen shortcut (manifest "shortcuts") opens /?go=…: go to that screen once, then drop it.
+  useEffect(() => {
+    const go = new URLSearchParams(location.search).get('go')
+    if (!go || !shopId) return
+    history.replaceState(null, '', location.pathname + location.hash)
+    if (go === 'parchi' || go === 'vasooli' || go === 'kharcha') setTimeout(() => openEntry(go), 300)
+    else if ((['daybook', 'bhav', 'outstanding', 'munafa', 'register'] as const).includes(go as never)) location.hash = href({ page: 'report', shopId, report: go as Report })
+  }, [shopId])
 
   // A link or tab left on another login's shop would only be refused; an owner goes to their own.
   useEffect(() => {
@@ -240,6 +249,7 @@ export default function App() {
                 <I.ISettings /><span>{t('Settings')}</span>
               </a>
             )}
+            {!inApp() && <a href={APP_DOWNLOAD} className="hide-lg"><span>📱 {t('App download')}</span></a>}
             <button type="button" onClick={signOut}><I.ILogout /><span>{t('Logout')}</span><small className="inline">{me ? phone(me.phone) : ''}</small></button>
           </div>
         </aside>

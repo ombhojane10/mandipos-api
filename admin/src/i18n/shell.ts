@@ -192,4 +192,6 @@ export const SHELL: Record<string, readonly [string, string]> = {
   'Alter — badlein': ['Alter — edit it', 'बदलें'],
   'Delete — hatayein': ['Delete it', 'हटाएँ'],
   'Kisne': ['By', 'किसने'],
+  'App download': ['Get the app', 'ऐप डाउनलोड'],
+  'Android app download karein': ['Download the Android app', 'एंड्रॉयड ऐप डाउनलोड करें'],
 }
