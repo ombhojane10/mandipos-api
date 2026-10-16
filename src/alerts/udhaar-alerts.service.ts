@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { Principal } from '../auth/tokens.service';
 import { uuidv7 } from '../common/uuid';
 import { config } from '../config';
@@ -126,6 +126,72 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
     return { messageId, duePaise: due.duePaise };
   }
 
+  /** The bot can send at all: its token and number are set (the morning run also needs UDHAAR_ALERTS=on). */
+  canSend(): boolean {
+    const c = config();
+    return !!c.WHATSAPP_TOKEN && !!c.WHATSAPP_PHONE_NUMBER_ID;
+  }
+
+  /**
+   * The owner's "send this grahak their udhaar on WhatsApp", from the portal or Bolo: the same
+   * approved template and total as the morning message, to one grahak, now. Logged before it
+   * goes; a second send to the same grahak within 10 minutes is refused, so a double tap or a
+   * repeated voice command never sends twice.
+   */
+  async sendNow(shopId: string, buyerId: string, sentBy: string): Promise<{ messageId: string; duePaise: number; phone: string; name: string }> {
+    if (!this.canSend()) throw new ServiceUnavailableException('WhatsApp abhi chalu nahi hai');
+    const shop = await this.db.one<{ name: string; phone: string }>(`SELECT name, phone FROM shops WHERE id = $1`, [shopId]);
+    if (!shop) throw new ForbiddenException('Dukaan nahi mili');
+    const buyer = await this.db.withShop(shopId, async (tx) => (await tx.query<{ name: string; phone: string; hidden: boolean }>(
+      `SELECT name, phone, hidden FROM buyers WHERE id = $1`, [buyerId])).rows[0]);
+    if (!buyer) throw new UnprocessableEntityException('Grahak nahi mila');
+    if (!/^[6-9]\d{9}$/.test(buyer.phone)) throw new UnprocessableEntityException(`${buyer.name} ka 10 ank ka mobile number nahi hai`);
+    const due = (await this.db.withShop(shopId, (tx) => this.dues(tx))).find((d) => d.buyerId === buyerId);
+    if (!due) throw new UnprocessableEntityException(`${buyer.name} par koi udhaar baaki nahi`);
+    const recent = await this.db.one<{ at: Date }>(
+      `SELECT created_at AS at FROM whatsapp_sends WHERE shop_id = $1 AND buyer_id = $2 AND status <> 'failed'
+         AND created_at > now() - interval '10 minutes' ORDER BY created_at DESC LIMIT 1`, [shopId, buyerId]);
+    if (recent) throw new UnprocessableEntityException(`${buyer.name} ko abhi-abhi bheja gaya hai — 10 minute baad dobara bhejein`);
+    const id = uuidv7();
+    await this.db.query(`INSERT INTO whatsapp_sends (id, shop_id, buyer_id, phone, due_paise, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, shopId, buyerId, due.phone, due.duePaise, sentBy]);
+    try {
+      const messageId = await this.sender(`91${due.phone}`, [due.name, shop.name, rupees(due.duePaise), shop.phone || shop.name]);
+      await this.db.query(`UPDATE whatsapp_sends SET status = 'sent', wa_message_id = $2 WHERE id = $1`, [id, messageId]);
+      return { messageId, duePaise: due.duePaise, phone: due.phone, name: due.name };
+    } catch (e) {
+      await this.db.query(`UPDATE whatsapp_sends SET status = 'failed', error = $2 WHERE id = $1`, [id, String((e as Error).message).slice(0, 500)]);
+      this.log.warn(`udhaar WhatsApp to ${due.phone} failed: ${(e as Error).message}`);
+      throw new ServiceUnavailableException('WhatsApp nahi gaya — thodi der baad dobara bhejein');
+    }
+  }
+
+  /** What "WhatsApp bhejein" would send this grahak: the template's own words with their figures. */
+  async draft(shopId: string, buyerId: string) {
+    const shop = await this.db.one<{ name: string; phone: string }>(`SELECT name, phone FROM shops WHERE id = $1`, [shopId]);
+    const buyer = await this.db.withShop(shopId, async (tx) => (await tx.query<{ name: string; phone: string }>(
+      `SELECT name, phone FROM buyers WHERE id = $1`, [buyerId])).rows[0]);
+    const due = (await this.db.withShop(shopId, (tx) => this.dues(tx))).find((d) => d.buyerId === buyerId);
+    const mobile = !!buyer && /^[6-9]\d{9}$/.test(buyer.phone);
+    return {
+      canSend: this.canSend() && mobile && !!due,
+      reason: !this.canSend() ? 'WhatsApp abhi chalu nahi hai' : !mobile ? 'Mobile number nahi hai' : !due ? 'Koi udhaar baaki nahi' : null,
+      phone: buyer?.phone ?? '', duePaise: due?.duePaise ?? 0,
+      text: due && shop ? UDHAAR_TEXT(due.name, shop.name, rupees(due.duePaise), shop.phone || shop.name) : '',
+      last: await this.lastSent(shopId, buyerId),
+    };
+  }
+
+  /** When this grahak was last sent their udhaar on WhatsApp (on demand or the morning run). */
+  async lastSent(shopId: string, buyerId: string): Promise<{ at: string; duePaise: number } | null> {
+    const r = await this.db.one<{ at: Date; due: string }>(
+      `SELECT at, due FROM (
+         SELECT created_at AS at, due_paise AS due FROM whatsapp_sends WHERE shop_id = $1 AND buyer_id = $2 AND status = 'sent'
+         UNION ALL SELECT created_at, due_paise FROM udhaar_alerts WHERE shop_id = $1 AND buyer_id = $2 AND status = 'sent'
+       ) x ORDER BY at DESC LIMIT 1`, [shopId, buyerId]);
+    return r ? { at: r.at.toISOString(), duePaise: Number(r.due) } : null;
+  }
+
   /** Admin: turn the morning message on or off for the shop. */
   async setOn(p: Principal, on: boolean) {
     await this.requireAdmin(p);
@@ -158,6 +224,10 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
     return body.messages[0].id;
   }
 }
+
+/** udhaar_baaki_reminder_v1's approved body (hi), filled — what the grahak will read. */
+const UDHAAR_TEXT = (name: string, shop: string, amount: string, contact: string) =>
+  `नमस्ते ${name}, ${shop} में आपका कुल उधार ₹${amount} बाकी है। भुगतान या हिसाब के लिए ${contact} पर संपर्क करें।`;
 
 /** Today's date and hour in India. */
 export function istNow(at = new Date()): { date: string; hour: number } {

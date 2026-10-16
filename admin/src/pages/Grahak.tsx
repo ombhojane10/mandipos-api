@@ -6,6 +6,7 @@ import { href } from '../routes'
 import { useLoad } from '../useLoad'
 import { Bal, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
+import { openWhatsApp } from '../keys'
 import { balRs, dmy, fileName, rs, useExport } from '../export/doc'
 
 /** Every grahak of the shop, searchable; biggest baaki first. Enter opens the khata. */
@@ -72,6 +73,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
             <p>{[b.kind, b.address, b.destination && `→ ${b.destination}`, b.vehicle].filter(Boolean).join(' · ')}</p>
           </div>
           {mobile && <a className="call" href={`tel:+91${b.phone}`}>☎ {phone(b.phone)}</a>}
+          {mobile && tot.balancePaise > 0 && <button type="button" className="btn ghost wa-btn" onClick={() => openWhatsApp(shopId, buyerId)}>WhatsApp</button>}
         </div>
       </div>
       <div className="card sum">

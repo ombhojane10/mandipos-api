@@ -32,3 +32,6 @@ export const openHelp = () => dispatchEvent(new Event(HELP_EVENT))
 /** The row you were on in each list, so Esc back lands on it again. */
 export const lastRow = new Map<string, number>()
 export const pagePath = () => location.hash.split('?')[0] || '#/'
+export const WHATSAPP_EVENT = 'mandipos:whatsapp'
+/** Opens the "send udhaar on WhatsApp" confirmation for one grahak (khata, Vasooli, Bolo). */
+export const openWhatsApp = (shopId: string, buyerId: string) => dispatchEvent(new CustomEvent(WHATSAPP_EVENT, { detail: { shopId, buyerId } }))

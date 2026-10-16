@@ -7,7 +7,7 @@ import { t } from '../i18n'
 import { hashQuery, href, setHashQuery } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { Bal, PeriodBar, Skeleton } from '../ui'
-import { openRaseed, openVoucher } from '../keys'
+import { openRaseed, openVoucher, openWhatsApp } from '../keys'
 import { dayRange, dmy, fileName, rs, useExport } from '../export/doc'
 import { HEADS } from './DayBook'
 
@@ -35,8 +35,6 @@ export function Vasooli({ shopId }: { shopId: string }) {
   const band = useMemo(() => (all.data ?? []).filter((b) => !b.hidden && b.boughtPaise > 0 && (daysSince(b.lastSlipOn) ?? 0) >= 10)
     .map((b) => ({ ...b, away: daysSince(b.lastSlipOn) ?? 0 })).sort((a, b) => b.boughtPaise - a.boughtPaise), [all.data])
 
-  const remind = (name: string, mobile: string, duePaise: number) =>
-    `https://wa.me/91${mobile}?text=${encodeURIComponent(t('Namaste {name} ji, {shop} mein aapka {amount} baaki hai. Kripya jaldi jama karein. Dhanyavaad.', { name, shop: shopName, amount: rupees(duePaise) }))}`
   const invite = (name: string, mobile: string) =>
     `https://wa.me/91${mobile}?text=${encodeURIComponent(t('Namaste {name} ji, {shop} mein aaj taaza maal aaya hai. Zaroor aaiye.', { name, shop: shopName }))}`
 
@@ -85,7 +83,7 @@ export function Vasooli({ shopId }: { shopId: string }) {
                         <td className={`num opt-col${r.quiet >= 15 ? ' due b' : ''}`}>{t('{n} din', { n: r.quiet })}</td>
                         <td className="act-col" onClick={(e) => e.stopPropagation()}>
                           {mobile && <a className="btn ghost act" href={`tel:+91${r.phone}`}>{t('Call')}</a>}
-                          {mobile && <a className="btn ghost act" target="_blank" rel="noreferrer" href={remind(r.name, r.phone, r.duePaise)}>WhatsApp</a>}
+                          {mobile && <button type="button" className="btn ghost act" onClick={() => openWhatsApp(shopId, r.buyerId)}>WhatsApp</button>}
                         </td>
                       </tr>
                     )

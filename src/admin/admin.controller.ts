@@ -14,6 +14,7 @@ import { ReportsService, type Pot } from './reports.service';
 import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
 import { InsightsService } from './insights.service';
+import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { GeminiClient } from '../voice/gemini.client';
 
@@ -162,6 +163,7 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
+    private readonly alerts: UdhaarAlertsService,
   ) {}
 
   // ---------------------------------------------------------------- Bolo (voice), as on the terminal
@@ -313,6 +315,19 @@ export class AdminController {
   @HttpCode(200)
   saveSettings(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
     return this.settings.save(mine(v, id), parse(SettingsBody, body));
+  }
+
+  /** The grahak's udhaar as the bot would send it on WhatsApp, and when it last went. */
+  @Get('shops/:id/buyers/:buyerId/whatsapp')
+  whatsappDraft(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string) {
+    return this.alerts.draft(mine(v, id), parse(Id, buyerId));
+  }
+
+  /** Send it now, from the MandiPlus bot's number. */
+  @Post('shops/:id/buyers/:buyerId/whatsapp')
+  @HttpCode(200)
+  whatsappSend(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string) {
+    return this.alerts.sendNow(mine(v, id), parse(Id, buyerId), v.phone);
   }
 
   /** One parchi in full, as Tally opens a voucher. */

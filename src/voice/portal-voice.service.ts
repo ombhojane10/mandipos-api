@@ -70,6 +70,11 @@ export class PortalVoiceService {
     if (reply.kind === 'open') out.open = { to: reply.open, buyerId: this.buyer(reply, books)?.id ?? null, truckId: this.truck(reply, books)?.id ?? null };
     if (reply.kind === 'query') out.answer = await this.answer(shopId, reply, body.lang);
     if (reply.kind === 'edit') Object.assign(out, await this.edit(p, shopId, reply, books, body.lang));
+    if (reply.kind === 'whatsapp') {
+      const b = this.buyer(reply, books);
+      if (b) out.whatsapp = { buyerId: b.id, name: b.name };
+      else out.whatsappMiss = `${reply.buyer_name ?? 'Grahak'} list mein nahi mila`;
+    }
     if (reply.kind === 'download') {
       const d = (reply.download ?? {}) as { report?: string; format?: string; from?: string; to?: string };
       const b = this.buyer(reply, books);

@@ -435,13 +435,13 @@ describe('udhaar alerts', () => {
     http().post('/v1/sync/push').set(auth(token)).send({ items }).expect(200);
 
   it('lists who owes, lets only an admin turn it on, and sends each grahak once a day', async () => {
-    const owner = await registerShop('9555500001', 'Alert Traders');
+    const shop = await registerShop('9555500001', 'Alert Traders');
     const buyerId = uuidv7();
     const noPhone = uuidv7();
     const t = now();
     const buyer = (id: string, name: string, phone: string) => ({ table: 'buyers', row: {
       id, created_at: t, updated_at: t, name, phone, kind: '', credit_limit_paise: 0, vehicle: '', address: '', destination: '' } });
-    await push(owner.accessToken, [
+    await push(shop.accessToken, [
       buyer(buyerId, 'Raju', '9876500011'),
       buyer(noPhone, 'Bina Phone', ''),
       { table: 'udhaar_entries', row: { id: uuidv7(), created_at: t, buyer_id: buyerId, amount_paise: 1500000, business_date: today() } },
@@ -450,13 +450,13 @@ describe('udhaar alerts', () => {
         payment_ref: '', business_date: today(), cash_paise: 250000, upi_paise: 0 } },
     ]);
 
-    const preview = await http().get('/v1/shops/udhaar-alerts').set(auth(owner.accessToken)).expect(200);
+    const preview = await http().get('/v1/shops/udhaar-alerts').set(auth(shop.accessToken)).expect(200);
     expect(preview.body.on).toBe(false);
     expect(preview.body.serverOn).toBe(false);
     // ₹15,000 udhaar less ₹2,500 vasooli; the grahak without a phone can't be messaged.
     expect(preview.body.recipients).toEqual([{ buyerId, name: 'Raju', phone: '9876500011', duePaise: 1250000 }]);
 
-    await http().post('/v1/shops/udhaar-alerts').set(auth(owner.accessToken)).send({ on: true }).expect(204);
+    await http().post('/v1/shops/udhaar-alerts').set(auth(shop.accessToken)).send({ on: true }).expect(204);
 
     const { UdhaarAlertsService } = await import('../src/alerts/udhaar-alerts.service');
     const alerts = app.get(UdhaarAlertsService);
@@ -468,7 +468,45 @@ describe('udhaar alerts', () => {
     expect(again).toEqual({ sent: 0, failed: 0, skipped: 1 });
     expect(sent).toEqual([{ to: '919876500011', params: ['Raju', 'Alert Traders', '12,500', '9555500001'] }]);
     // The test send needs the server switched on; in tests it is off, so it refuses.
-    await http().post('/v1/shops/udhaar-alerts/test').set(auth(owner.accessToken)).send({ buyerId }).expect(403);
+    await http().post('/v1/shops/udhaar-alerts/test').set(auth(shop.accessToken)).send({ buyerId }).expect(403);
+
+    // The owner's "WhatsApp bhejein" on the website: the same template and total, one grahak, now.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9555500001' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9555500001', code: OtpService.issuedForTests.get('9555500001') }).expect(200)).body.token);
+    const shopId = shop.me.shop.id as string;
+    const url = `/v1/admin/shops/${shopId}/buyers/${buyerId}/whatsapp`;
+    // No bot token on this server: the draft says so and a send is refused before anything goes.
+    expect((await http().get(url).set(web).expect(200)).body).toMatchObject({ canSend: false, reason: 'WhatsApp abhi chalu nahi hai', duePaise: 1250000 });
+    await http().post(url).set(web).send({}).expect(503);
+    alerts.canSend = () => true;
+    try {
+      const draft = (await http().get(url).set(web).expect(200)).body;
+      expect(draft).toMatchObject({ canSend: true, phone: '9876500011', duePaise: 1250000 });
+      expect(draft.text).toBe('नमस्ते Raju, Alert Traders में आपका कुल उधार ₹12,500 बाकी है। भुगतान या हिसाब के लिए 9555500001 पर संपर्क करें।');
+      sent.length = 0;
+      expect((await http().post(url).set(web).send({}).expect(200)).body).toMatchObject({ duePaise: 1250000, phone: '9876500011', name: 'Raju' });
+      expect(sent).toEqual([{ to: '919876500011', params: ['Raju', 'Alert Traders', '12,500', '9555500001'] }]);
+      // A double tap or a repeated voice command does not send twice.
+      await http().post(url).set(web).send({}).expect(422);
+      expect(sent).toHaveLength(1);
+      expect((await http().get(url).set(web).expect(200)).body.last).toMatchObject({ duePaise: 1250000 });
+      // No phone, nothing to send; another shop's grahak, not yours.
+      await http().post(`/v1/admin/shops/${shopId}/buyers/${noPhone}/whatsapp`).set(web).send({}).expect(422);
+      const other = await registerShop('9555500002', 'Other Traders');
+      await http().post(`/v1/admin/shops/${other.me.shop.id}/buyers/${buyerId}/whatsapp`).set(web).send({}).expect(403);
+      // A failed send is logged, says so, and does not block the next try.
+      alerts.sender = async () => { throw new Error('WhatsApp 400: 131026 undeliverable'); };
+      await owner(`UPDATE whatsapp_sends SET created_at = now() - interval '11 minutes'`);
+      await http().post(url).set(web).send({}).expect(503);
+      const c = new Client({ connectionString: OWNER_URL });
+      await c.connect();
+      try {
+        const rows = (await c.query(`SELECT status FROM whatsapp_sends WHERE buyer_id = $1 ORDER BY created_at`, [buyerId])).rows;
+        expect(rows.map((r) => r.status)).toEqual(['sent', 'failed']);
+      } finally { await c.end(); }
+    } finally {
+      delete (alerts as { canSend?: unknown }).canSend;
+    }
   });
 });
 

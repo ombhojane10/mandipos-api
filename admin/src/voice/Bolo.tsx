@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { lang, t } from '../i18n'
+import { openWhatsApp } from '../keys'
 import { href, type Report } from '../routes'
 import { editEntry, openEntry, type EditBill, type EntryKind, type VoiceDraft } from '../entries/kinds'
 import { exportWhenReady } from '../export/doc'
@@ -15,6 +16,7 @@ type Turn = {
   id: string; reply: Reply; draft?: VoiceDraft; cards?: Card[]; answer?: Answer
   open?: { to: string; buyerId: string | null; truckId: string | null }
   edit?: EditBill; editMiss?: string; downloadMiss?: string
+  whatsapp?: { buyerId: string; name: string }; whatsappMiss?: string
   download?: { report: string; format: 'pdf' | 'excel'; buyerId: string | null; from: string | null; to: string | null }
 }
 type Phase = 'listening' | 'thinking' | 'answer' | 'error'
@@ -88,7 +90,9 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
         exportWhenReady(d.format)
         return
       }
-      const miss = r.editMiss ?? r.downloadMiss
+      // "… ko udhaar WhatsApp pe bhejo": the message to confirm, sent from the MandiPlus number.
+      if (r.whatsapp) { rec.close(); onClose(); openWhatsApp(shopId, r.whatsapp.buyerId); return }
+      const miss = r.editMiss ?? r.downloadMiss ?? r.whatsappMiss
       if (miss) { setPhase('error'); setTitle(miss); speak(miss); return }
       if (r.open) {
         rec.close(); onClose()

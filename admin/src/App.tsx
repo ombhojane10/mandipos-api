@@ -26,6 +26,7 @@ import { Hot } from './Hot'
 import { Help } from './Help'
 import { VoucherHost } from './pages/Voucher'
 import { ExportHost } from './export/Preview'
+import { WhatsAppHost } from './WhatsApp'
 import { exportBuilder, openExport, useCanExport } from './export/doc'
 import { t } from './i18n'
 
@@ -294,6 +295,7 @@ export default function App() {
         {goto && <GoTo shopId={shopId} onClose={() => setGoto(false)} />}
         {shopId && <NewEntry key={shopId} shopId={shopId} />}
         <VoucherHost />
+        <WhatsAppHost />
         <ExportHost shopId={shopId} fallback={shop ?? null} />
         <Help />
       </div>

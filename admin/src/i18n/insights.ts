@@ -66,4 +66,12 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'Koi maal nahi': ['No items', 'कोई माल नहीं'],
   '{n} bhav save hue': ['{n} rates saved', '{n} भाव सेव हुए'],
   '{n} bhav save karein': ['Save {n} rates', '{n} भाव सेव करें'],
+  'WhatsApp pe udhaar': ['Udhaar on WhatsApp', 'व्हाट्सऐप पर उधार'],
+  'Pichhli baar bheja': ['Last sent', 'पिछली बार भेजा'],
+  'MandiPlus ke WhatsApp number se jayega': ["Goes from MandiPlus's WhatsApp number", 'MandiPlus के व्हाट्सऐप नंबर से जाएगा'],
+  'WhatsApp bhej diya': ['Sent on WhatsApp', 'व्हाट्सऐप भेज दिया'],
+  'Bhejein': ['Send', 'भेजें'],
+  'WhatsApp abhi chalu nahi hai': ['WhatsApp is not switched on', 'व्हाट्सऐप अभी चालू नहीं है'],
+  'Mobile number nahi hai': ['No mobile number', 'मोबाइल नंबर नहीं है'],
+  'Koi udhaar baaki nahi': ['Nothing due', 'कोई उधार बाकी नहीं'],
 }
