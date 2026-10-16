@@ -5,7 +5,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { parse } from '../common/validate';
 import { Db } from '../db/db.service';
 
-const FLAVORS = ['pos', 'daybook'] as const;
+const FLAVORS = ['pos', 'daybook', 'tally'] as const;
 type Flavor = (typeof FLAVORS)[number];
 
 const LatestQuery = z.object({ flavor: z.enum(FLAVORS) });
@@ -13,8 +13,13 @@ const ApkQuery = z.object({ flavor: z.enum(FLAVORS), versionCode: z.coerce.numbe
 
 type Release = { version_code: number; version_name: string; sha256: string; size_bytes: number; notes: string; created_at: Date };
 
-/** What a downloaded APK is saved as, so a phone's Downloads shows which app and version it is. */
-const FILE_NAMES: Record<Flavor, string> = { pos: 'MandiPlus-POS', daybook: 'MandiPlus-Daybook' };
+/** What a download is saved as, so Downloads shows which app and version it is. */
+const FILES: Record<Flavor, { name: (v: string) => string; type: string }> = {
+  pos: { name: (v) => `MandiPlus-POS-${v}.apk`, type: 'application/vnd.android.package-archive' },
+  daybook: { name: (v) => `MandiPlus-Daybook-${v}.apk`, type: 'application/vnd.android.package-archive' },
+  // The Tally connector for a shop's Windows laptop: exe + setup files, zipped.
+  tally: { name: (v) => `MandiTally-${v}-windows.zip`, type: 'application/zip' },
+};
 
 /** Published APKs, read the same way by the terminals updating themselves and by the download page. */
 @Injectable()
@@ -73,7 +78,7 @@ export class ReleasesController {
     const { flavor, versionCode } = parse(ApkQuery, query);
     const apk = await this.store.apk(flavor, versionCode);
     res.status(200).set({
-      'Content-Type': 'application/vnd.android.package-archive',
+      'Content-Type': FILES[flavor].type,
       'Content-Length': String(apk.length),
       'Cache-Control': 'private, max-age=31536000, immutable',
     }).end(apk);
@@ -92,10 +97,10 @@ export class PublicReleasesController {
   /** The newest release of every flavor, with when it went out. */
   @Get()
   async releases(@Res({ passthrough: true }) res: Response) {
-    const [pos, daybook] = await Promise.all(FLAVORS.map((f) => this.store.latest(f)));
+    const [pos, daybook, tally] = await Promise.all(FLAVORS.map((f) => this.store.latest(f)));
     res.set('Cache-Control', 'public, max-age=60');
     const shown = (r: Release | null) => (r ? { ...describe(r), publishedAt: r.created_at.toISOString() } : null);
-    return { pos: shown(pos), daybook: shown(daybook) };
+    return { pos: shown(pos), daybook: shown(daybook), tally: shown(tally) };
   }
 
   /** The newest APK of the flavor, saved under a name that says what it is. */
@@ -106,9 +111,9 @@ export class PublicReleasesController {
     if (!r) throw new NotFoundException('Abhi koi version publish nahi hua');
     const apk = await this.store.apk(flavor, r.version_code);
     res.status(200).set({
-      'Content-Type': 'application/vnd.android.package-archive',
+      'Content-Type': FILES[flavor].type,
       'Content-Length': String(apk.length),
-      'Content-Disposition': `attachment; filename="${FILE_NAMES[flavor]}-${r.version_name}.apk"`,
+      'Content-Disposition': `attachment; filename="${FILES[flavor].name(r.version_name)}"`,
       // The same URL serves the next release the moment it is published.
       'Cache-Control': 'no-cache',
       'X-App-Version': r.version_name,
