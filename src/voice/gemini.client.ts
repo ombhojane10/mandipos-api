@@ -32,13 +32,17 @@ export class GeminiClient {
   }
 
   /** [fallbackPayload]: what the fallback model is sent instead, when it needs a lighter request. */
-  async generate(payload: object, fallbackPayload: object = payload, budgetMs = 14_000): Promise<GeminiResult> {
+  async generate(
+    payload: object, fallbackPayload: object = payload, budgetMs = 14_000,
+    /** A slower call (photos to read) hedges later and gives its first try longer. */
+    opts: { hedgeMs?: number; firstMs?: number } = {},
+  ): Promise<GeminiResult> {
     if (!this.enabled) throw new ServiceUnavailableException('Voice is not switched on');
     const c = config();
     const deadline = Date.now() + budgetMs;
     try {
       // The hedged pair gets at most 8 s, so a call that hangs still leaves the retry time to answer.
-      return await this.hedged(c.VOICE_MODEL, payload, c.VOICE_HEDGE_MS, Math.min(deadline, Date.now() + 8_000));
+      return await this.hedged(c.VOICE_MODEL, payload, opts.hedgeMs ?? c.VOICE_HEDGE_MS, Math.min(deadline, Date.now() + (opts.firstMs ?? 8_000)));
     } catch (e) {
       const left = deadline - Date.now();
       if (left < 1_500) throw this.unavailable(e);

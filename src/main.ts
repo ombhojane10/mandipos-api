@@ -12,8 +12,9 @@ export function configure(app: INestApplication) {
   express.set('trust proxy', 1);
   // Sync pages are JSON and compress well; Render bills egress.
   express.use(compression());
-  // Gzipped request bodies from the terminal are inflated by the body parser.
-  express.useBodyParser('json', { limit: '1mb' });
+  // Gzipped request bodies from the terminal are inflated by the body parser. 12 MB: the
+  // udhaar bhav sheet sends up to six page photos (~250 KB each as base64) in one request.
+  express.useBodyParser('json', { limit: '12mb' });
   // Only the admin portal calls from a browser; the terminals don't need CORS at all.
   app.enableCors({ origin: adminOrigins(), methods: ['GET', 'POST'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 });
   app.enableShutdownHooks();
