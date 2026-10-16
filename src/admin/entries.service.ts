@@ -200,8 +200,9 @@ export class EntriesService {
     } });
     items.push({
       table: 'bills', txn, row: {
-        id: billId, created_at: now, number: pre.number, kind: 'kachchi', buyer_id: buyerId, buyer_name: buyerName,
-        business_date: todayIst(), pay_mode: payMode, total_paise: goods, paid_paise: cash + upi, cash_paise: cash, upi_paise: upi,
+        // A corrected slip stays on its own day (and time): editing an old slip never moves it to today.
+        id: billId, created_at: editing ? editing.created_at.toISOString() : now, number: pre.number, kind: 'kachchi', buyer_id: buyerId, buyer_name: buyerName,
+        business_date: editing ? editing.day.slice(0, 10) : todayIst(), pay_mode: payMode, total_paise: goods, paid_paise: cash + upi, cash_paise: cash, upi_paise: upi,
         payment_ref: '', slip_no: slipNo, truck_id: input.truckId,
         labour_paise: labourQty * (input.labourRatePaise ?? LABOUR_PAISE_PER_NAG),
         packing: input.packing, panni_name: panniName, packs: labourQty,
@@ -585,12 +586,13 @@ export class EntriesService {
   }
 }
 
-type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string };
+type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string; day: string; created_at: Date };
 
 /** A slip still on the books; a voided one can't be voided or edited again. */
 async function liveBill(tx: Tx, billId: string): Promise<LiveBill> {
   const b = (await tx.query<LiveBill & { voided: boolean }>(
     `SELECT b.id, b.slip_no, b.buyer_id, b.buyer_name, b.truck_id, b.pay_mode, b.paid_paise, b.cash_paise, b.upi_paise,
+            b.business_date::text AS day, b.created_at,
             EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id) AS voided
      FROM bills b WHERE b.id = $1`, [billId])).rows[0];
   if (!b) throw new NotFoundException('Parchi nahi mili');

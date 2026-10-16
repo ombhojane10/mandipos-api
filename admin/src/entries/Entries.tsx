@@ -104,7 +104,8 @@ function fromBill(b: EditBill) {
   return {
     buyer, lines: lines.length ? lines : [{ grade: '1' as const, qty: 0, ratePaise: 0 }], pay, packing, panni,
     size: (packing === 'katta' ? b.packing : 'katta10') as KattaSize, kattaName: packing === 'katta' ? b.panniName : '', parchune: !!tag,
-    labour: b.labourPaise > 0, labourQty: b.labourPaise > 0 && b.packs > 0 ? String(b.packs) : '',
+    // A count that was just the slip's dana follows the dana when it is changed; only a hand-corrected one stays.
+    labour: b.labourPaise > 0, labourQty: b.labourPaise > 0 && b.packs > 0 && b.packs !== b.lines.reduce((s, l) => s + l.qty, 0) ? String(b.packs) : '',
     rate: b.labourPaise > 0 && b.packs > 0 ? Math.round(b.labourPaise / b.packs) : null,
   }
 }
