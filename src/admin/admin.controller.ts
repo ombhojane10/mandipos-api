@@ -323,6 +323,13 @@ export class AdminController {
     return this.alerts.draft(mine(v, id), parse(Id, buyerId));
   }
 
+  /** The khata PDF that goes with it, to look at before sending. */
+  @Get('shops/:id/buyers/:buyerId/whatsapp/pdf')
+  async whatsappPdf(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string, @Res() res: Response) {
+    const pdf = await this.alerts.khataPdf(mine(v, id), parse(Id, buyerId));
+    res.status(200).set({ 'Content-Type': 'application/pdf', 'Content-Length': String(pdf.length), 'Cache-Control': 'no-store' }).end(pdf);
+  }
+
   /** Send it now, from the MandiPlus bot's number. */
   @Post('shops/:id/buyers/:buyerId/whatsapp')
   @HttpCode(200)

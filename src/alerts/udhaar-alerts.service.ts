@@ -3,11 +3,18 @@ import { Principal } from '../auth/tokens.service';
 import { uuidv7 } from '../common/uuid';
 import { config } from '../config';
 import { Db, Tx } from '../db/db.service';
+import { AdminService } from '../admin/admin.service';
+import { SettingsService } from '../admin/settings.service';
+import { ledgerPdf } from './ledger-pdf';
 
 export type Due = { buyerId: string; name: string; phone: string; duePaise: number };
 
 /** Sends one template message; returns the WhatsApp message id. Swapped out in tests. */
 export type Sender = (to: string, params: string[]) => Promise<string>;
+/** Sends the udhaar template with a PDF attached; throws TemplateUnavailable when Meta has not approved it. Swapped out in tests. */
+export type DocSender = (to: string, params: string[], pdf: Buffer, filename: string) => Promise<string>;
+/** The PDF template is not (yet) approved or was paused: send the text one instead. */
+export class TemplateUnavailable extends Error {}
 
 /**
  * The morning udhaar WhatsApp: every grahak with a phone who owes a shop that turned this on
@@ -24,8 +31,11 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
   private running = false;
 
   sender: Sender = (to, params) => this.sendTemplate(to, params);
+  docSender: DocSender = (to, params, pdf, filename) => this.sendDocTemplate(to, params, pdf, filename);
+  /** Learned from the last attempt: false once Meta refused the PDF template (rechecked hourly). */
+  private pdfOk: { ok: boolean; at: number } | null = null;
 
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly admin: AdminService, private readonly settings: SettingsService) {}
 
   /** Serving only when switched on and wired: checks every 5 minutes, sends once in the 9–12 IST window. */
   onApplicationBootstrap() {
@@ -138,7 +148,7 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
    * goes; a second send to the same grahak within 10 minutes is refused, so a double tap or a
    * repeated voice command never sends twice.
    */
-  async sendNow(shopId: string, buyerId: string, sentBy: string): Promise<{ messageId: string; duePaise: number; phone: string; name: string }> {
+  async sendNow(shopId: string, buyerId: string, sentBy: string): Promise<{ messageId: string; duePaise: number; phone: string; name: string; withPdf: boolean }> {
     if (!this.canSend()) throw new ServiceUnavailableException('WhatsApp abhi chalu nahi hai');
     const shop = await this.db.one<{ name: string; phone: string }>(`SELECT name, phone FROM shops WHERE id = $1`, [shopId]);
     if (!shop) throw new ForbiddenException('Dukaan nahi mili');
@@ -155,10 +165,24 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
     const id = uuidv7();
     await this.db.query(`INSERT INTO whatsapp_sends (id, shop_id, buyer_id, phone, due_paise, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`,
       [id, shopId, buyerId, due.phone, due.duePaise, sentBy]);
+    const params = [due.name, shop.name, rupees(due.duePaise), shop.phone || shop.name];
     try {
-      const messageId = await this.sender(`91${due.phone}`, [due.name, shop.name, rupees(due.duePaise), shop.phone || shop.name]);
-      await this.db.query(`UPDATE whatsapp_sends SET status = 'sent', wa_message_id = $2 WHERE id = $1`, [id, messageId]);
-      return { messageId, duePaise: due.duePaise, phone: due.phone, name: due.name };
+      // The khata PDF goes with it once Meta has approved the PDF template; until then, the text one.
+      let messageId = '', withPdf = false;
+      if (this.pdfLikely()) {
+        try {
+          const pdf = await this.khataPdf(shopId, buyerId);
+          messageId = await this.docSender(`91${due.phone}`, params, pdf, `Khata-${due.name.replace(/[^\p{L}\p{N}]+/gu, '-')}.pdf`);
+          withPdf = true;
+          this.pdfOk = { ok: true, at: Date.now() };
+        } catch (e) {
+          if (!(e instanceof TemplateUnavailable)) throw e;
+          this.pdfOk = { ok: false, at: Date.now() };
+        }
+      }
+      if (!withPdf) messageId = await this.sender(`91${due.phone}`, params);
+      await this.db.query(`UPDATE whatsapp_sends SET status = 'sent', wa_message_id = $2, with_pdf = $3 WHERE id = $1`, [id, messageId, withPdf]);
+      return { messageId, duePaise: due.duePaise, phone: due.phone, name: due.name, withPdf };
     } catch (e) {
       await this.db.query(`UPDATE whatsapp_sends SET status = 'failed', error = $2 WHERE id = $1`, [id, String((e as Error).message).slice(0, 500)]);
       this.log.warn(`udhaar WhatsApp to ${due.phone} failed: ${(e as Error).message}`);
@@ -179,7 +203,27 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
       phone: buyer?.phone ?? '', duePaise: due?.duePaise ?? 0,
       text: due && shop ? UDHAAR_TEXT(due.name, shop.name, rupees(due.duePaise), shop.phone || shop.name) : '',
       last: await this.lastSent(shopId, buyerId),
+      withPdf: this.pdfLikely(),
     };
+  }
+
+  /** Whether to try the PDF template: unknown or approved, or refused more than an hour ago. */
+  private pdfLikely(): boolean {
+    return !this.pdfOk || this.pdfOk.ok || Date.now() - this.pdfOk.at > 3_600_000;
+  }
+
+  /** The grahak's khata as the app prints it (LedgerPdf), for WhatsApp and for the dialog's preview. */
+  async khataPdf(shopId: string, buyerId: string): Promise<Buffer> {
+    const [k, s] = await Promise.all([this.admin.buyer(shopId, buyerId), this.settings.get(shopId)]);
+    const mandi = s.mandi && !/mandi/i.test(s.mandi) ? `${s.mandi} Mandi` : s.mandi;
+    return ledgerPdf({
+      firm: { name: s.name, address: s.address || [s.shopNo, mandi].filter(Boolean).join(', '), banks: s.bankAccounts },
+      buyer: { name: k.buyer.name, code: k.buyer.code, phone: k.buyer.phone, destination: k.buyer.destination, address: k.buyer.address },
+      rows: [...k.history].reverse().map((r) => ({
+        date: r.date, particulars: [r.title, r.detail].filter(Boolean).join(' · '), qty: r.nags, debitPaise: r.debitPaise, creditPaise: r.creditPaise,
+      })),
+      to: istNow().date,
+    });
   }
 
   /** When this grahak was last sent their udhaar on WhatsApp (on demand or the morning run). */
@@ -203,6 +247,40 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
     const m = await this.db.one<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [p.shopId, p.userId]);
     // Any member may: accountants hold every power the owners do.
     if (!m) throw new ForbiddenException('Not a member of this shop');
+  }
+
+  /** The PDF uploaded to WhatsApp once, then the udhaar template with it as the document header. */
+  private async sendDocTemplate(to: string, params: string[], pdf: Buffer, filename: string): Promise<string> {
+    const c = config();
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', 'application/pdf');
+    form.append('file', new Blob([new Uint8Array(pdf)], { type: 'application/pdf' }), filename);
+    const up = await fetch(`https://graph.facebook.com/v21.0/${c.WHATSAPP_PHONE_NUMBER_ID}/media`, {
+      method: 'POST', headers: { Authorization: `Bearer ${c.WHATSAPP_TOKEN}` }, body: form,
+    });
+    const media = (await up.json().catch(() => ({}))) as { id?: string; error?: { message?: string; code?: number } };
+    if (!up.ok || !media.id) throw new Error(`WhatsApp media ${up.status}: ${media.error?.code ?? ''} ${media.error?.message ?? 'no media id'}`);
+    const res = await fetch(`https://graph.facebook.com/v21.0/${c.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${c.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', to, type: 'template',
+        template: {
+          name: c.UDHAAR_PDF_TEMPLATE, language: { code: c.UDHAAR_ALERT_LANG },
+          components: [
+            { type: 'header', parameters: [{ type: 'document', document: { id: media.id, filename } }] },
+            { type: 'body', parameters: params.map((text) => ({ type: 'text', text })) },
+          ],
+        },
+      }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { messages?: { id: string }[]; error?: { message?: string; code?: number } };
+    // 132000–132016: the template is missing, not approved for this language, or paused.
+    const code = body.error?.code ?? 0;
+    if (code >= 132000 && code <= 132016) throw new TemplateUnavailable(`${code} ${body.error?.message ?? ''}`);
+    if (!res.ok || !body.messages?.[0]?.id) throw new Error(`WhatsApp ${res.status}: ${code} ${body.error?.message ?? 'no message id'}`);
+    return body.messages[0].id;
   }
 
   /** Cloud API template send through the MandiPlus bot's number. */

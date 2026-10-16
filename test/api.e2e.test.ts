@@ -483,8 +483,12 @@ describe('udhaar alerts', () => {
       const draft = (await http().get(url).set(web).expect(200)).body;
       expect(draft).toMatchObject({ canSend: true, phone: '9876500011', duePaise: 1250000 });
       expect(draft.text).toBe('नमस्ते Raju, Alert Traders में आपका कुल उधार ₹12,500 बाकी है। भुगतान या हिसाब के लिए 9555500001 पर संपर्क करें।');
+      const { TemplateUnavailable } = await import('../src/alerts/udhaar-alerts.service');
+      const docs: { to: string; params: string[]; pdf: Buffer; filename: string }[] = [];
+      // Until Meta approves the PDF template, the text udhaar goes instead.
+      alerts.docSender = async () => { throw new TemplateUnavailable('132001 template not found'); };
       sent.length = 0;
-      expect((await http().post(url).set(web).send({}).expect(200)).body).toMatchObject({ duePaise: 1250000, phone: '9876500011', name: 'Raju' });
+      expect((await http().post(url).set(web).send({}).expect(200)).body).toMatchObject({ duePaise: 1250000, phone: '9876500011', name: 'Raju', withPdf: false });
       expect(sent).toEqual([{ to: '919876500011', params: ['Raju', 'Alert Traders', '12,500', '9555500001'] }]);
       // A double tap or a repeated voice command does not send twice.
       await http().post(url).set(web).send({}).expect(422);
@@ -494,15 +498,29 @@ describe('udhaar alerts', () => {
       await http().post(`/v1/admin/shops/${shopId}/buyers/${noPhone}/whatsapp`).set(web).send({}).expect(422);
       const other = await registerShop('9555500002', 'Other Traders');
       await http().post(`/v1/admin/shops/${other.me.shop.id}/buyers/${buyerId}/whatsapp`).set(web).send({}).expect(403);
+      // Once approved, the khata PDF goes with it — the same LedgerPdf the app prints.
+      const pdfView = await http().get(`${url}/pdf`).set(web).buffer(true)
+        .parse((res, cb) => { const parts: Buffer[] = []; res.on('data', (c: Buffer) => parts.push(c)); res.on('end', () => cb(null, Buffer.concat(parts))); })
+        .expect(200);
+      expect(pdfView.headers['content-type']).toBe('application/pdf');
+      expect((pdfView.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+      await owner(`UPDATE whatsapp_sends SET created_at = now() - interval '11 minutes'`);
+      (alerts as unknown as { pdfOk: unknown }).pdfOk = null;
+      alerts.docSender = async (to, params, pdf, filename) => { docs.push({ to, params, pdf, filename }); return 'wamid.doc'; };
+      expect((await http().post(url).set(web).send({}).expect(200)).body).toMatchObject({ withPdf: true, messageId: 'wamid.doc' });
+      expect(docs).toHaveLength(1);
+      expect(docs[0]).toMatchObject({ to: '919876500011', params: ['Raju', 'Alert Traders', '12,500', '9555500001'], filename: 'Khata-Raju.pdf' });
+      expect(docs[0].pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(sent).toHaveLength(1);
       // A failed send is logged, says so, and does not block the next try.
-      alerts.sender = async () => { throw new Error('WhatsApp 400: 131026 undeliverable'); };
+      alerts.docSender = async () => { throw new Error('WhatsApp 400: 131026 undeliverable'); };
       await owner(`UPDATE whatsapp_sends SET created_at = now() - interval '11 minutes'`);
       await http().post(url).set(web).send({}).expect(503);
       const c = new Client({ connectionString: OWNER_URL });
       await c.connect();
       try {
         const rows = (await c.query(`SELECT status FROM whatsapp_sends WHERE buyer_id = $1 ORDER BY created_at`, [buyerId])).rows;
-        expect(rows.map((r) => r.status)).toEqual(['sent', 'failed']);
+        expect(rows.map((r) => r.status)).toEqual(['sent', 'sent', 'failed']);
       } finally { await c.end(); }
     } finally {
       delete (alerts as { canSend?: unknown }).canSend;

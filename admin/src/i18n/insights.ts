@@ -74,4 +74,7 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'WhatsApp abhi chalu nahi hai': ['WhatsApp is not switched on', 'व्हाट्सऐप अभी चालू नहीं है'],
   'Mobile number nahi hai': ['No mobile number', 'मोबाइल नंबर नहीं है'],
   'Koi udhaar baaki nahi': ['Nothing due', 'कोई उधार बाकी नहीं'],
+  'Khata PDF': ['Ledger PDF', 'खाता PDF'],
+  'dekhein': ['view', 'देखें'],
+  'Khata PDF ke saath WhatsApp bhej diya': ['Sent on WhatsApp with the ledger PDF', 'खाता PDF के साथ व्हाट्सऐप भेज दिया'],
 }

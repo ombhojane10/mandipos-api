@@ -48,6 +48,13 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
 }
 
 /** A POST whose answer is read as a stream (Bolo's speech), with the same sign-in as [api]. */
+/** A file from the API (a PDF to look at), as a blob URL. */
+export async function apiFile(path: string): Promise<string> {
+  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } })
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  return URL.createObjectURL(await res.blob())
+}
+
 export async function apiStream(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const token = getToken()
   const res = await fetch(`${BASE}${path}`, {

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { api } from './api'
+import { api, apiFile } from './api'
 import { ago, phone, rupees } from './format'
 import { t } from './i18n'
 import { WHATSAPP_EVENT } from './keys'
 
-type Draft = { canSend: boolean; reason: string | null; phone: string; duePaise: number; text: string; last: { at: string; duePaise: number } | null }
+type Draft = { canSend: boolean; reason: string | null; phone: string; duePaise: number; text: string; last: { at: string; duePaise: number } | null; withPdf: boolean }
 
 /**
  * "Udhaar WhatsApp pe bhejein": the grahak's message as they will read it, sent with one press
@@ -25,7 +25,12 @@ function Send({ shopId, buyerId, onClose }: { shopId: string; buyerId: string; o
   const [d, setD] = useState<Draft | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [sent, setSent] = useState(false)
+  const [sent, setSent] = useState<null | { withPdf: boolean }>(null)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const viewPdf = async () => {
+    setPdfBusy(true)
+    try { window.open(await apiFile(`/v1/admin/shops/${shopId}/buyers/${buyerId}/whatsapp/pdf`), '_blank') } catch (e) { setError((e as Error).message) } finally { setPdfBusy(false) }
+  }
   useEffect(() => {
     api<Draft>(`/v1/admin/shops/${shopId}/buyers/${buyerId}/whatsapp`).then(setD).catch((e: Error) => setError(e.message))
   }, [shopId, buyerId])
@@ -34,9 +39,9 @@ function Send({ shopId, buyerId, onClose }: { shopId: string; buyerId: string; o
     if (!d?.canSend || busy || sent) return
     setBusy(true); setError('')
     try {
-      await api(`/v1/admin/shops/${shopId}/buyers/${buyerId}/whatsapp`, { method: 'POST', body: {} })
-      setSent(true)
-      setTimeout(onClose, 1400)
+      const r = await api<{ withPdf: boolean }>(`/v1/admin/shops/${shopId}/buyers/${buyerId}/whatsapp`, { method: 'POST', body: {} })
+      setSent({ withPdf: r.withPdf })
+      setTimeout(onClose, 1800)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -54,6 +59,9 @@ function Send({ shopId, buyerId, onClose }: { shopId: string; buyerId: string; o
           {d && (
             <>
               <div className="wa-to"><b>+91 {phone(d.phone)}</b>{d.duePaise > 0 && <span className="money due b">{rupees(d.duePaise)} {t('baaki')}</span>}</div>
+              {d.text && d.withPdf && (
+                <button type="button" className="wa-doc" disabled={pdfBusy} onClick={() => void viewPdf()}>📄 <b>{t('Khata PDF')}</b> <span className="muted">{pdfBusy ? '…' : t('dekhein')}</span></button>
+              )}
               {d.text && <p className="wa-bubble">{d.text}</p>}
               {d.reason && <p className="error">{t(d.reason)}</p>}
               {d.last && <p className="muted">{t('Pichhli baar bheja')}: {ago(d.last.at)} · {rupees(d.last.duePaise)}</p>}
@@ -61,11 +69,11 @@ function Send({ shopId, buyerId, onClose }: { shopId: string; buyerId: string; o
             </>
           )}
           {error && <p className="error">{error}</p>}
-          {sent && <p className="jama b">✓ {t('WhatsApp bhej diya')}</p>}
+          {sent && <p className="jama b">✓ {sent.withPdf ? t('Khata PDF ke saath WhatsApp bhej diya') : t('WhatsApp bhej diya')}</p>}
         </div>
         <div className="sheet-ft">
           <button type="button" className="btn ghost" disabled={busy} onClick={onClose}><kbd>Esc: </kbd>{t('Rehne dein')}</button>
-          <button type="button" className="btn primary" autoFocus disabled={!d?.canSend || busy || sent} onClick={() => void send()}>
+          <button type="button" className="btn primary" autoFocus disabled={!d?.canSend || busy || !!sent} onClick={() => void send()}>
             <kbd>↵: </kbd>{busy ? '…' : sent ? '✓' : t('Bhejein')}
           </button>
         </div>
