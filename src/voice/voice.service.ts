@@ -20,6 +20,8 @@ export const TurnBody = z
     context: z.string().max(120_000),
     screen: z.string().max(40).default('home'),
     draft: z.string().max(4_000).optional(),
+    // Who or what the conversation is about, for "uska" (website).
+    focus: z.string().max(400).optional(),
     history: z.array(z.object({ q: z.string().max(500), a: z.string().max(500) })).max(4).optional(),
     lang: z.enum(['hinglish', 'hindi', 'english']).default('hinglish'),
   })

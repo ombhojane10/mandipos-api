@@ -56,8 +56,8 @@ export function useRecorder(onLevel: (level: number) => void, onSilence: () => v
         floor = Math.min(floor, Math.max(rms, 0.002))
         if (rms > Math.max(0.02, floor * 3)) { loud++; quietSince = 0 }
         else if (!quietSince) quietSince = now
-        // Spoke (a few loud frames, not one click), then 1.1 s of quiet: done.
-        if (loud > 8 && quietSince && now - quietSince > 1100) { cb.current.onSilence(); return }
+        // Spoke (a few loud frames, not one click), then 0.8 s of quiet: done.
+        if (loud > 8 && quietSince && now - quietSince > 800) { cb.current.onSilence(); return }
       }
       frame.current = requestAnimationFrame(tick)
     }

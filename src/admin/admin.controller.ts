@@ -202,8 +202,11 @@ export class AdminController {
   /** One recording in; a draft for the entry form, or the answer's figures, out. Nothing is saved. */
   @Post('shops/:id/voice')
   @HttpCode(200)
-  voiceTurn(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
-    return this.voice.turn(v.phone, mine(v, id), parse(PortalTurnBody, body));
+  async voiceTurn(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    const shopId = mine(v, id);
+    // The other shops this person may open: "Om AL Shamsh mein hai" instead of "nahi mila".
+    const shops = v.admin ? (await this.admin.shops()).filter((x) => x.status === 'approved').map((x) => x.id) : v.shopIds;
+    return this.voice.turn(v.phone, shopId, parse(PortalTurnBody, body), shops);
   }
 
   /** Who is signed in, and which shops they may open. */

@@ -528,6 +528,96 @@ describe('udhaar alerts', () => {
   });
 });
 
+describe('Bolo conversation', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('asks for what is missing, remembers the job, and finishes it — never a dead end', async () => {
+    const shop = await registerShop('9555500031', 'Bolo Traders');
+    const shopId = shop.me.shop.id as string;
+    const t = now();
+    const ids = { om: uuidv7(), omi: uuidv7(), rk: uuidv7(), rt: uuidv7() };
+    const buyer = (id: string, name: string, phone: string) => ({ table: 'buyers', row: {
+      id, created_at: t, updated_at: t, name, phone, kind: '', credit_limit_paise: 0, vehicle: '', address: 'Shop 3', destination: '', code: 'OB1', card: 'AB12' } });
+    await http().post('/v1/sync/push').set(auth(shop.accessToken)).send({ items: [
+      buyer(ids.om, 'Om Bhojane', ''), buyer(ids.omi, 'Omi', ''), buyer(ids.rk, 'Bholu Kumar', '9876500081'), buyer(ids.rt, 'Bholu Traders', '9876500082'),
+      { table: 'udhaar_entries', row: { id: uuidv7(), created_at: t, buyer_id: ids.om, amount_paise: 1000000, business_date: today() } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9555500031' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9555500031', code: OtpService.issuedForTests.get('9555500031') }).expect(200)).body.token);
+    const url = `/v1/admin/shops/${shopId}/voice`;
+
+    // The model, scripted: what it would route each typed request to.
+    const { GeminiClient } = await import('../src/voice/gemini.client');
+    const gemini = app.get(GeminiClient);
+    const script: Record<string, object> = {
+      'om ko udhaar whatsapp karo': { kind: 'whatsapp', say: 'Om ko udhaar WhatsApp', heard: 'Om', buyer_name: 'Om Bhojane' },
+      'bholu ko call lagao': { kind: 'call', say: 'Bholu ko call', heard: 'Bholu' },
+      'sohan ko udhaar bhejo': { kind: 'whatsapp', say: 'Sohan ko udhaar', heard: 'Sohan' },
+      '15 dana 22 ke aur 8 dana 35 ke': { kind: 'calc', say: 'Hisab', calc: { lines: [{ qty: 15, rate: 22 }, { qty: 8, rate: 35 }] } },
+      'naya grahak pappu number 9876500099 purana udhaar 500': { kind: 'grahak', say: 'Naya grahak Pappu', heard: 'Pappu', grahak: { name: 'Pappu', phone: '9876500099', opening: 500, new: true } },
+    };
+    const calls: string[] = [];
+    const real = gemini.generate.bind(gemini);
+    gemini.generate = async (payload: any) => {
+      const text = String(payload.contents?.[0]?.parts?.[0]?.text ?? '');
+      const said = (text.match(/# They typed\n([\s\S]*)$/)?.[1] ?? '').trim().toLowerCase();
+      calls.push(said);
+      return { text: JSON.stringify({ transcript: said, ...(script[said] ?? { kind: 'unclear', say: 'Samajh nahi aaya' }) }), model: 'stub', tokensIn: 0, tokensOut: 0 };
+    };
+    const { UdhaarAlertsService } = await import('../src/alerts/udhaar-alerts.service');
+    const alerts = app.get(UdhaarAlertsService);
+    const sent: { to: string; params: string[] }[] = [];
+    alerts.canSend = () => true;
+    alerts.docSender = async (to, params) => { sent.push({ to, params }); return 'wamid.bolo'; };
+    try {
+      const say = (text: string, session = 's1') => http().post(url).set(web).send({ text, session }).expect(200).then((r) => r.body);
+
+      // 1. Om has no number: Bolo asks for it instead of failing.
+      const a1 = await say('Om ko udhaar whatsapp karo');
+      expect(a1.ask).toMatchObject({ expect: 'phone' });
+      expect(a1.ask.question).toMatch(/Om Bhojane ka mobile number/);
+      // The number, typed: read here with no model call, saved on the grahak, and the WhatsApp goes.
+      calls.length = 0;
+      const a2 = await say('98765 00077');
+      expect(calls).toHaveLength(0);
+      expect(a2.say).toMatch(/Om Bhojane ko ₹10,000 udhaar aur khata WhatsApp pe bhej diya/);
+      expect(sent).toEqual([{ to: '919876500077', params: ['Om Bhojane', 'Bolo Traders', '10,000', '9555500031'] }]);
+      const pulled = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(shop.accessToken)).expect(200)).body.changes
+        .filter((c: any) => c.table === 'buyers' && c.row.id === ids.om).at(-1).row;
+      // The number saved, and nothing else on the grahak lost (address, code and card stay).
+      expect(pulled).toMatchObject({ phone: '9876500077', address: 'Shop 3', name: 'Om Bhojane' });
+      expect(pulled.code ?? 'OB1').toBe('OB1');
+      expect(pulled.card ?? 'AB12').toBe('AB12');
+
+      // 2. Two Bholues: "kaun sa?" with both as choices; a tap finishes the call.
+      const b1 = await say('Bholu ko call lagao', 's2');
+      expect(b1.ask.expect).toBe('choice');
+      expect(b1.ask.options.map((o: any) => o.value)).toEqual(expect.arrayContaining([ids.rk, ids.rt]));
+      const b2 = await http().post(url).set(web).send({ session: 's2', pick: ids.rt }).expect(200).then((r) => r.body);
+      expect(b2.call).toEqual({ phone: '9876500082', name: 'Bholu Traders' });
+
+      // 3. Nobody of that name: a new grahak or cancel, and "rehne do" ends it politely.
+      const c1 = await say('Sohan ko udhaar bhejo', 's3');
+      expect(c1.ask.options.map((o: any) => o.value)).toEqual(['new', 'cancel']);
+      const c2 = await say('rehne do', 's3');
+      expect(c2.say).toBe('Theek hai, rehne diya');
+
+      // 4. Arithmetic is the server's: 15 × 22 + 8 × 35 = 610.
+      const d = await say('15 dana 22 ke aur 8 dana 35 ke', 's4');
+      expect(d.answer.say).toBe('Kul ₹610');
+
+      // 5. A new grahak by voice, with number and purana udhaar.
+      const e = await say('naya grahak Pappu number 9876500099 purana udhaar 500', 's5');
+      expect(e.say).toMatch(/Naya grahak Pappu ban gaya/);
+      const found = (await http().get(`/v1/admin/shops/${shopId}/buyers?q=Pappu`).set(web).expect(200)).body.buyers[0];
+      expect(found).toMatchObject({ name: 'Pappu', phone: '9876500099', balancePaise: 50000 });
+    } finally {
+      gemini.generate = real;
+      delete (alerts as { canSend?: unknown }).canSend;
+    }
+  });
+});
+
 describe('app updates', () => {
   it('tells a logged-in device the newest build of its flavor and serves exactly those bytes', async () => {
     await http().get('/v1/app/latest?flavor=pos').expect(401);
@@ -579,7 +669,7 @@ describe('app updates', () => {
 describe('shop approval and the admin portal', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
-  async function adminLogin(p = '9022353647') {
+  async function adminLogin(p = '9876500077') {
     await http().post('/v1/admin/auth/otp').send({ phone: p }).expect(204);
     const res = await http().post('/v1/admin/auth/verify').send({ phone: p, code: OtpService.issuedForTests.get(p) }).expect(200);
     return auth(res.body.token);
@@ -986,7 +1076,7 @@ describe('shop approval and the admin portal', () => {
   it('lets in admins and shop owners only, and never with an app token', async () => {
     await http().post('/v1/admin/auth/otp').send({ phone: '9811199998' }).expect(403);
     await http().get('/v1/admin/shops').expect(401);
-    const app = await login('9022353647');
+    const app = await login('9876500077');
     await http().get('/v1/admin/shops').set(auth(app.accessToken)).expect(401);
     const admin = await adminLogin('9022300000');
     await http().get('/v1/admin/me').set(admin).expect(200);

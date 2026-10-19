@@ -38,10 +38,13 @@ export function hush() {
   if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
 }
 
-/** Reads [text] out. Resolves when the stream has been scheduled; never throws. */
-export async function speakText(shopId: string, text: string, fallback: (t: string) => void) {
+/**
+ * Reads [text] out. Resolves when the stream has been scheduled, with the milliseconds until
+ * the last of it has played (so the mic can open after Bolo stops talking); never throws.
+ */
+export async function speakText(shopId: string, text: string, fallback: (t: string) => void): Promise<number> {
   hush()
-  if (!text.trim()) return
+  if (!text.trim()) return 0
   const me = { ctl: new AbortController(), nodes: [] as AudioBufferSourceNode[] }
   playing = me
   try {
@@ -72,9 +75,11 @@ export async function speakText(shopId: string, text: string, fallback: (t: stri
       at += buf.duration
       me.nodes.push(node)
     }
+    return Math.max(0, (at - ctx.currentTime) * 1000)
   } catch {
-    if (me.ctl.signal.aborted) return
+    if (me.ctl.signal.aborted) return 0
     // The server's voice could not be had: the device's own, if it has one.
     fallback(text)
+    return text.length * 75
   }
 }

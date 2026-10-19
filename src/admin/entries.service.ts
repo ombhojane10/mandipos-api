@@ -507,6 +507,28 @@ export class EntriesService {
 
   // ---------------------------------------------------------------- plumbing
 
+  /**
+   * Changes a grahak's details (Bolo's "Om ka number 98… likh lo", or a number given so a
+   * WhatsApp can go): the whole row as it is with the change, a newer updated_at, pushed as a
+   * terminal pushes it. code, card and market udhaar are left out unless changed, so they stay.
+   */
+  async updateGrahak(phone: string, shopId: string, buyerId: string, patch: { phone?: string; address?: string; destination?: string; code?: string; name?: string }) {
+    const p = await this.device(phone, shopId);
+    const g = await this.db.withShop(shopId, async (tx) => (await tx.query<{
+      id: string; created_at: Date; name: string; phone: string; kind: string; credit_limit_paise: string; vehicle: string; address: string; destination: string; hidden: boolean
+    }>(`SELECT id, created_at, name, phone, kind, credit_limit_paise, vehicle, address, destination, hidden FROM buyers WHERE id = $1`, [buyerId])).rows[0]);
+    if (!g) throw new BadRequestException('Grahak nahi mila');
+    if (patch.phone !== undefined && patch.phone && !/^[6-9]\d{9}$/.test(patch.phone)) throw new BadRequestException('Mobile number 10 ank ka hona chahiye');
+    const row: Record<string, unknown> = {
+      id: g.id, created_at: g.created_at.toISOString(), updated_at: new Date().toISOString(),
+      name: (patch.name ?? g.name).trim(), phone: patch.phone ?? g.phone, kind: g.kind, credit_limit_paise: n(g.credit_limit_paise),
+      vehicle: g.vehicle, address: (patch.address ?? g.address).trim(), destination: (patch.destination ?? g.destination).trim(), hidden: g.hidden,
+      ...(patch.code !== undefined ? { code: patch.code.trim().toUpperCase() } : {}),
+    };
+    await this.push(p, shopId, [{ table: 'buyers', txn: uuidv7(), row }]);
+    return { id: g.id, name: row.name as string, phone: row.phone as string };
+  }
+
   private buyerRow(id: string, b: GrahakInput, now: string) {
     return {
       id, created_at: now, updated_at: now, name: b.name.trim(), phone: (b.phone ?? '').trim(), kind: '', credit_limit_paise: 0,

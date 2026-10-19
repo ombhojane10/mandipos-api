@@ -162,13 +162,18 @@ function schema(strict: boolean, portal = false) {
         report: oneOf('ledger', 'daybook', 'outstanding', 'cashbook', 'stock', 'register', 'suppliers', 'vasooli', 'gaadis', 'munafa', 'items'),
         format: oneOf('pdf', 'excel'), from: str, to: str,
       }),
+      // The grahak's name exactly as heard: the server scores it against the list itself.
+      heard: str,
+      grahak: obj({ name: str, phone: str, address: str, code: str, opening: num, new: bool }),
+      calc: obj({ lines: { type: 'array', items: obj({ qty: num, rate: num }) }, amounts: { type: 'array', items: num } }),
+      bhav: { type: 'array', items: obj({ maal: str, grade: oneOf('I', 'II', 'III'), rate: num }) },
     } : {}),
   });
   return {
     type: 'object',
     properties: {
       transcript: str,
-      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp'] : [])),
+      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp', 'grahak', 'call', 'calc', 'bhav'] : [])),
       say: str, ...rest.properties,
     },
     required: ['transcript', 'kind', 'say', ...(strict ? Object.keys(rest.properties) : [])],
@@ -185,14 +190,22 @@ export const PORTAL_FALLBACK_SCHEMA = schema(false, true);
  * hand over a report as a file. Kept out of the terminal's prompt: the app has no use for them.
  */
 export const PORTAL_GUIDE = `
-## On the website: four more kinds
+## On the website: more kinds, and a conversation
+This is a conversation: "# Earlier in this conversation" and "# Focus" tell you who and what they were just talking about. "uska", "unko", "iska", "wahi" = the focus grahak or slip; "aur Ramesh ka?" = the same request for Ramesh.
+Never turn a request into a how-to "answer". If they asked for something to be DONE (send, save, call, change, make, set bhav, kholo, download), return that kind even when a detail is missing or a name is not on the list — the website asks for what is missing ("number batao", "kaun sa Om?") and then does it. "answer" is only for questions about how the app works.
+Always put the grahak's name exactly as they said it in "heard" (Latin script), besides buyer / buyer_name.
+- "grahak": save a grahak's details or make a new one. grahak {name (only for a new one or a rename), phone (10 digits), address, code, opening (purana udhaar in rupees), new (true when they said naya / add karo / banao)}; buyer for an existing one. "Om ka number 9876543210 likh lo", "naya grahak Raju, number …, purana udhaar 5000".
+- "call": phone a grahak. buyer. "Om ko call lagao", "Raju ko phone karo".
+- "calc": arithmetic they asked for. calc.lines [{qty, rate}] for "15 dana 22 ke aur 8 dana 35 ke", calc.amounts for plain sums "500 aur 300 aur 1200". Never compute it yourself.
+- "bhav": set today's rate. bhav [{maal as said, grade I/II/III (I unless said), rate}]. "Aaj Pollachi ek number 30, do number 25", "V Kota ka bhav 28 kar do".
+
 - "query": any question about the books that a view does not answer EXACTLY. Views are only for: one named grahak's udhaar (udhaar), the biggest udhaar list (udhaar_list), one day's or range's totals (bikri, vasooli, galla, mazdoori), stock, supplier dues, the shop's slips of one day. One grahak's parchiyan or vasooli ("Wasim ki parchiyan dikhao") is a query on parchi / vasooli for that grahak, newest first (ORDER BY din DESC, samay DESC LIMIT 10) — not the parchi view. Everything else is a query: rankings either way ("sabse kam udhaar kiska" = ORDER BY udhaar ASC among udhaar > 0, NOT udhaar_list), filters ("10000 se zyada udhaar", "30 din se vasooli nahi"), counts ("kitne grahak"), comparisons ("kal se zyada becha?"), averages ("aaj ka average bhav"), one grahak's slips or payments in a period, best-selling gaadi or maal, who bought most, cash vs udhaar split by grahak, a slip or raseed by number.
   Write ONE PostgreSQL SELECT in query.sql using ONLY these tables:
 ${ASK_TABLES}
   Rules: SELECT only. Name the output columns in plain Hinglish (naam, udhaar, din, rakam, dana...). Rankings: ORDER BY and LIMIT 10 (LIMIT 1 when they asked for "sabse"). For a grahak named in speech use their exact naam from the shop data (WHERE naam = '...'), or ILIKE '%part%' when unsure. Dates: the working day for "aaj", the day before it for "kal"; din BETWEEN 'from' AND 'to' for a range. Never compute what a column already holds (udhaar is the balance). Average bhav = SUM(rakam) / SUM(dana) over parchi_line (weighted), never AVG(bhav). Round money to whole rupees, rates to 2 decimals. query.title: 2–5 words naming the answer ("Sabse kam udhaar").
 - "edit": change a slip that is already saved. edit.slip_no when they said the parchi number; otherwise buyer (ref) for that grahak's last slip; neither = the shop's last slip. edit.change = the change in their words ("rate 22 karo", "udhaar mein daalo", "50 dana aur jodo", "grahak Suresh karo").
 - "download": a report as a file. download.report: ledger (one grahak's khata — needs buyer) | daybook | outstanding (udhaar list) | cashbook | stock | register (bikri register) | suppliers | vasooli | gaadis | munafa | items; format pdf unless they said excel/sheet; from/to for a named period (else leave empty).
-- "whatsapp": send one grahak their udhaar on WhatsApp ("Om ko udhaar WhatsApp pe bhejo", "Ramesh ko baaki ka message bhej do", "Wasim ko yaad dila do"). buyer (ref) and buyer_name are required; the website shows the message (with their khata PDF) and the owner presses send — so "say" never claims it was sent: "Om ko udhaar WhatsApp", never "bhej diya". Asking for their ledger/khata on WhatsApp is this too. Asking how much someone owes is "show", not this.
+- "whatsapp": send one grahak their udhaar on WhatsApp (with their khata PDF) ("Om ko udhaar WhatsApp pe bhejo", "Ramesh ko baaki ka message bhej do", "Wasim ko yaad dila do"). buyer (ref) and buyer_name are required; the website shows the message (with their khata PDF) and the owner presses send — so "say" never claims it was sent: "Om ko udhaar WhatsApp", never "bhej diya". Asking for their ledger/khata on WhatsApp is this too. Asking how much someone owes is "show", not this.
 
 Examples:
 Heard: "sabse kam udhaar kiska hai" → {"transcript":"sabse kam udhaar kiska hai","kind":"query","say":"Sabse kam udhaar","query":{"sql":"SELECT naam, udhaar FROM grahak WHERE udhaar > 0 ORDER BY udhaar ASC LIMIT 1","title":"Sabse kam udhaar"}}
@@ -200,6 +213,10 @@ Heard: "kin grahakon ne 30 din se paisa nahi diya" (working day 2026-10-15) → 
 Heard: "is hafte sabse zyada kisne kharida" (working day 2026-10-15) → {"transcript":"is hafte sabse zyada kisne kharida","kind":"query","say":"Is hafte sabse bada grahak","query":{"sql":"SELECT grahak AS naam, SUM(rakam) AS kharid, SUM(dana) AS dana FROM parchi WHERE din BETWEEN '2026-10-09' AND '2026-10-15' AND grahak_id IS NOT NULL GROUP BY grahak ORDER BY kharid DESC LIMIT 1","title":"Is hafte sabse bada grahak"}}
 Heard: "parchi 761 mein rate 22 kar do" → {"transcript":"parchi 761 mein rate 22 kar do","kind":"edit","say":"Parchi 761: rate ₹22","edit":{"slip_no":761,"change":"rate 22 kar do"}}
 Heard: "Ashu ki aakhri parchi udhaar mein daal do" → {"transcript":"Ashu ki aakhri parchi udhaar mein daal do","kind":"edit","say":"Ashu ki parchi udhaar mein","buyer":"b9017","buyer_name":"Ashu Parchan","edit":{"change":"udhaar mein daal do"}}
+Heard: "Om ka number 9876543210 save karo" → {"transcript":"Om ka number 9876543210 save karo","kind":"grahak","say":"Om ka number 9876543210","buyer":"b9011","buyer_name":"Om Prakash","heard":"Om","grahak":{"phone":"9876543210"}}
+Heard: "15 dana 22 ke aur 8 dana 35 ke, kitna hua" → {"transcript":"15 dana 22 ke aur 8 dana 35 ke, kitna hua","kind":"calc","say":"Hisab jod rahe hain","calc":{"lines":[{"qty":15,"rate":22},{"qty":8,"rate":35}]}}
+Heard: "aaj Pollachi ka bhav ek number 30 do number 25" → {"transcript":"aaj Pollachi ka bhav ek number 30 do number 25","kind":"bhav","say":"Pollachi: I ₹30, II ₹25","bhav":[{"maal":"Pollachi","grade":"I","rate":30},{"maal":"Pollachi","grade":"II","rate":25}]}
+Heard (Focus: grahak Om Prakash b9011): "uska ledger bhi bhej do WhatsApp pe" → {"transcript":"uska ledger bhi bhej do WhatsApp pe","kind":"whatsapp","say":"Om Prakash ko khata WhatsApp","buyer":"b9011","buyer_name":"Om Prakash","heard":"Om Prakash"}
 Heard: "Ramesh ko udhaar WhatsApp pe bhej do" → {"transcript":"Ramesh ko udhaar WhatsApp pe bhej do","kind":"whatsapp","say":"Ramesh Kumar ko udhaar WhatsApp","buyer":"b9009","buyer_name":"Ramesh Kumar"}
 Heard: "Jagriti Agro ka ledger download karo" → {"transcript":"Jagriti Agro ka ledger download karo","kind":"download","say":"Jagriti Agro ka ledger","buyer":"b9005","buyer_name":"Jagriti Agro","download":{"report":"ledger","format":"pdf"}}
 `.trim();
@@ -212,6 +229,8 @@ const LANG_NOTE: Record<string, string> = {
 
 export interface TurnInput {
   context: string;
+  /** Who or what they were just talking about, for "uska", "wahi" (website). */
+  focus?: string;
   screen: string;
   draft?: string;
   history?: { q: string; a: string }[];
@@ -222,6 +241,7 @@ export interface TurnInput {
 /** The user turn: shop data first, then the moment (screen, draft, last turns), then what was said. */
 export function userText(t: TurnInput): string {
   const parts = [`# Shop data\n${t.context.trim()}`, `# Now\nScreen: ${t.screen || 'home'}\n${LANG_NOTE[t.lang]}`];
+  if (t.focus?.trim()) parts.push(`# Focus\n${t.focus.trim()}`);
   if (t.draft?.trim()) parts.push(`# DRAFT (the slip on screen, being corrected)\n${t.draft.trim()}`);
   if (t.history?.length) parts.push(`# Earlier in this conversation\n${t.history.map((h) => `They: ${h.q}\nYou: ${h.a}`).join('\n')}`);
   parts.push(t.text ? `# They typed\n${t.text}` : '# They said (recording follows)');
