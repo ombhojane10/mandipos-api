@@ -1,5 +1,5 @@
 import {
-  Body, CanActivate, Controller, ExecutionContext, ForbiddenException, Get, HttpCode, Injectable, Param, Post, Query, Res,
+  Body, CanActivate, Controller, Delete, ExecutionContext, ForbiddenException, Get, HttpCode, Injectable, Param, Post, Query, Res,
   UnauthorizedException, UseGuards, createParamDecorator,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -16,6 +16,7 @@ import { SettingsService } from './settings.service';
 import { InsightsService } from './insights.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
+import { RemindersService } from '../alerts/reminders.service';
 import { GeminiClient } from '../voice/gemini.client';
 
 const SpeakBody = z.object({ text: z.string().trim().min(1).max(500) });
@@ -163,7 +164,7 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
-    private readonly alerts: UdhaarAlertsService,
+    private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService,
   ) {}
 
   // ---------------------------------------------------------------- Bolo (voice), as on the terminal
@@ -338,6 +339,19 @@ export class AdminController {
   @HttpCode(200)
   whatsappSend(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string) {
     return this.alerts.sendNow(mine(v, id), parse(Id, buyerId), v.phone);
+  }
+
+  /** Reminders set by voice that are still to go, soonest first. */
+  @Get('shops/:id/reminders')
+  async reminderList(@See() v: Viewer, @Param('id') id: string) {
+    return { reminders: await this.reminders.upcoming(mine(v, id)) };
+  }
+
+  /** Cancel one before it goes. */
+  @Delete('shops/:id/reminders/:rid')
+  @HttpCode(204)
+  async reminderCancel(@See() v: Viewer, @Param('id') id: string, @Param('rid') rid: string) {
+    await this.reminders.cancel(mine(v, id), parse(Id, rid));
   }
 
   /** One parchi in full, as Tally opens a voucher. */

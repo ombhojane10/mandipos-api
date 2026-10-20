@@ -284,7 +284,15 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
   }
 
   /** Cloud API template send through the MandiPlus bot's number. */
-  private async sendTemplate(to: string, params: string[]): Promise<string> {
+  private sendTemplate(to: string, params: string[]): Promise<string> {
+    return this.template(to, config().UDHAAR_ALERT_TEMPLATE, params);
+  }
+
+  /**
+   * Any approved body-only template from the bot's number (the udhaar one, Bolo's reminder).
+   * Throws TemplateUnavailable while Meta has not approved it, so the caller can wait and retry.
+   */
+  async template(to: string, name: string, params: string[]): Promise<string> {
     const c = config();
     const res = await fetch(`https://graph.facebook.com/v21.0/${c.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
       method: 'POST',
@@ -292,13 +300,16 @@ export class UdhaarAlertsService implements OnApplicationBootstrap, OnModuleDest
       body: JSON.stringify({
         messaging_product: 'whatsapp', to, type: 'template',
         template: {
-          name: c.UDHAAR_ALERT_TEMPLATE, language: { code: c.UDHAAR_ALERT_LANG },
-          components: [{ type: 'body', parameters: params.map((text) => ({ type: 'text', text })) }],
+          name, language: { code: c.UDHAAR_ALERT_LANG },
+          // A parameter may not hold a line break or a run of spaces (Meta 132018).
+          components: [{ type: 'body', parameters: params.map((text) => ({ type: 'text', text: text.replace(/\s+/g, ' ').trim() || '-' })) }],
         },
       }),
     });
     const body = (await res.json().catch(() => ({}))) as { messages?: { id: string }[]; error?: { message?: string; code?: number } };
-    if (!res.ok || !body.messages?.[0]?.id) throw new Error(`WhatsApp ${res.status}: ${body.error?.code ?? ''} ${body.error?.message ?? 'no message id'}`);
+    const code = body.error?.code ?? 0;
+    if (code >= 132000 && code <= 132016) throw new TemplateUnavailable(`${code} ${body.error?.message ?? ''}`);
+    if (!res.ok || !body.messages?.[0]?.id) throw new Error(`WhatsApp ${res.status}: ${code} ${body.error?.message ?? 'no message id'}`);
     return body.messages[0].id;
   }
 }

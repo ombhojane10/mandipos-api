@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { AccountsService } from '../auth/accounts.service';
 import { Principal } from '../auth/tokens.service';
 import { AdminService } from '../admin/admin.service';
-import { EntriesService } from '../admin/entries.service';
+import { EntriesService, type Grade, type ParchiInput } from '../admin/entries.service';
 import { ReportsService } from '../admin/reports.service';
 import { BALANCES, n } from '../admin/sql';
 import { Db } from '../db/db.service';
@@ -12,8 +12,9 @@ import { ask } from './ask';
 import { GeminiClient } from './gemini.client';
 import { LIVE_BILLS } from '../admin/sql';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
+import { RemindersService, dueFrom, whenLabel } from '../alerts/reminders.service';
 import { fold, resolve, score, type Person, type Resolution } from './resolve';
-import { Sessions, phoneIn, yesNo, type Option, type Pending, type Session } from './session';
+import { Sessions, mentions, numberIn, phoneIn, yesNo, type Expect, type Option, type Pending, type Session } from './session';
 
 /** What the portal sends: the recording and the moment; the books are read here, not sent. */
 export const PortalTurnBody = z.object({
@@ -32,8 +33,12 @@ export const PortalTurnBody = z.object({
 });
 
 type Buyer = { id: string; name: string; code: string; phone: string; balancePaise: number };
-type Truck = { id: string; number: string; supplier: string; left: number; brand: string };
-type Books = { text: string; at: number; buyers: Map<string, Buyer>; trucks: Map<string, Truck>; day: string; brands: { id: string; name: string }[] };
+type Truck = { id: string; number: string; supplier: string; left: number; brand: string; brandId: string | null };
+type Books = {
+  text: string; at: number; buyers: Map<string, Buyer>; trucks: Map<string, Truck>; day: string; brands: { id: string; name: string }[]
+  /** Today's bhav by "brandId:grade", in paise. */
+  rates: Map<string, number>; suppliers: string[]
+};
 
 const PANNI = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'];
 const KATTA = ['Green', 'Jaipur', 'White'];
@@ -43,6 +48,27 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 /** "Ashu" ~ "Ashu Parchan"; enough to trust a ref the model also named. */
 const agrees = (a: string, b: string) => { const x = norm(a), y = norm(b); return !!x && !!y && (x.startsWith(y) || y.startsWith(x) || x.includes(y) || y.includes(x)); };
 const paise = (r: unknown) => (typeof r === 'number' && r > 0 ? Math.round(r * 100) : 0);
+const CANCEL: Option = { label: 'Rehne dein', value: 'cancel' };
+const gradeOf = (g?: string): Grade => (g === 'II' ? '2' : g === 'III' ? '3' : '1');
+const roman = (g: string) => (g === '2' ? 'II' : g === '3' ? 'III' : g === 'mix' ? 'Leak' : 'I');
+const rs = (p: number) => `₹${(p / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const titleCase = (n: string) => n.trim().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+/** A gaadi number as the books keep it: "mh 12 ab 3289" → "MH12AB3289". */
+const plate = (n: unknown) => String(n ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const PACKINGS = ['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni'] as const;
+
+type SlipSaid = {
+  lines?: { grade?: string; qty?: number; rate?: number; amount?: number }[]; leak?: { qty?: number; amount?: number }
+  packing?: string; panni?: string; katta_name?: string; kattas?: number; parchune?: boolean; delivery?: boolean; labour?: boolean
+};
+type SlipJob = { reply: Reply; heard: string; buyerId?: string; newGrahak?: boolean; walkIn?: boolean; truckId?: string; chooseTruck?: boolean; gaadiMiss?: string; qty?: number; rates?: Record<string, number>; cash?: number };
+type GaadiSaid = { number?: string; supplier?: string; maal?: string; lines?: { grade?: string; qty?: number; rate?: number }[]; freight?: number };
+type GaadiJob = {
+  reply: Reply; init?: boolean; number?: string; supplier?: string; maal?: string; brandId?: string; newMaal?: string
+  lines?: { grade: Grade; qty: number; ratePaise: number }[]; freightPaise?: number
+};
+type YaadSaid = { what?: string; day?: number; date?: string; time?: string; after_minutes?: number; part?: string; send_udhaar?: boolean; list?: boolean; cancel?: boolean };
+type YaadJob = { reply: Reply; heard: string; at?: string; buyerId?: string; skipBuyer?: boolean };
 
 /**
  * Bolo on the website. The terminal sends its own books with the recording; the portal has none,
@@ -59,7 +85,7 @@ export class PortalVoiceService {
   constructor(
     private readonly db: Db, private readonly voice: VoiceService, private readonly accounts: AccountsService,
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
-    private readonly gemini: GeminiClient, private readonly alerts: UdhaarAlertsService,
+    private readonly gemini: GeminiClient, private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService,
   ) {}
 
   /** Called when the mic opens: the books are ready by the time the person stops talking. */
@@ -100,9 +126,17 @@ export class PortalVoiceService {
   private async route(phone: string, shopId: string, s: Session, reply: Reply, books: Books, lang: z.infer<typeof PortalTurnBody>['lang'], p: Principal, shops: string[]) {
     const out: Record<string, unknown> = {};
     const heard = String(reply.heard ?? reply.buyer_name ?? '').trim();
+    // "Gaadi aayi hai" routed to the blank form: start the questions instead, unless they asked for the screen.
+    if (reply.kind === 'open' && reply.open === 'nayi_gaadi' && !/khol|screen|form|page|dikha/i.test(String(reply.transcript ?? ''))) reply.kind = 'gaadi';
     switch (reply.kind) {
       case 'whatsapp': case 'call': case 'grahak':
         return this.advance(phone, shopId, s, { job: reply.kind, expect: 'text', slot: 'buyer', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
+      case 'slip':
+        // A slip is made here, after one read-back; a delivery still needs the form for its address.
+        if (!((reply.slip ?? {}) as { delivery?: boolean }).delivery) return this.advance(phone, shopId, s, { job: 'slip', expect: 'text', slot: 'buyer', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
+        break;
+      case 'gaadi': return this.advance(phone, shopId, s, { job: 'gaadi', expect: 'text', slot: 'number', question: '', data: { reply }, tries: 0 }, undefined, shops);
+      case 'yaad': return this.advance(phone, shopId, s, { job: 'yaad', expect: 'text', slot: 'when', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
       case 'calc': return { answer: this.calc(reply) };
       case 'bhav': return this.bhav(phone, shopId, reply, books);
       default: break;
@@ -216,17 +250,34 @@ export class PortalVoiceService {
     if (!heard && body.audio) heard = await this.transcribe(q, body).catch(() => '');
     if (!heard) return { heard: '' };
     const yn = yesNo(heard);
+    const quit = /^(cancel|rehne do|rehne dein|chhodo|chhod do|mat karo|band karo)\b/i.test(heard.trim());
+    const cancel = q.options?.find((o) => o.value === 'cancel');
     if (q.expect === 'phone') {
       const ph = phoneIn(heard);
       if (ph) return { value: ph, heard };
-      if (yn === 'no') return { value: 'cancel', heard };
+      if (yn === 'no' || quit) return { value: 'cancel', heard };
+    }
+    if (q.expect === 'number') {
+      const x = numberIn(heard);
+      if (x !== null) return { value: String(x), heard };
+      if (yn === 'no' || quit) return { value: 'cancel', heard };
     }
     if (q.expect === 'yes' && yn) return { value: yn, heard };
+    if (q.expect === 'text') {
+      if (quit) return { value: 'cancel', heard };
+      // The exact name first ("Pollachi Traders" is not "Pollachi"), then the closest.
+      const exact = q.options?.find((o) => o.value !== 'cancel' && o.label.toLowerCase() === heard.toLowerCase());
+      const named = exact ?? q.options?.find((o) => o.value !== 'cancel' && score(heard, { name: o.label, code: '', phone: '' }) >= 0.75);
+      return { value: named?.value ?? heard, heard };
+    }
     if (q.expect === 'choice' && q.options?.length) {
-      if (/^(cancel|rehne|nahi|mat)/i.test(heard.trim()) || yn === 'no' && q.options.length <= 2) return { value: 'cancel', heard };
+      // An option named by its own words first ("nahi, pehle dikha" = Pehle dikhao), then no, then yes.
+      const said = q.options.find((o) => o.value !== 'cancel' && o.value !== 'yes' && mentions(heard, o.label));
+      if (said) return { value: said.value, heard };
+      if (quit || (yn === 'no' && (cancel || q.options.length <= 2))) return { value: 'cancel', heard };
+      if (yn === 'yes' && (q.options[0].value === 'yes' || q.options.length <= 3)) return { value: q.options[0].value, heard };
       const nth = ['pehla', 'pahla', 'first', 'ek', 'doosra', 'dusra', 'second', 'do', 'teesra', 'tisra', 'third', 'teen'].findIndex((w) => new RegExp(`\\b${w}\\b`, 'i').test(heard));
-      if (nth >= 0) { const o = q.options[Math.floor(nth / 4)]; if (o) return { value: o.value, heard } }
-      if (yn === 'yes' && q.options.length <= 3) return { value: q.options[0].value, heard };
+      if (nth >= 0 && q.options[0].value !== 'yes') { const o = q.options[Math.floor(nth / 4)]; if (o) return { value: o.value, heard } }
       const best = q.options.map((o) => ({ o, sc: score(heard, { name: o.label.replace(/\(.*\)|·.*$/g, ''), code: '', phone: '' }) }))
         .sort((a, b) => b.sc - a.sc)[0];
       if (best && best.sc >= 0.6) return { value: best.o.value, heard };
@@ -256,8 +307,12 @@ export class PortalVoiceService {
     const reply = data.reply;
     s.pending = undefined;
     if (value === 'cancel' || value === 'no') return { say: 'Theek hai, rehne diya', reply: { transcript: '', kind: 'answer', say: 'Theek hai, rehne diya' } };
+    if (q.job === 'slip') return this.slipStep(phone, shopId, s, q, value);
+    if (q.job === 'gaadi') return this.gaadiStep(phone, shopId, s, q, value);
+    if (q.job === 'yaad') return this.yaadStep(phone, shopId, s, q, value);
     if (q.slot === 'buyer' && value) {
-      if (value.startsWith('go:')) { const [, sid, bid] = value.split(':'); data.shopId = sid; data.buyerId = bid; }
+      if (q.expect === 'text') data.heard = value;
+      else if (value.startsWith('go:')) { const [, sid, bid] = value.split(':'); data.shopId = sid; data.buyerId = bid; }
       else if (value === 'new') data.newGrahak = true;
       else data.buyerId = value;
     }
@@ -279,7 +334,9 @@ export class PortalVoiceService {
     if (!data.buyerId && !data.newGrahak) {
       if (q.job === 'grahak' && g.new) data.newGrahak = true;
       else {
-        const r = data.heard ? this.who(data.heard, books, reply) : (s.focus.buyerId ? { kind: 'one' as const, who: books.buyers.get(this.refOf(books, s.focus.buyerId))!, sure: true } : { kind: 'none' as const });
+        // No name and nobody in focus ("…ko ledger bhejde" with the name cut off): ask whose.
+        if (!data.heard && !s.focus.buyerId) return this.ask(s, q, data, 'buyer', 'text', q.job === 'call' ? 'Kisko call karein? Naam boliye' : 'Kisko bhejein? Grahak ka naam boliye', [CANCEL]);
+        const r = data.heard ? this.who(data.heard, books, reply) : { kind: 'one' as const, who: books.buyers.get(this.refOf(books, s.focus.buyerId!))!, sure: true };
         if (r.kind === 'some') return this.askBuyer(s, q, r.options, data.heard);
         if (r.kind === 'none' || !r.who) return this.notFound(s, target, data.heard || 'Grahak', shops, q);
         data.buyerId = r.who.id;
@@ -334,7 +391,14 @@ export class PortalVoiceService {
     }
     if (q.job === 'call') return { call: { phone: mobile, name: b.name }, say: `${b.name} ko call laga rahe hain` };
 
-    // whatsapp: their udhaar (and khata PDF) from the MandiPlus number, now.
+    // whatsapp: read back once — who, which number, how much — and send on a yes. A grahak's
+    // phone buzzing is not undoable, so a misheard name or a "pehle dikha" never sends.
+    if (q.slot === 'confirm' && value === 'show') return data.shopId && data.shopId !== shopId ? { go: { shopId: data.shopId, buyerId: b.id } } : { whatsapp: { buyerId: b.id, name: b.name } };
+    if (q.slot !== 'confirm' || value !== 'yes') {
+      const amt = `₹${Math.round(b.balancePaise / 100).toLocaleString('en-IN')}`;
+      return this.ask(s, q, data, 'confirm', 'choice', `${b.name} (${mobile}) ko ${amt} udhaar aur khata WhatsApp karein?`,
+        [{ label: 'Haan, bhejo', value: 'yes' }, { label: 'Pehle dikhao', value: 'show' }, CANCEL]);
+    }
     try {
       const sent = await this.alerts.sendNow(target, b.id, phone);
       const amt = `₹${Math.round(sent.duePaise / 100).toLocaleString('en-IN')}`;
@@ -342,6 +406,292 @@ export class PortalVoiceService {
     } catch (e) {
       return { say: (e as Error).message || 'WhatsApp nahi gaya, thodi der baad phir boliye' };
     }
+  }
+
+  /**
+   * Ask the next thing a job needs; the job waits in the session for the answer. The same
+   * question missed three times gives up politely instead of looping.
+   */
+  private ask(s: Session, q: Pending, data: object, slot: Pending['slot'], expect: Expect, question: string, options: Option[] = [], detail?: string[]) {
+    const tries = q.slot === slot && q.question ? q.tries + 1 : 0;
+    if (tries >= 3) { s.pending = undefined; return { say: 'Samajh nahi aaya. Ek baar poori baat phir se boliye.' }; }
+    s.pending = { job: q.job, data: data as Record<string, unknown>, slot, expect, question, options, detail, tries };
+    return { ask: { question, expect, options, ...(detail?.length ? { detail } : {}) } };
+  }
+
+  // ---------------------------------------------------------------- a parchi, made by Bolo
+
+  /**
+   * "Khurshid ji ko 1300 ek number 40 ke, fatafat bill kaat de": who (a close name is asked, a
+   * new one becomes a new grahak), which gaadi (the only one with enough dana, else a question),
+   * each rate (as said, else today's bhav, else a question), then the slip read back once —
+   * "haan" makes it exactly as the parchi form does (and it prints), "form" opens it there.
+   */
+  private async slipStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined): Promise<Record<string, unknown>> {
+    const d = q.data as unknown as SlipJob;
+    const r = d.reply;
+    const sl = (r.slip ?? {}) as SlipSaid;
+    const pay = (r.pay ?? {}) as { mode?: string; cash?: number; upi?: number };
+    const books = await this.books(shopId);
+    if (value !== undefined) {
+      if (q.slot === 'buyer') { if (value === 'new') d.newGrahak = true; else if (value === 'cash') d.walkIn = true; else if (q.expect === 'text') d.heard = value; else d.buyerId = value; }
+      if (q.slot === 'gaadi') {
+        // A tap carries the id; a spoken or typed number ("3289", "AP39 wali") is matched on the plate.
+        const said = plate(value).replace(/(WALI|WALA|GAADI|SE)+$/, '');
+        const digits = said.replace(/\D/g, '');
+        const hit = [...books.trucks.values()].filter((t) => t.id === value
+          || (/\d/.test(said) && said.length >= 3 && (plate(t.number).includes(said) || (digits.length >= 3 && plate(t.number).replace(/\D/g, '').endsWith(digits)))));
+        if (hit.length === 1) d.truckId = hit[0].id; else d.gaadiMiss = value;
+      }
+      if (q.slot === 'qty') d.qty = numberIn(value) ?? undefined;
+      if (q.slot === 'confirm' && value === 'gaadi') { d.truckId = undefined; d.chooseTruck = true; }
+      if (q.slot === 'cash') d.cash = numberIn(value) ?? undefined;
+      if (q.slot === 'rate') { const x = numberIn(value); const g = String(q.data.grade ?? '1'); if (x) d.rates = { ...d.rates, [g]: x }; }
+    }
+
+    // What was sold.
+    const lines: { grade: Grade; qty: number; ratePaise: number; said: boolean }[] = (sl.lines ?? []).filter((l) => (l.qty ?? 0) > 0).map((l) => {
+      const said = paise(l.rate) || (l.amount ? Math.round(paise(l.amount) / l.qty!) : 0);
+      return { grade: gradeOf(l.grade), qty: Math.round(l.qty!), ratePaise: said, said: said > 0 };
+    });
+    if (sl.leak?.qty) lines.push({ grade: 'mix', qty: Math.round(sl.leak.qty), ratePaise: sl.leak.amount ? Math.round(paise(sl.leak.amount) / sl.leak.qty) : 0, said: !!sl.leak.amount });
+    if (!lines.length && d.qty) lines.push({ grade: '1', qty: Math.round(d.qty), ratePaise: 0, said: false });
+    if (!lines.length) return this.ask(s, q, d, 'qty', 'number', 'Kitne dana?', [CANCEL]);
+
+    // Who.
+    const free = pay.mode === 'free';
+    if (!d.buyerId && !d.newGrahak && !d.walkIn) {
+      const name = (d.heard || String(r.buyer_name ?? '')).trim();
+      if (!name || /^(cash|nakad|nagad)\b/i.test(name)) {
+        if (pay.mode === 'udhaar' || pay.mode === 'after') return this.ask(s, q, d, 'buyer', 'text', 'Kiske naam likhein? Grahak ka naam boliye', [CANCEL]);
+        d.walkIn = true;
+      } else {
+        const found = this.who(name, books, r);
+        if (found.kind === 'one') d.buyerId = found.who.id;
+        else if (found.kind === 'some') return this.askBuyer(s, { job: 'slip', data: d as unknown as Record<string, unknown> }, found.options, name, true);
+        else { d.newGrahak = true; d.heard = name; }
+      }
+    }
+    const buyer = d.buyerId ? [...books.buyers.values()].find((b) => b.id === d.buyerId) ?? null : null;
+    const newName = titleCase(d.heard || String(r.buyer_name ?? ''));
+    const who = d.walkIn ? 'Cash grahak' : buyer ? buyer.name : `${newName} (naya grahak)`;
+
+    // Which gaadi.
+    const want = lines.reduce((a, l) => a + l.qty, 0);
+    const open = [...books.trucks.values()];
+    if (!d.truckId) {
+      const named = this.truck(r, books);
+      const fits = open.filter((t) => t.left >= want);
+      // Not named: always asked — the maal can come on any vehicle, day to day. Only a shop with
+      // one open gaadi has nothing to choose.
+      if (named && !d.chooseTruck) d.truckId = named.id;
+      else if (!open.length) return { say: 'Koi khuli gaadi nahi hai. Pehle gaadi jodiye, jaise "nayi gaadi 3289, 500 dana".' };
+      else if (open.length === 1 && !r.gaadi_no && !d.chooseTruck) d.truckId = open[0].id;
+      else {
+        const miss = d.gaadiMiss ?? (r.gaadi_no ? String(r.gaadi_no) : '');
+        d.gaadiMiss = undefined;
+        const why = miss ? `Gaadi ${miss} khuli nahi mili. ` : !fits.length ? `Kisi ek gaadi mein ${want} dana nahi bache. ` : '';
+        return this.ask(s, q, d, 'gaadi', 'text', `${why}Kaun si gaadi se? Gaadi number boliye`,
+          [...(fits.length ? fits : open).slice(0, 6).map((t) => ({ label: `${t.number} · ${t.brand || 'maal'} · ${t.left.toLocaleString('en-IN')} bache`, value: t.id })), CANCEL]);
+      }
+    }
+    const truck = open.find((t) => t.id === d.truckId);
+    if (!truck) return { say: 'Woh gaadi ab khuli nahi hai. Phir se boliye.' };
+    if (truck.left < want) return { say: `Gaadi ${truck.number} mein sirf ${truck.left.toLocaleString('en-IN')} dana bache hain, ${want.toLocaleString('en-IN')} ki parchi nahi banegi.` };
+
+    // Rates: as said, else what they just told us, else today's bhav, else ask.
+    if (!free) {
+      for (const l of lines) {
+        if (l.ratePaise) continue;
+        const told = d.rates?.[l.grade];
+        l.ratePaise = told ? Math.round(told * 100) : (truck.brandId ? books.rates.get(`${truck.brandId}:${l.grade}`) ?? 0 : 0);
+      }
+      const missing = lines.find((l) => !l.ratePaise);
+      if (missing) {
+        q.data.grade = missing.grade;
+        return this.ask(s, { ...q, data: { ...d, grade: missing.grade } }, { ...d, grade: missing.grade }, 'rate', 'number',
+          lines.length > 1 ? `${roman(missing.grade)} number ka rate kya hai? (ek dana ka)` : 'Rate kya hai? (ek dana ka)', [CANCEL]);
+      }
+    }
+
+    // How it is paid: as said; else a named grahak is udhaar and a walk-in pays cash, as on the terminal.
+    const goods = free ? 0 : lines.reduce((a, l) => a + l.qty * l.ratePaise, 0);
+    const mode = pay.mode || (d.walkIn ? 'cash' : 'udhaar');
+    let cashPaise = 0, upiPaise = 0;
+    if (mode === 'mixed') {
+      cashPaise = paise(pay.cash) || (d.cash ? Math.round(d.cash * 100) : 0); upiPaise = paise(pay.upi);
+      // "Aadha cash aadha online" with no amounts: how much was cash; the rest is online.
+      if (!cashPaise && !upiPaise) return this.ask(s, q, d, 'cash', 'number', `Kul ${rs(goods)}. Kitna cash mila? (baaki online)`, [CANCEL]);
+      if (cashPaise && !upiPaise) upiPaise = Math.max(0, goods - cashPaise);
+      if (upiPaise && !cashPaise) cashPaise = Math.max(0, goods - upiPaise);
+    }
+    const payWord = mode === 'udhaar' ? 'udhaar' : mode === 'cash' ? 'cash' : mode === 'upi' ? 'UPI' : mode === 'free' ? 'free'
+      : mode === 'after' ? 'paisa aane ke baad' : `cash ${rs(cashPaise)} + UPI ${rs(upiPaise)}`;
+    const packing = (PACKINGS as readonly string[]).includes(sl.packing ?? '') ? sl.packing as ParchiInput['packing'] : 'loose';
+    const bhavUsed = lines.some((l) => !l.said && !d.rates?.[l.grade]);
+    const detail = [
+      `${who} · gaadi ${truck.number}`,
+      ...lines.map((l) => `${roman(l.grade)}: ${l.qty.toLocaleString('en-IN')} dana × ${rs(l.ratePaise)}${!l.said && !d.rates?.[l.grade] ? ' (aaj ka bhav)' : ''}`),
+      `Kul ${rs(goods)} · ${payWord}${packing !== 'loose' ? ` · ${packing.replace(/(\d+)/, ' $1')}` : ''}`,
+    ];
+
+    if (q.slot === 'confirm' && value === 'form') {
+      const ref = buyer ? this.refOf(books, buyer.id) : '';
+      const draft = this.draft({ ...r, buyer: ref || (d.walkIn ? null : 'new'), buyer_name: buyer?.name ?? (d.walkIn ? '' : newName), gaadi: [...books.trucks.entries()].find(([, t]) => t.id === truck.id)?.[0] ?? null, gaadi_no: truck.number } as Reply, books);
+      return { draft: { ...draft, truckId: truck.id, lines: lines.map(({ said: _s, ...l }) => l) } };
+    }
+    if (q.slot !== 'confirm' || value !== 'yes') {
+      return this.ask(s, q, d, 'confirm', 'choice', `${who}, ${want.toLocaleString('en-IN')} dana, kul ${rs(goods)} ${payWord}${bhavUsed ? ' (aaj ke bhav se)' : ''}. Parchi kaat dein?`,
+        [{ label: 'Haan, kaato', value: 'yes' }, ...(open.length > 1 ? [{ label: 'Gaadi badlo', value: 'gaadi' }] : []), { label: 'Form mein kholo', value: 'form' }, CANCEL], detail);
+    }
+
+    const input: ParchiInput = {
+      buyerId: buyer?.id, buyerName: d.walkIn ? 'Cash' : buyer ? undefined : newName, truckId: truck.id,
+      lines: lines.map(({ said: _s, ...l }) => l),
+      pay: mode === 'udhaar' ? 'credit' : mode === 'mixed' ? 'split' : mode as ParchiInput['pay'], cashPaise, upiPaise,
+      packing, panniName: PANNI.find((k) => agrees(k, sl.panni ?? '')) ?? '', kattaName: KATTA.find((k) => agrees(k, sl.katta_name ?? '')) ?? '',
+      parchune: !!sl.parchune, ...(sl.labour ? { labour: true } : {}),
+    };
+    try {
+      const made = await this.entries.parchi(phone, shopId, input);
+      this.cache.delete(shopId);
+      const name = buyer?.name ?? (d.walkIn ? 'Cash' : newName);
+      if (made.buyerId) s.focus = { buyerId: made.buyerId, buyerName: name, billId: made.billId, slipNo: made.slipNo };
+      return { say: `Parchi #${made.slipNo} ban gayi: ${name}, ${rs(goods)} ${payWord}${made.printing ? '. Print ho rahi hai' : ''}`, saved: { billId: made.billId, slipNo: made.slipNo } };
+    } catch (e) {
+      return { say: (e as Error).message || 'Parchi nahi bani, phir se boliye' };
+    }
+  }
+
+  // ---------------------------------------------------------------- a gaadi, added by Bolo
+
+  /**
+   * "Ek gaadi add kar, Pollachi ki, 3289, 15000 dana ek number, 200 do number": number, dana and
+   * maal are needed and asked for; the supplier is asked once with the usual ones as choices (or
+   * left for later); then the gaadi is read back and added on a yes, as the Nayi gaadi form adds it.
+   */
+  private async gaadiStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined): Promise<Record<string, unknown>> {
+    const d = q.data as unknown as GaadiJob;
+    const books = await this.books(shopId);
+    if (!d.init) {
+      const g = (d.reply.nayi_gaadi ?? {}) as GaadiSaid;
+      d.init = true;
+      d.number = plate(g.number) || undefined;
+      d.supplier = g.supplier?.trim() || undefined;
+      d.maal = g.maal?.trim() || undefined;
+      d.lines = (g.lines ?? []).filter((l) => (l.qty ?? 0) > 0).map((l) => ({ grade: gradeOf(l.grade), qty: Math.round(l.qty!), ratePaise: paise(l.rate) }));
+      d.freightPaise = paise(g.freight);
+    }
+    if (value !== undefined) {
+      if (q.slot === 'number') { const n = plate(value); if (/\d{2,}/.test(n)) d.number = n; }
+      if (q.slot === 'qty') { const x = numberIn(value); if (x) d.lines = [{ grade: '1', qty: Math.round(x), ratePaise: 0 }]; }
+      if (q.slot === 'maal') { if (value.startsWith('id:')) d.brandId = value.slice(3); else d.maal = value; }
+      if (q.slot === 'supplier') d.supplier = value === 'skip' ? '' : value;
+    }
+    if (!d.number) return this.ask(s, q, d, 'number', 'text', 'Gaadi ka number boliye (jaise 3289)', [CANCEL]);
+    if (!d.lines?.length) return this.ask(s, q, d, 'qty', 'number', `Gaadi ${d.number} mein kitne dana aaye?`, [CANCEL]);
+    if (!d.brandId && !d.newMaal) {
+      const m = d.maal ? books.brands.map((b) => ({ b, sc: score(d.maal!, { name: b.name, code: '', phone: '' }) })).sort((a, b) => b.sc - a.sc)[0] : null;
+      if (m && m.sc >= 0.6) d.brandId = m.b.id;
+      else if (d.maal) d.newMaal = titleCase(d.maal);
+      else if (books.brands.length === 1) d.brandId = books.brands[0].id;
+      else return this.ask(s, q, d, 'maal', books.brands.length ? 'text' : 'text', 'Kaun sa maal hai?',
+        [...books.brands.slice(0, 6).map((b) => ({ label: b.name, value: `id:${b.id}` })), CANCEL]);
+    }
+    if (d.supplier === undefined) {
+      return this.ask(s, q, d, 'supplier', 'text', 'Supplier kaun hai?', [...books.suppliers.slice(0, 4).map((x) => ({ label: x, value: x })), { label: 'Baad mein', value: 'skip' }]);
+    }
+    const known = d.supplier ? books.suppliers.find((x) => x.toLowerCase() === d.supplier!.toLowerCase())
+      ?? books.suppliers.find((x) => score(d.supplier!, { name: x, code: '', phone: '' }) >= 0.75) : undefined;
+    const supplier = known ?? titleCase(d.supplier);
+    const maal = d.brandId ? books.brands.find((b) => b.id === d.brandId)?.name ?? 'Maal' : d.newMaal!;
+    const total = d.lines.reduce((a, l) => a + l.qty, 0);
+    const dup = [...books.trucks.values()].find((t) => plate(t.number) === d.number);
+    const detail = [
+      `Gaadi ${d.number} · ${maal}${d.newMaal ? ' (naya maal)' : ''}`,
+      ...d.lines.map((l) => `${roman(l.grade)}: ${l.qty.toLocaleString('en-IN')} dana${l.ratePaise ? ` × ${rs(l.ratePaise)}` : ''}`),
+      `Supplier: ${supplier || 'baad mein'}${d.freightPaise ? ` · bhada ${rs(d.freightPaise)}` : ''}`,
+    ];
+    if (q.slot !== 'confirm' || value !== 'yes') {
+      return this.ask(s, q, d, 'confirm', 'choice', `${dup ? `Gaadi ${d.number} pehle se khuli hai! ` : ''}Nayi gaadi ${d.number}, ${maal}, ${total.toLocaleString('en-IN')} dana. Jod dein?`,
+        [{ label: 'Haan, jodo', value: 'yes' }, CANCEL], detail);
+    }
+    try {
+      const made = await this.entries.gaadi(phone, shopId, {
+        number: d.number, supplier, freightPaise: d.freightPaise || undefined,
+        lots: d.lines.map((l) => ({ ...(d.brandId ? { brandId: d.brandId } : { brandName: d.newMaal }), grade: l.grade, qty: l.qty, ratePaise: l.ratePaise })),
+      });
+      this.cache.delete(shopId);
+      return { say: `Gaadi ${d.number} jud gayi: ${maal}, ${total.toLocaleString('en-IN')} dana`, saved: { truckId: made.truckId } };
+    } catch (e) {
+      return { say: (e as Error).message || 'Gaadi nahi judi, phir se boliye' };
+    }
+  }
+
+  // ---------------------------------------------------------------- yaad dilana (reminders)
+
+  /**
+   * "Kal mujhe Afzal se 20000 lene ka yaad dilana": saved for the moment worked out from what was
+   * said (a day with no time is 9 a.m.), read back from what was saved, and sent on WhatsApp to the
+   * person who asked. "Afzal ko kal udhaar WhatsApp kar dena" sends the grahak their udhaar then.
+   * Also lists what is pending and cancels one.
+   */
+  private async yaadStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined): Promise<Record<string, unknown>> {
+    const d = q.data as unknown as YaadJob;
+    const y = (d.reply.yaad ?? {}) as YaadSaid;
+    const what = (y.what || '').trim();
+
+    if (y.list) {
+      const all = await this.reminders.upcoming(shopId);
+      return { answer: {
+        title: 'Yaad (reminders)', columns: ['kab', 'kya'], rows: all.map((x) => ({ kab: x.label, kya: x.what })),
+        say: all.length ? `${all.length} yaad baaki. Sabse pehle: ${all[0].label} — ${all[0].what}` : 'Koi yaad baaki nahi hai',
+        speak: '',
+      } };
+    }
+    if (y.cancel) {
+      const all = await this.reminders.upcoming(shopId);
+      const text = what || d.heard;
+      let hit = value?.startsWith('rid:') ? all.filter((x) => x.id === value.slice(4)) : text
+        ? all.filter((x) => fold(x.what).includes(fold(text)) || score(text, { name: x.what, code: '', phone: '' }) >= 0.6) : all;
+      if (!hit.length && all.length === 1 && !text) hit = all;
+      if (!hit.length) return { say: all.length ? 'Aisa koi yaad nahi mila' : 'Koi yaad baaki nahi hai' };
+      if (hit.length > 1) return this.ask(s, q, d, 'pick', 'choice', 'Kaun sa yaad hatayein?', [...hit.slice(0, 5).map((x) => ({ label: `${x.label} · ${x.what}`, value: `rid:${x.id}` })), CANCEL]);
+      await this.reminders.cancel(shopId, hit[0].id);
+      return { say: `Hata diya: ${hit[0].label} — ${hit[0].what}`, saved: { reminder: hit[0].id } };
+    }
+
+    if (!what) return { say: 'Kis baat ka yaad dilayein? Poora boliye, jaise "kal subah Afzal se paise lene ka yaad dilana".' };
+    if (q.slot === 'when' && value?.startsWith('at:')) d.at = value.slice(3);
+    if (q.slot === 'buyer' && value) { if (value === 'skip') d.skipBuyer = true; else d.buyerId = value; }
+    const now = new Date();
+    const due = d.at ? { at: new Date(d.at), label: whenLabel(new Date(d.at), now) } : dueFrom(y, now);
+    if ('ask' in due) {
+      const opts: Option[] = [];
+      const ist = new Date(now.getTime() + 330 * 60_000);
+      const at = (dayOff: number, h: number) => new Date(Date.parse(`${new Date(ist.getTime() + dayOff * 86_400_000).toISOString().slice(0, 10)}T${String(h).padStart(2, '0')}:00:00Z`) - 330 * 60_000);
+      opts.push({ label: '1 ghante baad', value: `at:${new Date(now.getTime() + 3_600_000).toISOString()}` });
+      if (ist.getUTCHours() < 17) opts.push({ label: 'Aaj shaam 6 baje', value: `at:${at(0, 18).toISOString()}` });
+      opts.push({ label: 'Kal subah 9 baje', value: `at:${at(1, 9).toISOString()}` }, CANCEL);
+      return this.ask(s, q, d, 'when', 'choice', due.ask === 'past' ? 'Woh samay nikal gaya. Kab yaad dilayein?' : due.ask === 'far' ? 'Itne aage ka yaad nahi rakh sakte. Kab dilayein?' : 'Kab yaad dilayein?', opts);
+    }
+
+    // A grahak it is about: their udhaar goes in the reminder (or to them, when asked).
+    const books = await this.books(shopId);
+    if (d.heard && !d.buyerId && !d.skipBuyer) {
+      const found = this.who(d.heard, books, d.reply);
+      if (found.kind === 'one') d.buyerId = found.who.id;
+      else if (found.kind === 'some' && y.send_udhaar) return this.ask(s, q, d, 'buyer', 'choice', `Kaun sa ${d.heard}?`,
+        [...found.options.slice(0, 4).map((o) => ({ label: o.name, value: o.id })), { label: 'Koi grahak nahi', value: 'skip' }]);
+    }
+    const buyer = d.buyerId ? [...books.buyers.values()].find((b) => b.id === d.buyerId) : undefined;
+    const toGrahak = !!y.send_udhaar && !!buyer && /^[6-9]\d{9}$/.test(buyer.phone);
+    if (!/^[6-9]\d{9}$/.test(phone)) return { say: 'Aapka mobile number sahi nahi hai, yaad nahi rakh sakte' };
+    const saved = await this.reminders.create(shopId, phone, { toPhone: phone, what, at: due.at, buyerId: buyer?.id ?? null, action: toGrahak ? 'udhaar_whatsapp' : 'note' });
+    const off = this.alerts.canSend() ? '' : ' (WhatsApp abhi band hai, website par dikhega)';
+    const where = toGrahak ? `${buyer!.name} ko udhaar WhatsApp jayega` : `WhatsApp ${phone} par aayega`;
+    const noPhone = y.send_udhaar && buyer && !toGrahak ? `. ${buyer.name} ka number nahi hai, isliye aapko yaad dilayenge` : '';
+    return { say: `Yaad rakhenge: ${saved.label} — ${saved.what}. ${where}${noPhone}${off}`, saved: { reminder: saved.id, dueAt: saved.dueAt } };
   }
 
   // ---------------------------------------------------------------- arithmetic and the day's bhav
@@ -414,7 +764,7 @@ export class PortalVoiceService {
     lines.push(`Date: ${today} (${weekday}).${day !== today ? ` Working day: ${day} (no slips yet today, so "aaj" means ${day} and "kal" the day before it).` : ''} Commodity: ${opts.commodity === 'amrud' ? 'amrud (guava), sold per box' : 'nariyal (tender coconut), sold per dana'}.`);
     opts.trucks.slice(0, 40).forEach((t, i) => {
       const ref = `g${i + 1}`;
-      trucks.set(ref, { id: t.id, number: t.number, supplier: t.supplier, left: t.left, brand: t.brand });
+      trucks.set(ref, { id: t.id, number: t.number, supplier: t.supplier, left: t.left, brand: t.brand, brandId: t.brandId });
       lines.push(`GAADI ${ref} | ${t.number} | ${t.brand || '-'} | supplier ${t.supplier || '-'} | left ${t.left}`);
     });
     // Every grahak is matched by the server; the model reads only the ones that are live —
@@ -430,7 +780,8 @@ export class PortalVoiceService {
     });
     if (opts.brands.length) lines.push(`MAAL: ${opts.brands.map((x) => x.name).join(', ')}`);
     lines.push(`PANNI: ${PANNI.join(', ')}`, `KATTA: ${KATTA.join(', ')} (10, 15 or 20 dana)`);
-    const books = { text: lines.join('\n'), at: Date.now(), buyers, trucks, day, brands: opts.brands };
+    const rates = new Map(opts.rates.map((x) => [`${x.brandId}:${x.grade}`, x.ratePaise] as const));
+    const books = { text: lines.join('\n'), at: Date.now(), buyers, trucks, day, brands: opts.brands, rates, suppliers: opts.suppliers };
     this.cache.set(shopId, books);
     return books;
   }
@@ -573,7 +924,15 @@ export class PortalVoiceService {
     const shown = result.columns ?? Object.keys(result.rows[0] ?? {}).filter((k) => k !== 'id' && !k.endsWith('_id'));
     if (result.rows.length <= 1 && shown.length <= 3) {
       const row = result.rows[0] ?? {};
-      const fmt = (k: string, v: unknown) => (typeof v === 'number' && /rakam|udhaar|kharid|bikri|baaki|amount|rupay|total|kul|jama|cash|upi/i.test(k) ? `₹${Math.round(v).toLocaleString('en-IN')}` : String(v ?? ''));
+      // Counts say what they count ("505 dana"); money is rupees; a rate keeps its paise.
+      const fmt = (k: string, v: unknown) => {
+        if (typeof v !== 'number') return String(v ?? '');
+        if (/dana|nag|qty|bacha$|bika$|aaya$|kharab$/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} dana`;
+        if (/parchiyan|count|ginti|kitne/i.test(k)) return Math.round(v).toLocaleString('en-IN');
+        if (/bhav|rate/i.test(k)) return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+        if (/rakam|udhaar|kharid|bikri|baaki|amount|rupay|total|kul|jama|cash|upi|munafa|kharcha/i.test(k)) return `₹${Math.round(v).toLocaleString('en-IN')}`;
+        return v.toLocaleString('en-IN');
+      };
       const say = result.rows.length ? `${title}: ${shown.map((k) => fmt(k, row[k])).filter(Boolean).join(', ')}` : `${title}: kuch nahi mila`;
       return { title, ...result, say, speak: say };
     }

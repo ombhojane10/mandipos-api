@@ -162,6 +162,8 @@ export function clean(v: unknown, key = ''): unknown {
     return Object.keys(out).length ? out : undefined;
   }
   if (typeof v === 'number') {
+    // A reminder's day 0 is "aaj", not nothing.
+    if (key === 'day' && v === 0) return 0;
     const max = BOUNDS[key] ?? 10_000_000;
     return Number.isFinite(v) && v > 0 && v <= max ? Math.round(v * 100) / 100 : undefined;
   }

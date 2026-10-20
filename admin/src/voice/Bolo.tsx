@@ -13,7 +13,7 @@ import { hush, speakText, unlock } from './player'
 import { toBase64, useRecorder } from './useRecorder'
 
 type Reply = { transcript: string; kind: string; say: string }
-type Ask = { question: string; expect: 'phone' | 'choice' | 'yes' | 'number' | 'text'; options: { label: string; value: string }[] }
+type Ask = { question: string; expect: 'phone' | 'choice' | 'yes' | 'number' | 'text'; options: { label: string; value: string }[]; detail?: string[] }
 type Turn = {
   session?: string | null; ask?: Ask; say?: string; call?: { phone: string; name: string }
   go?: { shopId: string; buyerId: string }; sent?: { buyerId: string }; saved?: unknown
@@ -186,6 +186,7 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
           {phase === 'ask' && asked && (
             <div className="bolo-ask">
               <div ref={orb} className="bolo-orb small" aria-hidden><MicIcon /></div>
+              {asked.detail?.length ? <div className="bolo-detail">{asked.detail.map((l, i) => <div key={i}>{l}</div>)}</div> : null}
               {asked.options.length > 0 && (
                 <div className="bolo-opts">
                   {asked.options.map((o) => <button key={o.value} type="button" className="btn line" onClick={() => void answer({ pick: o.value })}>{o.label}</button>)}

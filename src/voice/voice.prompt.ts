@@ -167,13 +167,18 @@ function schema(strict: boolean, portal = false) {
       grahak: obj({ name: str, phone: str, address: str, code: str, opening: num, new: bool }),
       calc: obj({ lines: { type: 'array', items: obj({ qty: num, rate: num }) }, amounts: { type: 'array', items: num } }),
       bhav: { type: 'array', items: obj({ maal: str, grade: oneOf('I', 'II', 'III'), rate: num }) },
+      nayi_gaadi: obj({ number: str, supplier: str, maal: str, lines: { type: 'array', items: obj({ grade: oneOf('I', 'II', 'III'), qty: int, rate: num }) }, freight: num }),
+      yaad: obj({
+        what: str, day: int, date: str, time: str, after_minutes: int, part: oneOf('subah', 'dopahar', 'shaam', 'raat'),
+        send_udhaar: bool, list: bool, cancel: bool,
+      }),
     } : {}),
   });
   return {
     type: 'object',
     properties: {
       transcript: str,
-      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp', 'grahak', 'call', 'calc', 'bhav'] : [])),
+      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp', 'grahak', 'call', 'calc', 'bhav', 'gaadi', 'yaad'] : [])),
       say: str, ...rest.properties,
     },
     required: ['transcript', 'kind', 'say', ...(strict ? Object.keys(rest.properties) : [])],
@@ -192,10 +197,13 @@ export const PORTAL_FALLBACK_SCHEMA = schema(false, true);
 export const PORTAL_GUIDE = `
 ## On the website: more kinds, and a conversation
 This is a conversation: "# Earlier in this conversation" and "# Focus" tell you who and what they were just talking about. "uska", "unko", "iska", "wahi" = the focus grahak or slip; "aur Ramesh ka?" = the same request for Ramesh.
-Never turn a request into a how-to "answer". If they asked for something to be DONE (send, save, call, change, make, set bhav, kholo, download), return that kind even when a detail is missing or a name is not on the list — the website asks for what is missing ("number batao", "kaun sa Om?") and then does it. "answer" is only for questions about how the app works.
+Never turn a request into a how-to "answer", and never into "open" when they asked for the thing itself. If they asked for something to be DONE (send, save, call, change, make a parchi, add a gaadi, set bhav, remind, kholo, download), return that kind even when a detail is missing or a name is not on the list — the website asks for what is missing ("kitne dana?", "kaun sa Om?", "kaun si gaadi?") one question at a time, reads it back, and does it on a "haan". "answer" is only for questions about how the app works.
+On the website a "slip" is MADE, not just drafted: "bill kaat do", "parchi bana do", "fatafat" all mean make it. Fill what they said; leave out what they did not (the website asks or uses today's bhav).
 Always put the grahak's name exactly as they said it in "heard" (Latin script), besides buyer / buyer_name.
 - "grahak": save a grahak's details or make a new one. grahak {name (only for a new one or a rename), phone (10 digits), address, code, opening (purana udhaar in rupees), new (true when they said naya / add karo / banao)}; buyer for an existing one. "Om ka number 9876543210 likh lo", "naya grahak Raju, number …, purana udhaar 5000".
 - "call": phone a grahak. buyer. "Om ko call lagao", "Raju ko phone karo".
+- "gaadi": a new truck of stock arrived — "gaadi add karo", "nayi gaadi", "gaadi aayi hai", "gaadi jod do". nayi_gaadi {number (as said: "3289", "MH12 3289"), maal (the maal name: Pollachi, Gujarat, V Kota…), supplier (the person/party who sent it, only if said), lines [{grade, qty = dana, rate = kharid bhav only if said}], freight (bhada) }. "15000 dana ek number, 200 do number" = two lines. Never "open nayi_gaadi" for this.
+- "yaad": a reminder for the person speaking, later — "mujhe yaad dilana", "remind karna", "kal batana", "bhool na jaun", and also "kal X 20000 dene wala hai, dhyaan rakhna". ("Wasim ko yaad dila do" with no later time means remind the GRAHAK of his dues now = "whatsapp".) yaad.what = what to remind, short Hinglish in their words with names and amounts ("Afzal se ₹20,000 lene hain", "Ramesh ko maal bhejna"). When: day = 0 aaj, 1 kal, 2 parson, N for "N din baad"; date (YYYY-MM-DD) for a named date or weekday ("15 tarikh", "somvar") worked out from the shop's Date; time "HH:MM" 24-hour only if a clock time was said ("5 baje shaam" = 17:00, "subah 7" = 07:00, "5 baje" alone in a shop = 17:00 if 1–7, else morning); part subah/dopahar/shaam/raat if said without a clock time; after_minutes for "1 ghante baad" (60), "aadhe ghante mein" (30). Leave every time field null when no time or day was said. send_udhaar = true only when they asked that the grahak be sent their udhaar/khata on WhatsApp at that time ("kal subah Om ko udhaar WhatsApp kar dena"). heard = the grahak's name if the reminder is about one. list = true for "mere reminder dikhao / kya kya yaad rakhna hai"; cancel = true for "Afzal wala reminder hata do" (what = the words that identify it).
 - "calc": arithmetic they asked for. calc.lines [{qty, rate}] for "15 dana 22 ke aur 8 dana 35 ke", calc.amounts for plain sums "500 aur 300 aur 1200". Never compute it yourself.
 - "bhav": set today's rate. bhav [{maal as said, grade I/II/III (I unless said), rate}]. "Aaj Pollachi ek number 30, do number 25", "V Kota ka bhav 28 kar do".
 
@@ -205,7 +213,7 @@ ${ASK_TABLES}
   Rules: SELECT only. Name the output columns in plain Hinglish (naam, udhaar, din, rakam, dana...). Rankings: ORDER BY and LIMIT 10 (LIMIT 1 when they asked for "sabse"). For a grahak named in speech use their exact naam from the shop data (WHERE naam = '...'), or ILIKE '%part%' when unsure. Dates: the working day for "aaj", the day before it for "kal"; din BETWEEN 'from' AND 'to' for a range. Never compute what a column already holds (udhaar is the balance). Average bhav = SUM(rakam) / SUM(dana) over parchi_line (weighted), never AVG(bhav). Round money to whole rupees, rates to 2 decimals. query.title: 2–5 words naming the answer ("Sabse kam udhaar").
 - "edit": change a slip that is already saved. edit.slip_no when they said the parchi number; otherwise buyer (ref) for that grahak's last slip; neither = the shop's last slip. edit.change = the change in their words ("rate 22 karo", "udhaar mein daalo", "50 dana aur jodo", "grahak Suresh karo").
 - "download": a report as a file. download.report: ledger (one grahak's khata — needs buyer) | daybook | outstanding (udhaar list) | cashbook | stock | register (bikri register) | suppliers | vasooli | gaadis | munafa | items; format pdf unless they said excel/sheet; from/to for a named period (else leave empty).
-- "whatsapp": send one grahak their udhaar on WhatsApp (with their khata PDF) ("Om ko udhaar WhatsApp pe bhejo", "Ramesh ko baaki ka message bhej do", "Wasim ko yaad dila do"). buyer (ref) and buyer_name are required; the website shows the message (with their khata PDF) and the owner presses send — so "say" never claims it was sent: "Om ko udhaar WhatsApp", never "bhej diya". Asking for their ledger/khata on WhatsApp is this too. Asking how much someone owes is "show", not this.
+- "whatsapp": send one grahak their udhaar on WhatsApp now (with their khata PDF) ("Om ko udhaar WhatsApp pe bhejo", "Ramesh ko baaki ka message bhej do", "Wasim ko abhi yaad dila do"). buyer (ref) and buyer_name; the website reads it back and sends on a "haan" — so "say" never claims it was sent: "Om ko udhaar WhatsApp", never "bhej diya". Asking for their ledger/khata on WhatsApp is this too. Asking how much someone owes is "show", not this. At a later time ("kal subah bhej dena") it is "yaad" with send_udhaar.
 
 Examples:
 Heard: "sabse kam udhaar kiska hai" → {"transcript":"sabse kam udhaar kiska hai","kind":"query","say":"Sabse kam udhaar","query":{"sql":"SELECT naam, udhaar FROM grahak WHERE udhaar > 0 ORDER BY udhaar ASC LIMIT 1","title":"Sabse kam udhaar"}}
@@ -218,6 +226,13 @@ Heard: "15 dana 22 ke aur 8 dana 35 ke, kitna hua" → {"transcript":"15 dana 22
 Heard: "aaj Pollachi ka bhav ek number 30 do number 25" → {"transcript":"aaj Pollachi ka bhav ek number 30 do number 25","kind":"bhav","say":"Pollachi: I ₹30, II ₹25","bhav":[{"maal":"Pollachi","grade":"I","rate":30},{"maal":"Pollachi","grade":"II","rate":25}]}
 Heard (Focus: grahak Om Prakash b9011): "uska ledger bhi bhej do WhatsApp pe" → {"transcript":"uska ledger bhi bhej do WhatsApp pe","kind":"whatsapp","say":"Om Prakash ko khata WhatsApp","buyer":"b9011","buyer_name":"Om Prakash","heard":"Om Prakash"}
 Heard: "Ramesh ko udhaar WhatsApp pe bhej do" → {"transcript":"Ramesh ko udhaar WhatsApp pe bhej do","kind":"whatsapp","say":"Ramesh Kumar ko udhaar WhatsApp","buyer":"b9009","buyer_name":"Ramesh Kumar"}
+Heard: "Sona Malik Khurshid ji 1500 dana ek number 50 ke, do number 1800 80 ke, fatafat bill kaat de" → {"transcript":"Sona Malik Khurshid ji 1500 dana ek number 50 ke, do number 1800 80 ke, fatafat bill kaat de","kind":"slip","say":"Khurshid Ji: I 1500 @ ₹50, II 1800 @ ₹80","buyer":"b9031","buyer_name":"Sona Malik Khurshid Ji","heard":"Sona Malik Khurshid ji","slip":{"lines":[{"grade":"I","qty":1500,"rate":50},{"grade":"II","qty":1800,"rate":80}]}}
+Heard: "ek gaadi add kar de Pollachi ki gaadi hai 3289, 15000 dana ek number, 200 dana do number" → {"transcript":"ek gaadi add kar de Pollachi ki gaadi hai 3289, 15000 dana ek number, 200 dana do number","kind":"gaadi","say":"Nayi gaadi 3289, Pollachi, 15200 dana","nayi_gaadi":{"number":"3289","maal":"Pollachi","lines":[{"grade":"I","qty":15000},{"grade":"II","qty":200}]}}
+Heard: "kal mujhe yaad dilana Afzal se 20000 lene hain" → {"transcript":"kal mujhe yaad dilana Afzal se 20000 lene hain","kind":"yaad","say":"Kal yaad dilayenge: Afzal se ₹20,000","heard":"Afzal","yaad":{"what":"Afzal se ₹20,000 lene hain","day":1}}
+Heard: "parson shaam 5 baje Ramesh ko udhaar WhatsApp kar dena" → {"transcript":"parson shaam 5 baje Ramesh ko udhaar WhatsApp kar dena","kind":"yaad","say":"Parson 5 baje Ramesh ko udhaar","buyer":"b9009","buyer_name":"Ramesh Kumar","heard":"Ramesh","yaad":{"what":"Ramesh ko udhaar WhatsApp","day":2,"time":"17:00","send_udhaar":true}}
+Heard: "kitne dana bache hain" → {"transcript":"kitne dana bache hain","kind":"show","say":"Bacha maal","views":[{"view":"stock"}]}
+Heard: "ek number kitna bacha hai" → {"transcript":"ek number kitna bacha hai","kind":"query","say":"Ek number bacha maal","query":{"sql":"SELECT SUM(bacha) AS bacha_dana FROM maal_stock WHERE grade = '1' AND khuli","title":"Ek number bacha"}}
+Heard: "15 tarikh ko kitni bikri hui" (Date 2026-10-21) → {"transcript":"15 tarikh ko kitni bikri hui","kind":"show","say":"15 Oct ki bikri","views":[{"view":"bikri","from":"2026-10-15","to":"2026-10-15"}]}
 Heard: "Jagriti Agro ka ledger download karo" → {"transcript":"Jagriti Agro ka ledger download karo","kind":"download","say":"Jagriti Agro ka ledger","buyer":"b9005","buyer_name":"Jagriti Agro","download":{"report":"ledger","format":"pdf"}}
 `.trim();
 

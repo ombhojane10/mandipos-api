@@ -28,6 +28,8 @@ const schema = z
     UDHAAR_ALERT_LANG: z.string().default('hi'),
     // The udhaar with the grahak's khata PDF attached (DOCUMENT header); falls back to the text one until approved.
     UDHAAR_PDF_TEMPLATE: z.string().default('udhaar_khata_pdf_v1'),
+    // Bolo's "kal mujhe yaad dilana": the reminder to the person who set it (UTILITY, hi).
+    REMINDER_TEMPLATE: z.string().default('pos_yaad_dilao_v1'),
     /**
      * Grahak eKYC through ULIP's DigiLocker APIs (same account as the MandiPlus backend).
      * Unset = the eKYC screen says it is not switched on. A staging URL means test KYCs:

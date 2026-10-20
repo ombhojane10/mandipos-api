@@ -73,6 +73,8 @@ export function Dashboard({ shopId }: { shopId: string }) {
             </div>
           </div>
 
+          <YaadCard shopId={shopId} />
+
           <div>
             <div className="card">
               <div className="hd"><h3>{t('Taaza entries')}</h3><a href={to('daybook')}>{t('Day Book')} ›</a></div>
@@ -114,6 +116,28 @@ export function Dashboard({ shopId }: { shopId: string }) {
         </div>
       )}
     </>
+  )
+}
+
+type Reminder = { id: string; what: string; label: string; action: 'note' | 'udhaar_whatsapp' }
+
+/** What Bolo was asked to remember ("kal yaad dilana"), still to go — shown only when there is any. */
+function YaadCard({ shopId }: { shopId: string }) {
+  const { data, reload } = useLoad(() => api<{ reminders: Reminder[] }>(`/v1/admin/shops/${shopId}/reminders`), [shopId])
+  if (!data?.reminders.length) return null
+  const cancel = async (id: string) => { await api(`/v1/admin/shops/${shopId}/reminders/${id}`, { method: 'DELETE' }).catch(() => {}); reload() }
+  return (
+    <div className="card">
+      <div className="hd"><h3>{t('Yaad (reminders)')}</h3></div>
+      <div className="bd lines-list">
+        {data.reminders.map((r) => (
+          <div key={r.id}>
+            <span className="grow"><b>{r.what}</b><small>{r.label}{r.action === 'udhaar_whatsapp' ? ` · ${t('grahak ko udhaar WhatsApp')}` : ` · ${t('aapko WhatsApp')}`}</small></span>
+            <button type="button" className="btn line" onClick={() => void cancel(r.id)}>{t('Hatayein')}</button>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

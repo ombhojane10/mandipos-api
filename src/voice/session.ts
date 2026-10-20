@@ -8,12 +8,14 @@ export type Expect = 'phone' | 'choice' | 'yes' | 'number' | 'text'
 export type Option = { label: string; value: string }
 export type Pending = {
   /** The job: what happens once the missing piece is in. */
-  job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open'
+  job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open' | 'slip' | 'gaadi' | 'yaad'
   /** What was asked and how to read the answer. */
   expect: Expect
-  slot: 'buyer' | 'phone' | 'confirm' | 'name'
+  slot: 'buyer' | 'phone' | 'confirm' | 'name' | 'gaadi' | 'qty' | 'rate' | 'number' | 'maal' | 'supplier' | 'when' | 'pick' | 'cash'
   question: string
   options?: Option[]
+  /** Lines shown under the question (the slip or gaadi being read back). */
+  detail?: string[]
   /** Everything known so far (the model's reply, resolved ids, the number given…). */
   data: Record<string, unknown>
   tries: number
@@ -53,12 +55,28 @@ export class Sessions {
   }
 }
 
-/** Yes / no in the ways a counter says it. */
+/** Yes / no in the ways a counter says it; both at once ("haan galti hui, kyun bheja") is neither. */
 export function yesNo(s: string): 'yes' | 'no' | null {
   const t = s.toLowerCase().replace(/[^a-zऀ-ॿ\s]/g, ' ').trim()
-  if (/\b(haan|han|ha|haa|ji|ok|okay|theek|thik|bilkul|bhejo|bhej do|kar do|yes|sahi|chalega|हाँ|हां|जी|ठीक)\b/.test(t)) return 'yes'
-  if (/\b(nahi|nahin|na|no|mat|ruko|cancel|rehne do|नहीं|ना|मत)\b/.test(t)) return 'no'
-  return null
+  const yes = /\b(haan|han|ha|haa|ji|ok|okay|theek|thik|bilkul|bhejo|bhej do|kar do|kaato|kaat do|jodo|jod do|banao|bana do|yes|sahi|chalega|हाँ|हां|जी|ठीक)\b/.test(t)
+  const no = /\b(nahi|nahin|no|mat|ruko|cancel|rehne do|rehne dein|galti|kyun|नहीं|मत)\b/.test(t)
+  // A bare "na" is no; after a yes it only softens it ("haan bhej na").
+  const na = /\b(na|ना)\b/.test(t)
+  return yes && !no ? 'yes' : (no || na) && !yes ? 'no' : null
+}
+
+/** Whether they named this option by one of its own words ("pehle dikha" → "Pehle dikhao"). */
+export function mentions(heard: string, label: string): boolean {
+  const h = ` ${heard.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')} `
+  return label.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+    .filter((w) => w.length >= 4 && !['haan', 'rehne', 'dein', 'bhejo', 'kaato', 'jodo'].includes(w))
+    .some((w) => h.includes(` ${w.slice(0, Math.max(4, w.length - 1))}`))
+}
+
+/** The first number in an answer: "1300", "13,00", "rate 40 rupaye" → 40. */
+export function numberIn(s: string): number | null {
+  const m = s.replace(/(\d),(\d)/g, '$1$2').match(/\d+(\.\d+)?/)
+  return m ? Number(m[0]) : null
 }
 
 /** Ten digits out of "nau zero do do…" already transcribed, or "98765 43210". */

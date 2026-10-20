@@ -43,7 +43,7 @@ beforeAll(async () => {
     JWT_SECRET: 'test-secret-test-secret-test-secret-123',
     OTP_HASH_SECRET: 'test-otp-secret-123',
     OTP_TEST_LOGINS: '9000000000:123456',
-    ADMIN_PHONES: '9022353647, 9022300000, 9000000000',
+    ADMIN_PHONES: '9876500077, 9022300000, 9000000000',
     ULIP_BASE_URL: 'https://ulip.staging.invalid/ulip/v1.0.0',
     ULIP_USERNAME: 'test',
     ULIP_PASSWORD: 'test',
@@ -555,6 +555,14 @@ describe('Bolo conversation', () => {
       'sohan ko udhaar bhejo': { kind: 'whatsapp', say: 'Sohan ko udhaar', heard: 'Sohan' },
       '15 dana 22 ke aur 8 dana 35 ke': { kind: 'calc', say: 'Hisab', calc: { lines: [{ qty: 15, rate: 22 }, { qty: 8, rate: 35 }] } },
       'naya grahak pappu number 9876500099 purana udhaar 500': { kind: 'grahak', say: 'Naya grahak Pappu', heard: 'Pappu', grahak: { name: 'Pappu', phone: '9876500099', opening: 500, new: true } },
+      'nayi gaadi 3289 pollachi 500 dana': { kind: 'gaadi', say: 'Nayi gaadi', nayi_gaadi: { number: '3289', maal: 'Pollachi', lines: [{ grade: 'I', qty: 500 }] } },
+      'ek gaadi aayi hai': { kind: 'gaadi', say: 'Nayi gaadi' },
+      'nayi gaadi 4455 pollachi 300 dana supplier ramu': { kind: 'gaadi', say: 'Nayi gaadi', nayi_gaadi: { number: '4455', maal: 'Pollachi', supplier: 'Ramu', lines: [{ grade: 'I', qty: 300 }] } },
+      'om ko 100 dana 40 ke bill kaat do': { kind: 'slip', say: 'Om', heard: 'Om', buyer_name: 'Om Bhojane', slip: { lines: [{ grade: 'I', qty: 100, rate: 40 }] } },
+      'raju ko 50 dana': { kind: 'slip', say: 'Raju', heard: 'Raju', buyer: 'new', buyer_name: 'Raju', slip: { lines: [{ grade: 'I', qty: 50 }] } },
+      'kal mujhe yaad dilana om se 10000 lene hain': { kind: 'yaad', say: 'Yaad', heard: 'Om', yaad: { what: 'Om se ₹10,000 lene hain', day: 1 } },
+      'mere reminder dikhao': { kind: 'yaad', say: 'Yaad', yaad: { list: true } },
+      'om wala reminder hata do': { kind: 'yaad', say: 'Hata do', yaad: { cancel: true, what: 'Om' } },
     };
     const calls: string[] = [];
     const real = gemini.generate.bind(gemini);
@@ -576,11 +584,20 @@ describe('Bolo conversation', () => {
       const a1 = await say('Om ko udhaar whatsapp karo');
       expect(a1.ask).toMatchObject({ expect: 'phone' });
       expect(a1.ask.question).toMatch(/Om Bhojane ka mobile number/);
-      // The number, typed: read here with no model call, saved on the grahak, and the WhatsApp goes.
+      // The number, typed: read here with no model call and saved; then the send is read back once.
       calls.length = 0;
       const a2 = await say('98765 00077');
       expect(calls).toHaveLength(0);
-      expect(a2.say).toMatch(/Om Bhojane ko ₹10,000 udhaar aur khata WhatsApp pe bhej diya/);
+      expect(a2.ask.question).toBe('Om Bhojane (9876500077) ko ₹10,000 udhaar aur khata WhatsApp karein?');
+      expect(a2.ask.options.map((o: any) => o.value)).toEqual(['yes', 'show', 'cancel']);
+      // "Pehle dikha" opens the WhatsApp dialog (message + PDF) and sends nothing.
+      const a3 = await say('nahi pehle dikha');
+      expect(a3.whatsapp).toEqual({ buyerId: ids.om, name: 'Om Bhojane' });
+      expect(sent).toHaveLength(0);
+      // Asked again, the number is known now: straight to the read-back, and "haan" sends.
+      expect((await say('Om ko udhaar whatsapp karo')).ask.options[0].value).toBe('yes');
+      const a5 = await say('haan bhej do');
+      expect(a5.say).toMatch(/Om Bhojane ko ₹10,000 udhaar aur khata WhatsApp pe bhej diya/);
       expect(sent).toEqual([{ to: '919876500077', params: ['Om Bhojane', 'Bolo Traders', '10,000', '9555500031'] }]);
       const pulled = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(shop.accessToken)).expect(200)).body.changes
         .filter((c: any) => c.table === 'buyers' && c.row.id === ids.om).at(-1).row;
@@ -611,6 +628,67 @@ describe('Bolo conversation', () => {
       expect(e.say).toMatch(/Naya grahak Pappu ban gaya/);
       const found = (await http().get(`/v1/admin/shops/${shopId}/buyers?q=Pappu`).set(web).expect(200)).body.buyers[0];
       expect(found).toMatchObject({ name: 'Pappu', phone: '9876500099', balancePaise: 50000 });
+
+      // 6. A gaadi by voice: the supplier is asked once (or left for later), read back, added on "haan".
+      const g1 = await say('nayi gaadi 3289 pollachi 500 dana', 's6');
+      expect(g1.ask).toMatchObject({ question: 'Supplier kaun hai?', expect: 'text' });
+      const g2 = await http().post(url).set(web).send({ session: 's6', pick: 'skip' }).expect(200).then((r) => r.body);
+      expect(g2.ask.question).toBe('Nayi gaadi 3289, Pollachi, 500 dana. Jod dein?');
+      expect(g2.ask.detail).toEqual(['Gaadi 3289 · Pollachi (naya maal)', 'I: 500 dana', 'Supplier: baad mein']);
+      const g3 = await say('haan', 's6');
+      expect(g3.say).toBe('Gaadi 3289 jud gayi: Pollachi, 500 dana');
+      // Nothing said but "gaadi aayi hai": the number, then the dana, one question at a time.
+      expect((await say('ek gaadi aayi hai', 's6b')).ask.question).toBe('Gaadi ka number boliye (jaise 3289)');
+      expect((await say('MH 12 4455', 's6b')).ask.question).toBe('Gaadi MH124455 mein kitne dana aaye?');
+      expect((await say('rehne do', 's6b')).say).toBe('Theek hai, rehne diya');
+
+      // 7. A parchi by voice: the only gaadi with enough dana is used, it is read back, "haan" makes it.
+      const p1 = await say('om ko 100 dana 40 ke bill kaat do', 's7');
+      expect(p1.ask.question).toBe('Om Bhojane, 100 dana, kul ₹4,000 udhaar. Parchi kaat dein?');
+      expect(p1.ask.detail).toEqual(['Om Bhojane · gaadi 3289', 'I: 100 dana × ₹40', 'Kul ₹4,000 · udhaar']);
+      const p2 = await say('haan kaato', 's7');
+      expect(p2.say).toMatch(/^Parchi #\d+ ban gayi: Om Bhojane, ₹4,000 udhaar/);
+      const bill = (await http().get(`/v1/admin/shops/${shopId}/bills/${p2.saved.billId}`).set(web).expect(200)).body;
+      expect(bill).toMatchObject({ buyerName: 'Om Bhojane', totalPaise: 400000, paidPaise: 0 });
+      // A new name and no rate (and no bhav set): it becomes a new grahak, and the rate is asked.
+      const r1 = await say('raju ko 50 dana', 's8');
+      expect(r1.ask).toMatchObject({ question: 'Rate kya hai? (ek dana ka)', expect: 'number' });
+      const r2 = await say('35', 's8');
+      expect(r2.ask.detail[0]).toBe('Raju (naya grahak) · gaadi 3289');
+      const r3 = await http().post(url).set(web).send({ session: 's8', pick: 'yes' }).expect(200).then((r) => r.body);
+      expect(r3.say).toMatch(/ban gayi: Raju, ₹1,750 udhaar/);
+      expect((await http().get(`/v1/admin/shops/${shopId}/buyers?q=Raju`).set(web).expect(200)).body.buyers[0]).toMatchObject({ name: 'Raju', balancePaise: 175000 });
+
+      // With two gaadis open, the gaadi is always asked (the maal comes on any vehicle) — by number.
+      expect((await say('nayi gaadi 4455 pollachi 300 dana supplier ramu', 's7c')).ask.detail).toEqual(['Gaadi 4455 · Pollachi', 'I: 300 dana', 'Supplier: Ramu']);
+      expect((await say('haan', 's7c')).say).toBe('Gaadi 4455 jud gayi: Pollachi, 300 dana');
+      const q1 = await say('om ko 100 dana 40 ke bill kaat do', 's7d');
+      expect(q1.ask).toMatchObject({ question: 'Kaun si gaadi se? Gaadi number boliye', expect: 'text' });
+      expect((await say('9999', 's7d')).ask.question).toBe('Gaadi 9999 khuli nahi mili. Kaun si gaadi se? Gaadi number boliye');
+      expect((await say('4455 wali', 's7d')).ask.detail[0]).toBe('Om Bhojane · gaadi 4455');
+      expect((await say('rehne do', 's7d')).say).toBe('Theek hai, rehne diya');
+
+      // 8. Yaad: tomorrow with no time is 9 a.m. IST, read back from what was saved, sent by the timer.
+      const { RemindersService } = await import('../src/alerts/reminders.service');
+      const reminders = app.get(RemindersService);
+      const told: { to: string; params: string[] }[] = [];
+      reminders.sender = async (to, params) => { told.push({ to, params }); return 'wamid.yaad'; };
+      const y1 = await say('kal mujhe yaad dilana om se 10000 lene hain', 's9');
+      expect(y1.say).toBe('Yaad rakhenge: kal subah 9:00 — Om se ₹10,000 lene hain. WhatsApp 9555500031 par aayega');
+      const tomorrow = new Date(Date.now() + 330 * 60_000 + 86_400_000).toISOString().slice(0, 10);
+      expect(y1.saved.dueAt).toBe(`${tomorrow}T03:30:00.000Z`);
+      expect(await reminders.tick(new Date(Date.parse(y1.saved.dueAt) - 60_000))).toEqual({ sent: 0, failed: 0, waiting: 0 });
+      expect(await reminders.tick(new Date(Date.parse(y1.saved.dueAt) + 60_000))).toEqual({ sent: 1, failed: 0, waiting: 0 });
+      expect(told).toEqual([{ to: '919555500031', params: ['जी', 'Bolo Traders', 'Om se ₹10,000 lene hain', 'Om Bhojane का उधार अभी ₹14,000 बाकी है · मोबाइल 9876500077'] }]);
+      // A template still awaiting Meta's approval waits and is tried again, not dropped.
+      const { TemplateUnavailable } = await import('../src/alerts/udhaar-alerts.service');
+      const y2 = await say('kal mujhe yaad dilana om se 10000 lene hain', 's10');
+      reminders.sender = async () => { throw new TemplateUnavailable('132001 not approved'); };
+      expect(await reminders.tick(new Date(Date.parse(y2.saved.dueAt) + 60_000))).toEqual({ sent: 0, failed: 0, waiting: 1 });
+      // Listed, then cancelled by name.
+      expect((await say('mere reminder dikhao', 's10')).answer.rows).toEqual([{ kab: expect.stringMatching(/subah 9:00$/), kya: 'Om se ₹10,000 lene hain' }]);
+      expect((await say('om wala reminder hata do', 's10')).say).toMatch(/^Hata diya: .* — Om se ₹10,000 lene hain$/);
+      expect((await say('mere reminder dikhao', 's10')).answer.say).toBe('Koi yaad baaki nahi hai');
     } finally {
       gemini.generate = real;
       delete (alerts as { canSend?: unknown }).canSend;

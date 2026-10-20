@@ -56,6 +56,16 @@ gaadi AS (
          (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id)
            + t.freight_paise + t.labour_paise + t.commission_paise AS cost) s
 ),
+maal_stock AS (
+  SELECT t.number AS gaadi_no, t.supplier, g.maal, g.grade, g.qty AS aaya, COALESCE(sold.q, 0) AS bika, COALESCE(sp.q, 0) AS kharab,
+         GREATEST(0, g.qty - COALESCE(sold.q, 0) - COALESCE(sp.q, 0)) AS bacha, (t.closed_at IS NULL) AS khuli,
+         (t.arrived_at AT TIME ZONE 'Asia/Kolkata')::date::text AS aayi
+  FROM (SELECT tg.truck_id, tg.grade, SUM(tg.billed_qty + tg.free_qty) AS qty, string_agg(DISTINCT COALESCE(br.name, 'Maal'), ', ') AS maal
+          FROM truck_grades tg LEFT JOIN brands br ON br.id = tg.brand_id GROUP BY tg.truck_id, tg.grade) g
+  JOIN trucks t ON t.id = g.truck_id
+  LEFT JOIN LATERAL (SELECT SUM(l.qty) AS q FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = g.truck_id AND l.grade = g.grade) sold ON true
+  LEFT JOIN LATERAL (SELECT SUM(x.qty) AS q FROM spoilage x WHERE x.truck_id = g.truck_id AND x.grade = g.grade) sp ON true
+),
 rojmel AS (
   SELECT d.id, d.business_date::text AS din, CASE d.direction WHEN 'in' THEN 'aaya' ELSE 'gaya' END AS disha,
          d.category AS head, d.party_name AS party, d.note, d.mode, d.amount_paise / 100.0 AS rakam
@@ -69,6 +79,7 @@ export const ASK_TABLES = `
 - parchi_line(parchi_id, parchi_no, din, grahak_id, grahak, grade, dana, bhav, rakam, gaadi_no, maal, leak) — one row per slip line; grade '1' | '2' | '3' | 'mix'; bhav = rupees per dana.
 - vasooli(id, raseed_no, din, samay, grahak_id, grahak, rakam, cash, upi) — money collected from grahaks.
 - gaadi(id, gaadi_no, supplier, maal, aayi, band, aaya_dana, bika_dana, kharab_dana, bacha_dana, kharid_rakam) — band NULL = still open.
+- maal_stock(gaadi_no, supplier, maal, grade, aaya, bika, kharab, bacha, khuli, aayi) — stock by gaadi and grade ('1' | '2' | '3'); khuli = the gaadi is still open. "Ek number kitna bacha" = SUM(bacha) WHERE grade = '1' AND khuli.
 - rojmel(id, din, disha, head, party, note, mode, rakam) — other money in (disha 'aaya') or out ('gaya'): kharcha, mazdoori, bhada, supplier payments, etc.
 Amounts are rupees (numeric); din / aayi / band / aakhri_* are 'YYYY-MM-DD' text, compare them as text.`;
 
