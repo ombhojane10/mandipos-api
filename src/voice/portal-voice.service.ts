@@ -178,7 +178,7 @@ export class PortalVoiceService {
     }
     if (reply.kind === 'show') out.cards = await this.cards(shopId, reply, books);
     if (reply.kind === 'open') out.open = { to: reply.open, buyerId: this.buyer(reply, books)?.id ?? null, truckId: this.truck(reply, books)?.id ?? null };
-    if (reply.kind === 'query') out.answer = await this.answer(shopId, reply, lang);
+    if (reply.kind === 'query') out.answer = await this.answer(shopId, reply, lang, books);
     if (reply.kind === 'edit') Object.assign(out, await this.edit(p, shopId, reply, books, lang));
     if (reply.kind === 'download') {
       const d = (reply.download ?? {}) as { report?: string; format?: string; from?: string; to?: string };
@@ -902,14 +902,21 @@ export class PortalVoiceService {
    * The model's SELECT over the voice tables (ask.ts), then a second, text-only call that says
    * the result in one line — numbers only from the rows. A bad query comes back as a plain miss.
    */
-  private async answer(shopId: string, r: Reply, lang: string) {
+  private async answer(shopId: string, r: Reply, lang: string, books: Books) {
     const q = (r.query ?? {}) as { sql?: string; title?: string };
     const title = q.title || r.say;
+    // The model names a grahak or gaadi by its ref from the shop data ('b170', 'g3'); the books
+    // know which one that is, so the ref becomes its id here — never a guess on the name.
+    const sql = (q.sql ?? '').replace(/'([bg])(\d{1,5})'/gi, (m, t: string, n: string) => {
+      const ref = `${t.toLowerCase()}${n}`;
+      const id = t.toLowerCase() === 'b' ? books.buyers.get(ref)?.id : books.trucks.get(ref)?.id;
+      return id ? `'${id}'` : m;
+    });
     let result;
     try {
-      result = await ask(this.db, shopId, q.sql ?? '');
+      result = await ask(this.db, shopId, sql);
     } catch (e) {
-      this.log(`query refused or failed: ${(e as Error).message} :: ${q.sql}`);
+      this.log(`query refused or failed: ${(e as Error).message} :: ${sql}`);
       return { title, columns: [], rows: [], say: lang === 'english' ? "Couldn't find that in the books" : 'Ye hisab nahi nikal paaye, alag tarah se poochiye', speak: 'ये हिसाब नहीं निकल पाए, अलग तरह से पूछिए' };
     }
     // One row of one or two figures says itself; only longer answers need the second call.
