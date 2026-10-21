@@ -121,6 +121,8 @@ const oneOf = (...values: string[]) => ({ type: 'string', enum: values });
  * decide each one out loud gets them right, and the nulls are stripped server-side. The lite
  * fallback models take 20 s+ to decode that, though, so they get the loose form.
  */
+const PORTAL_EXTRAS = new Set(['query', 'edit', 'download', 'heard', 'grahak', 'calc', 'bhav', 'nayi_gaadi', 'yaad']);
+
 function schema(strict: boolean, portal = false) {
   const obj = (properties: Record<string, object>) => strict
     ? {
@@ -181,7 +183,10 @@ function schema(strict: boolean, portal = false) {
       kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp', 'grahak', 'call', 'calc', 'bhav', 'gaadi', 'yaad'] : [])),
       say: str, ...rest.properties,
     },
-    required: ['transcript', 'kind', 'say', ...(strict ? Object.keys(rest.properties) : [])],
+    // The website's own extras may be left out: writing each as null costs reply tokens (time)
+    // on every turn, and they were not what the strict schema was protecting — the slip, payment
+    // and delivery fields stay required (measured: same answers, ~45 fewer tokens out).
+    required: ['transcript', 'kind', 'say', ...(strict ? Object.keys(rest.properties).filter((k) => !PORTAL_EXTRAS.has(k)) : [])],
   };
 }
 
@@ -196,6 +201,7 @@ export const PORTAL_FALLBACK_SCHEMA = schema(false, true);
  */
 export const PORTAL_GUIDE = `
 ## On the website: more kinds, and a conversation
+On the website the shop data lists grahaks compactly, one per line under "GRAHAK (ref name [code]):" — "b170 MINTOO RAJBEER [M7]" is grahak ref b170 — with no balances (the website reads every figure from the books). Use those refs exactly as for GRAHAK lines.
 This is a conversation: "# Earlier in this conversation" and "# Focus" tell you who and what they were just talking about. "uska", "unko", "iska", "wahi" = the focus grahak or slip; "aur Ramesh ka?" = the same request for Ramesh.
 Never turn a request into a how-to "answer", and never into "open" when they asked for the thing itself. If they asked for something to be DONE (send, save, call, change, make a parchi, add a gaadi, set bhav, remind, kholo, download), return that kind even when a detail is missing or a name is not on the list — the website asks for what is missing ("kitne dana?", "kaun sa Om?", "kaun si gaadi?") one question at a time, reads it back, and does it on a "haan". "answer" is only for questions about how the app works.
 On the website a "slip" opens the parchi form filled in with what they said ("bill kaat do", "parchi bana do", "fatafat" all mean a slip); the counter checks it and saves. Fill what they said; leave out what they did not.

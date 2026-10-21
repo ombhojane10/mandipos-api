@@ -9,7 +9,7 @@ import { BALANCES, n } from '../admin/sql';
 import { Db } from '../db/db.service';
 import { uuidv7 } from '../common/uuid';
 import { Reply, TurnBody, VoiceService } from './voice.service';
-import { ask } from './ask';
+import { ASK_TABLES, ask } from './ask';
 import { GeminiClient } from './gemini.client';
 import { LIVE_BILLS } from '../admin/sql';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
@@ -59,6 +59,29 @@ const titleCase = (n: string) => n.trim().replace(/\s+/g, ' ').replace(/\b\w/g, 
 /** A gaadi number as the books keep it: "mh 12 ab 3289" → "MH12AB3289". */
 const plate = (n: unknown) => String(n ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const PACKINGS = ['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni'] as const;
+
+/** One cell as it is said: "505 dana", "₹1,25,000", "₹44.5" for a rate, a count plain. */
+function cellText(k: string, v: unknown): string {
+  if (typeof v !== 'number') return String(v ?? '');
+  if (/dana|nag|qty|bacha$|bika$|aaya$|kharab$/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} dana`;
+  if (/parchiyan|parchi/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} parchi`;
+  if (/count|ginti|kitne|baar/i.test(k)) return Math.round(v).toLocaleString('en-IN');
+  if (/bhav|rate/i.test(k)) return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  if (/rakam|udhaar|kharid|bikri|baaki|amount|rupay|total|kul|jama|cash|upi|munafa|kharcha|mila/i.test(k)) return `₹${Math.round(v).toLocaleString('en-IN')}`;
+  return v.toLocaleString('en-IN');
+}
+
+/**
+ * A query's answer in one line, from the rows: one row reads out its figures; several read the
+ * first three by their name (or date) and figure, and how many there are. The table shows the rest.
+ */
+function sayRows(title: string, cols: string[], rows: Record<string, unknown>[]): string {
+  if (!rows.length) return `${title}: kuch nahi mila`;
+  const line = (r: Record<string, unknown>) => cols.map((k) => cellText(k, r[k])).filter((x) => x && x !== 'null').join(', ');
+  if (rows.length === 1) return `${title}: ${line(rows[0])}`;
+  const top = rows.slice(0, 3).map(line).join('; ');
+  return `${title}: ${top}${rows.length > 3 ? ` — kul ${rows.length}` : ''}`;
+}
 
 type SlipSaid = {
   lines?: { grade?: string; qty?: number; rate?: number; amount?: number }[]; leak?: { qty?: number; amount?: number }
@@ -143,10 +166,8 @@ export class PortalVoiceService {
     switch (reply.kind) {
       case 'whatsapp': case 'call': case 'grahak':
         return this.advance(phone, shopId, s, { job: reply.kind, expect: 'text', slot: 'buyer', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
-      case 'slip':
-        // A slip is made here, after one read-back; a delivery still needs the form for its address.
-        if (!((reply.slip ?? {}) as { delivery?: boolean }).delivery) return this.advance(phone, shopId, s, { job: 'slip', expect: 'text', slot: 'buyer', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
-        break;
+      // Every slip — delivery too — settles grahak and gaadi, then opens the filled form.
+      case 'slip': return this.advance(phone, shopId, s, { job: 'slip', expect: 'text', slot: 'buyer', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
       case 'gaadi': return this.advance(phone, shopId, s, { job: 'gaadi', expect: 'text', slot: 'number', question: '', data: { reply }, tries: 0 }, undefined, shops);
       case 'yaad': return this.advance(phone, shopId, s, { job: 'yaad', expect: 'text', slot: 'when', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
       case 'calc': return { answer: this.calc(reply) };
@@ -746,32 +767,35 @@ export class PortalVoiceService {
       this.db.withShop(shopId, (tx) => tx.query<{ d: string | null }>(
         `SELECT GREATEST((SELECT MAX(business_date) FROM bills), (SELECT MAX(business_date) FROM collections))::text AS d`)),
     ]);
-    const today = todayIst();
-    const last = days.rows[0]?.d?.slice(0, 10) ?? null;
-    const day = last && last < today ? last : today;
     const buyers = new Map<string, Buyer>();
     const trucks = new Map<string, Truck>();
-    const lines: string[] = [];
-    const weekday = new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-    lines.push(`Date: ${today} (${weekday}).${day !== today ? ` Working day: ${day} (no slips yet today, so "aaj" means ${day} and "kal" the day before it).` : ''} Commodity: ${opts.commodity === 'amrud' ? 'amrud (guava), sold per box' : 'nariyal (tender coconut), sold per dana'}.`);
+    // What changes least goes first (the grahak names, the maal), what changes with every slip
+    // (stock left, the date) last: the same opening reaches the model turn after turn, which
+    // Vertex serves from its cache — and every line is as short as it can be, since every token
+    // here is read on every turn and counts against the shared quota.
+    const lines: string[] = ['GRAHAK (ref name [code]):'];
+    // Every grahak is matched by the server; the model reads only the ones that are live —
+    // owing, new, or bought or paid in the last 120 days. Balances are never sent: the books say them.
+    let shown = 0;
+    rows.rows.forEach((b, i) => {
+      const ref = `b${i + 1}`;
+      buyers.set(ref, { id: b.id, name: b.name.trim(), code: b.code, phone: b.phone ?? '', balancePaise: n(b.bal) });
+      if (!b.active || shown >= 900) return;
+      shown++;
+      lines.push(`${ref} ${b.name.trim()}${b.code ? ` [${b.code}]` : ''}`);
+    });
+    if (opts.brands.length) lines.push(`MAAL: ${opts.brands.map((x) => x.name).join(', ')}`);
+    lines.push(`PANNI: ${PANNI.join(', ')}`, `KATTA: ${KATTA.join(', ')} (10, 15 or 20 dana)`);
     opts.trucks.slice(0, 40).forEach((t, i) => {
       const ref = `g${i + 1}`;
       trucks.set(ref, { id: t.id, number: t.number, supplier: t.supplier, left: t.left, brand: t.brand, brandId: t.brandId });
       lines.push(`GAADI ${ref} | ${t.number} | ${t.brand || '-'} | supplier ${t.supplier || '-'} | left ${t.left}`);
     });
-    // Every grahak is matched by the server; the model reads only the ones that are live —
-    // owing, new, or bought or paid in the last 120 days — so the request stays small and quick.
-    let shown = 0;
-    rows.rows.forEach((b, i) => {
-      const ref = `b${i + 1}`;
-      const bal = n(b.bal);
-      buyers.set(ref, { id: b.id, name: b.name.trim(), code: b.code, phone: b.phone ?? '', balancePaise: bal });
-      if (!b.active || shown >= 900) return;
-      shown++;
-      lines.push(`GRAHAK ${ref} | ${b.name.trim()}${b.code ? ` | code ${b.code}` : ''} | ${bal >= 0 ? `udhaar ${Math.round(bal / 100)}` : `jama ${Math.round(-bal / 100)}`}`);
-    });
-    if (opts.brands.length) lines.push(`MAAL: ${opts.brands.map((x) => x.name).join(', ')}`);
-    lines.push(`PANNI: ${PANNI.join(', ')}`, `KATTA: ${KATTA.join(', ')} (10, 15 or 20 dana)`);
+    const today = todayIst();
+    const last = days.rows[0]?.d?.slice(0, 10) ?? null;
+    const day = last && last < today ? last : today;
+    const weekday = new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    lines.push(`Date: ${today} (${weekday}).${day !== today ? ` Working day: ${day} (no slips yet today, so "aaj" means ${day} and "kal" the day before it).` : ''} Commodity: ${opts.commodity === 'amrud' ? 'amrud (guava), sold per box' : 'nariyal (tender coconut), sold per dana'}.`);
     const rates = new Map(opts.rates.map((x) => [`${x.brandId}:${x.grade}`, x.ratePaise] as const));
     const books = { text: lines.join('\n'), at: Date.now(), buyers, trucks, day, brands: opts.brands, rates, suppliers: opts.suppliers };
     this.cache.set(shopId, books);
@@ -916,40 +940,28 @@ export class PortalVoiceService {
     try {
       result = await ask(this.db, shopId, sql);
     } catch (e) {
+      // One repair: the query and the database's own error go back to the model (a short call, no
+      // shop data), and the corrected query runs once. Still wrong: say so, never a guess.
       this.log(`query refused or failed: ${(e as Error).message} :: ${sql}`);
-      return { title, columns: [], rows: [], say: lang === 'english' ? "Couldn't find that in the books" : 'Ye hisab nahi nikal paaye, alag tarah se poochiye', speak: 'ये हिसाब नहीं निकल पाए, अलग तरह से पूछिए' };
+      const fixed = await this.repair(r.transcript, sql, (e as Error).message).catch(() => null);
+      result = fixed ? await ask(this.db, shopId, fixed).catch((e2: Error) => { this.log(`repair failed: ${e2.message} :: ${fixed}`); return null; }) : null;
+      if (!result) return { title, columns: [], rows: [], say: lang === 'english' ? "Couldn't find that in the books" : 'Ye hisab nahi nikal paaye, alag tarah se poochiye', speak: 'ये हिसाब नहीं निकल पाए, अलग तरह से पूछिए' };
     }
-    // One row of one or two figures says itself; only longer answers need the second call.
+    // The answer is said from the rows themselves — no second model call, so no number can drift.
     const shown = result.columns ?? Object.keys(result.rows[0] ?? {}).filter((k) => k !== 'id' && !k.endsWith('_id'));
-    if (result.rows.length <= 1 && shown.length <= 3) {
-      const row = result.rows[0] ?? {};
-      // Counts say what they count ("505 dana"); money is rupees; a rate keeps its paise.
-      const fmt = (k: string, v: unknown) => {
-        if (typeof v !== 'number') return String(v ?? '');
-        if (/dana|nag|qty|bacha$|bika$|aaya$|kharab$/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} dana`;
-        if (/parchiyan|count|ginti|kitne/i.test(k)) return Math.round(v).toLocaleString('en-IN');
-        if (/bhav|rate/i.test(k)) return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
-        if (/rakam|udhaar|kharid|bikri|baaki|amount|rupay|total|kul|jama|cash|upi|munafa|kharcha/i.test(k)) return `₹${Math.round(v).toLocaleString('en-IN')}`;
-        return v.toLocaleString('en-IN');
-      };
-      const say = result.rows.length ? `${title}: ${shown.map((k) => fmt(k, row[k])).filter(Boolean).join(', ')}` : `${title}: kuch nahi mila`;
-      return { title, ...result, say, speak: say };
-    }
-    const said = await this.compose(r.transcript, title, result.rows, lang).catch(() => null);
-    return { title, ...result, say: said?.say ?? title, speak: said?.speak ?? '' };
+    const say = sayRows(title, shown, result.rows);
+    return { title, ...result, say, speak: say };
   }
 
-  private async compose(question: string, title: string, rows: Record<string, unknown>[], lang: string) {
+  /** A failed query, corrected with the database's error. Returns the new SELECT. */
+  private async repair(question: string, sql: string, error: string): Promise<string> {
     const r = await this.gemini.generate({
-      systemInstruction: { parts: [{ text: COMPOSE }] },
-      contents: [{ role: 'user', parts: [{ text: `Language for "say": ${lang}\nQuestion: ${question}\nTitle: ${title}\nRows (${rows.length}): ${JSON.stringify(rows.slice(0, 15))}` }] }],
-      generationConfig: {
-        temperature: 0, maxOutputTokens: 300, responseMimeType: 'application/json',
-        responseJsonSchema: { type: 'object', properties: { say: { type: 'string' }, speak: { type: 'string' } }, required: ['say', 'speak'] },
-        thinkingConfig: { thinkingLevel: 'MINIMAL' },
-      },
-    }, undefined, 8_000);
-    return JSON.parse(r.text) as { say: string; speak: string };
+      systemInstruction: { parts: [{ text: `You fix one PostgreSQL SELECT that failed. Use ONLY these tables and columns:\n${ASK_TABLES}\nKeep what it asks; change only what the error points at. Return {"sql": "..."}.` }] },
+      contents: [{ role: 'user', parts: [{ text: `Question: ${question}\nQuery: ${sql}\nError: ${error}` }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 400, responseMimeType: 'application/json',
+        responseJsonSchema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'] }, thinkingConfig: { thinkingLevel: 'MINIMAL' } },
+    }, undefined, 6_000);
+    return String((JSON.parse(r.text) as { sql?: string }).sql ?? '');
   }
 
   private log(msg: string) { console.warn(`[PortalVoice] ${msg}`); }
@@ -1039,8 +1051,3 @@ function billText(b: Bill, books: Books): string {
   ].filter(Boolean).join('\n');
 }
 
-const COMPOSE = `You are Bolo, the voice assistant in a mandi shop's billing website. You get a trader's question and the rows the shop's books returned for it. Answer in one or two short sentences.
-- "say": in the requested language (hinglish = Hindi words in Latin script; hindi = Devanagari; english = simple English). The direct answer first, with the exact names and numbers from the rows. Rupees as ₹ with Indian grouping (₹1,25,000), no paise unless they are not zero. Dates as "15 Oct".
-- "speak": the same answer in Hindi, Devanagari script, for a Hindi voice to read: numbers as digits with Indian grouping followed by "रुपये" for money; names as they are.
-- Several rows: name at most the top three and say how many there are in all. No rows: say nothing matched.
-- Never state a number, name or date that is not in the rows. No advice, no greetings.`;

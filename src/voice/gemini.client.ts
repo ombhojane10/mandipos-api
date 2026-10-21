@@ -116,8 +116,12 @@ export class GeminiClient {
             if (done) return;
             failures++;
             this.log.warn(`attempt failed: ${(e as Error).message}`);
-            // A quick failure (429, 5xx) hedges at once instead of waiting out the timer.
-            if (started < 2) fire('retry');
+            // A quick failure retries instead of waiting out the timer — a 5xx at once, a 429 (the
+            // quota is full) after a short pause, so a busy minute is not made busier.
+            if (started < 2) {
+              if ((e as GeminiError).status === 429) setTimeout(() => fire('retry'), 700 + Math.random() * 500);
+              else fire('retry');
+            }
             else if (failures >= started) { finish(); reject(e); }
           },
         );

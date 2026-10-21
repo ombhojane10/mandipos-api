@@ -573,7 +573,7 @@ describe('Bolo conversation', () => {
       calls.push(said);
       // A question about one grahak: the model writes their ref from the shop data, as it does live.
       if (said === 'om ne kitna maal kharida') {
-        const ref = text.match(/GRAHAK (b\d+) \| Om Bhojane/)?.[1];
+        const ref = text.match(/\n(b\d+) Om Bhojane/)?.[1];
         return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Om ki kharid', query: { sql: `SELECT COUNT(*) AS parchiyan, COALESCE(SUM(rakam), 0) AS rakam FROM parchi WHERE grahak_id = '${ref}'`, title: 'Om ki kharid' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       }
       return { text: JSON.stringify({ transcript: said, ...(script[said] ?? { kind: 'unclear', say: 'Samajh nahi aaya' }) }), model: 'stub', tokensIn: 0, tokensOut: 0 };
@@ -670,7 +670,7 @@ describe('Bolo conversation', () => {
       expect((await say('Om ko udhaar whatsapp karo', 's7e')).ask.question).toBe('Kaun Om?');
 
       // A grahak's ref in the model's SQL ('b3') is that grahak's id when it runs — not a failed query.
-      expect((await say('om ne kitna maal kharida', 's7q')).answer.say).toBe('Om ki kharid: 0, ₹0');
+      expect((await say('om ne kitna maal kharida', 's7q')).answer.say).toBe('Om ki kharid: 0 parchi, ₹0');
 
       // 8. Yaad: tomorrow with no time is 9 a.m. IST; previewed, set on the tap, sent by the timer.
       const { RemindersService } = await import('../src/alerts/reminders.service');
