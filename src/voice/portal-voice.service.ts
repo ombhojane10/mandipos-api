@@ -7,13 +7,14 @@ import { EntriesService, type Grade, type ParchiInput } from '../admin/entries.s
 import { ReportsService } from '../admin/reports.service';
 import { BALANCES, n } from '../admin/sql';
 import { Db } from '../db/db.service';
+import { uuidv7 } from '../common/uuid';
 import { Reply, TurnBody, VoiceService } from './voice.service';
 import { ask } from './ask';
 import { GeminiClient } from './gemini.client';
 import { LIVE_BILLS } from '../admin/sql';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { RemindersService, dueFrom, whenLabel } from '../alerts/reminders.service';
-import { fold, resolve, score, type Person, type Resolution } from './resolve';
+import { fold, key, near, resolve, score, type Person, type Resolution } from './resolve';
 import { Sessions, mentions, numberIn, phoneIn, yesNo, type Expect, type Option, type Pending, type Session } from './session';
 
 /** What the portal sends: the recording and the moment; the books are read here, not sent. */
@@ -49,6 +50,8 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 const agrees = (a: string, b: string) => { const x = norm(a), y = norm(b); return !!x && !!y && (x.startsWith(y) || y.startsWith(x) || x.includes(y) || y.includes(x)); };
 const paise = (r: unknown) => (typeof r === 'number' && r > 0 ? Math.round(r * 100) : 0);
 const CANCEL: Option = { label: 'Rehne dein', value: 'cancel' };
+/** Words that make an utterance a request of its own, not an answer to the question waiting. */
+const COMMAND = /\b(bhej|bhejo|bhejde|send|whatsapp|call|phone karo|parchi|bill|kaat|kaato|yaad|remind|reminder|gaadi add|nayi gaadi|udhaar|hisab|dikha|dikhao|khol|kholo|download|kitna|kitne|kitni|banao|bana do|jod|jodo|bhav|grahak)\b/i;
 const gradeOf = (g?: string): Grade => (g === 'II' ? '2' : g === 'III' ? '3' : '1');
 const roman = (g: string) => (g === '2' ? 'II' : g === '3' ? 'III' : g === 'mix' ? 'Leak' : 'I');
 const rs = (p: number) => `₹${(p / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -105,14 +108,23 @@ export class PortalVoiceService {
   async turn(phone: string, shopId: string, body: z.infer<typeof PortalTurnBody>, shops: string[] = []) {
     const s = this.sessions.get(body.session, shopId);
     if (s.pending) {
-      const got = await this.reply(s.pending, body);
-      if (got.value !== undefined) return this.done(s, got.heard, await this.advance(phone, shopId, s, s.pending, got.value, shops));
+      const asked = s.pending;
+      const got = await this.reply(asked, body);
+      // A preview acts only on its button: a heard "haan" shows it again instead of guessing.
+      if (got.keep) return this.done(s, got.heard, { ask: { question: asked.question, expect: asked.expect, tap: true, options: asked.options, detail: asked.detail }, say: 'Neeche button dabaiye' });
+      if (got.value !== undefined) {
+        const out = await this.advance(phone, shopId, s, asked, got.value, shops);
+        void this.logAnswer(phone, shopId, asked, got.heard || got.value, out);
+        return this.done(s, got.heard, out);
+      }
       // They said something else: the waiting job is dropped and this is a new request.
       s.pending = undefined;
       if (got.heard) body = { ...body, text: got.heard, audio: undefined, pick: undefined };
       else if (body.pick || (!body.audio && !body.text)) return this.done(s, '', { reply: { transcript: '', kind: 'answer', say: 'Theek hai' }, say: 'Theek hai' });
     }
 
+    // A tap on a question that is gone (answered, timed out, or replaced): say so, do nothing.
+    if (!body.audio && !body.text?.trim()) return this.done(s, '', { say: 'Ye sawaal purana ho gaya. Phir se boliye.' });
     const [books, p] = await Promise.all([this.books(shopId), this.principal(phone, shopId)]);
     const history = s.turns.length ? s.turns : body.history;
     const input = TurnBody.parse({ ...body, history, focus: this.focusText(s, books), context: books.text });
@@ -138,7 +150,7 @@ export class PortalVoiceService {
       case 'gaadi': return this.advance(phone, shopId, s, { job: 'gaadi', expect: 'text', slot: 'number', question: '', data: { reply }, tries: 0 }, undefined, shops);
       case 'yaad': return this.advance(phone, shopId, s, { job: 'yaad', expect: 'text', slot: 'when', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
       case 'calc': return { answer: this.calc(reply) };
-      case 'bhav': return this.bhav(phone, shopId, reply, books);
+      case 'bhav': return this.advance(phone, shopId, s, { job: 'bhav', expect: 'choice', slot: 'confirm', question: '', data: { reply }, tries: 0 }, undefined, shops);
       default: break;
     }
     // Kinds that name a grahak: settle who, or ask, before the old handlers run.
@@ -146,11 +158,15 @@ export class PortalVoiceService {
       : (reply.kind === 'open' && reply.open === 'grahak_khata') || (reply.kind === 'download' && (reply.download as { report?: string })?.report === 'ledger')
         || ((reply.kind === 'edit') && !((reply.edit as { slip_no?: number })?.slip_no) && !!heard);
     if (needs && heard) {
-      const r = this.who(heard, books, reply);
-      if (r.kind === 'some') return this.askBuyer(s, { job: reply.kind as Pending['job'], data: { reply, heard } }, r.options, heard);
-      if (r.kind === 'none') return this.notFound(s, shopId, heard, shops, { job: reply.kind as Pending['job'], data: { reply, heard } });
-      reply.buyer = this.refOf(books, r.who.id); reply.buyer_name = r.who.name;
-      s.focus = { buyerId: r.who.id, buyerName: r.who.name };
+      const pick = this.choose(heard, books, reply);
+      if (!pick.id) {
+        if (!pick.options.length) return this.notFound(s, shopId, heard, shops, { job: reply.kind as Pending['job'], data: { reply, heard } });
+        s.pending = { job: reply.kind as Pending['job'], data: { reply, heard }, expect: 'choice', slot: 'buyer', question: `Kaun ${heard}?`, options: [...pick.options, CANCEL], tries: 0 };
+        return { ask: { question: s.pending.question, expect: 'choice', options: s.pending.options } };
+      }
+      const who = [...books.buyers.values()].find((x) => x.id === pick.id)!;
+      reply.buyer = this.refOf(books, who.id); reply.buyer_name = who.name;
+      s.focus = { buyerId: who.id, buyerName: who.name };
     }
     if (reply.kind === 'slip' || reply.kind === 'collect' || reply.kind === 'expense') {
       if (heard && reply.kind !== 'expense' && String(reply.buyer ?? '') !== 'new') {
@@ -244,45 +260,52 @@ export class PortalVoiceService {
    * shop data, then the same reading. Anything that is not an answer comes back as heard text,
    * to be taken as a new request.
    */
-  private async reply(q: Pending, body: z.infer<typeof PortalTurnBody>): Promise<{ value?: string; heard: string }> {
-    if (body.pick) return { value: body.pick, heard: q.options?.find((o) => o.value === body.pick)?.label ?? body.pick };
+  private async reply(q: Pending, body: z.infer<typeof PortalTurnBody>): Promise<{ value?: string; heard: string; keep?: boolean }> {
+    if (body.pick) return q.options?.some((o) => o.value === body.pick) || q.expect !== 'choice' ? { value: body.pick, heard: q.options?.find((o) => o.value === body.pick)?.label ?? body.pick } : { heard: '' };
     let heard = body.text?.trim() ?? '';
     if (!heard && body.audio) heard = await this.transcribe(q, body).catch(() => '');
     if (!heard) return { heard: '' };
+    const words = heard.split(/\s+/).filter(Boolean).length;
     const yn = yesNo(heard);
-    const quit = /^(cancel|rehne do|rehne dein|chhodo|chhod do|mat karo|band karo)\b/i.test(heard.trim());
-    const cancel = q.options?.find((o) => o.value === 'cancel');
-    if (q.expect === 'phone') {
-      const ph = phoneIn(heard);
-      if (ph) return { value: ph, heard };
-      if (yn === 'no' || quit) return { value: 'cancel', heard };
-    }
-    if (q.expect === 'number') {
-      const x = numberIn(heard);
-      if (x !== null) return { value: String(x), heard };
-      if (yn === 'no' || quit) return { value: 'cancel', heard };
-    }
-    if (q.expect === 'yes' && yn) return { value: yn, heard };
+    const quit = /^(cancel|rehne do|rehne dein|chhodo|chhod do|mat karo|band karo|nahi|nahin)\b/i.test(heard.trim());
+    // Anything that sounds like a new request is one — never squeezed into the question's slot.
+    const command = words > 4 || COMMAND.test(heard);
+    // On a preview, a no cancels; a yes ("haan jod do") or a word or two shows it again for the tap.
+    if (q.slot === 'confirm') return quit && words <= 3 ? { value: 'cancel', heard } : yn === 'yes' || (words <= 3 && !command) ? { heard, keep: true } : { heard };
+    if (quit && words <= 3) return { value: 'cancel', heard };
+    if (q.expect === 'phone') { const ph = phoneIn(heard); return ph && words <= 6 ? { value: ph, heard } : { heard }; }
+    if (q.expect === 'number') { const x = numberIn(heard); return x !== null && !command ? { value: String(x), heard } : { heard }; }
+    if (command) return { heard };
     if (q.expect === 'text') {
-      if (quit) return { value: 'cancel', heard };
-      // The exact name first ("Pollachi Traders" is not "Pollachi"), then the closest.
+      // The exact option first ("Pollachi Traders" is not "Pollachi"), then a close one, else the words as said.
       const exact = q.options?.find((o) => o.value !== 'cancel' && o.label.toLowerCase() === heard.toLowerCase());
-      const named = exact ?? q.options?.find((o) => o.value !== 'cancel' && score(heard, { name: o.label, code: '', phone: '' }) >= 0.75);
+      const named = exact ?? q.options?.find((o) => o.value !== 'cancel' && score(heard, { name: o.label.replace(/·.*$/, ''), code: '', phone: '' }) >= 0.85);
       return { value: named?.value ?? heard, heard };
     }
     if (q.expect === 'choice' && q.options?.length) {
-      // An option named by its own words first ("nahi, pehle dikha" = Pehle dikhao), then no, then yes.
-      const said = q.options.find((o) => o.value !== 'cancel' && o.value !== 'yes' && mentions(heard, o.label));
-      if (said) return { value: said.value, heard };
-      if (quit || (yn === 'no' && (cancel || q.options.length <= 2))) return { value: 'cancel', heard };
-      if (yn === 'yes' && (q.options[0].value === 'yes' || q.options.length <= 3)) return { value: q.options[0].value, heard };
-      const nth = ['pehla', 'pahla', 'first', 'ek', 'doosra', 'dusra', 'second', 'do', 'teesra', 'tisra', 'third', 'teen'].findIndex((w) => new RegExp(`\\b${w}\\b`, 'i').test(heard));
-      if (nth >= 0 && q.options[0].value !== 'yes') { const o = q.options[Math.floor(nth / 4)]; if (o) return { value: o.value, heard } }
-      const best = q.options.map((o) => ({ o, sc: score(heard, { name: o.label.replace(/\(.*\)|·.*$/g, ''), code: '', phone: '' }) }))
-        .sort((a, b) => b.sc - a.sc)[0];
-      if (best && best.sc >= 0.6) return { value: best.o.value, heard };
+      const opts = q.options.filter((o) => o.value !== 'cancel');
+      const exact = opts.find((o) => fold(o.label.replace(/·.*$|\(.*\)|"/g, '')) === fold(heard));
+      if (exact) return { value: exact.value, heard };
+      const nth = words <= 2 ? ['pehla', 'pahla', 'first', 'doosra', 'dusra', 'second', 'teesra', 'tisra', 'third'].findIndex((w) => new RegExp(`\\b${w}\\b`, 'i').test(heard)) : -1;
+      if (nth >= 0) { const o = opts[Math.floor(nth / 3)]; if (o) return { value: o.value, heard } }
+      // One option, and only one, close to what they said.
+      const close = opts.map((o) => ({ o, sc: score(heard, { name: o.label.replace(/·.*$|\(.*\)|"/g, ''), code: '', phone: '' }) })).filter((x) => x.sc >= 0.75);
+      if (close.length === 1) return { value: close[0].o.value, heard };
     }
     return { heard };
+  }
+
+  /** Answers to Bolo's questions never reach the model; they are logged here so a conversation can be read back. */
+  private async logAnswer(phone: string, shopId: string, q: Pending, heard: string, out: Record<string, unknown>) {
+    try {
+      const p = await this.principal(phone, shopId);
+      const reply = { kind: `answer:${q.job}:${q.slot}`, transcript: heard, asked: q.question, ...Object.fromEntries(Object.entries(out).filter(([k]) => ['say', 'ask', 'draft', 'whatsapp', 'call', 'saved', 'go'].includes(k))) };
+      await this.db.withShop(shopId, (tx) => tx.query(
+        `INSERT INTO voice_turns (id, shop_id, user_id, device_id, screen, transcript, kind, reply, model) VALUES ($1, $2, $3, $4, 'portal', $5, $6, $7, 'none')`,
+        [uuidv7(), shopId, p.userId, p.deviceId, heard.slice(0, 500), reply.kind.slice(0, 40), JSON.stringify(reply)]));
+    } catch (e) {
+      this.log(`answer not recorded: ${(e as Error).message}`);
+    }
   }
 
   /** A short spoken answer, written down — no shop data, so it comes back in about a second. */
@@ -310,6 +333,7 @@ export class PortalVoiceService {
     if (q.job === 'slip') return this.slipStep(phone, shopId, s, q, value);
     if (q.job === 'gaadi') return this.gaadiStep(phone, shopId, s, q, value);
     if (q.job === 'yaad') return this.yaadStep(phone, shopId, s, q, value);
+    if (q.job === 'bhav') return this.bhavStep(phone, shopId, s, q, value);
     if (q.slot === 'buyer' && value) {
       if (q.expect === 'text') data.heard = value;
       else if (value.startsWith('go:')) { const [, sid, bid] = value.split(':'); data.shopId = sid; data.buyerId = bid; }
@@ -317,7 +341,7 @@ export class PortalVoiceService {
       else data.buyerId = value;
     }
     const target = data.shopId ?? shopId;
-    // A pick for a job the old handlers run (show, open, download, edit, a draft): run it for that grahak.
+    // A pick for a job the old handlers run (show, open, download, edit): run it for that grahak.
     if (q.job !== 'whatsapp' && q.job !== 'call' && q.job !== 'grahak') {
       if (data.shopId && data.shopId !== shopId && data.buyerId) return { go: { shopId: data.shopId, buyerId: data.buyerId }, say: 'Us dukaan mein khol rahe hain' };
       const books = await this.books(shopId);
@@ -328,84 +352,100 @@ export class PortalVoiceService {
       return { reply, ...(await this.route(phone, shopId, s, reply, books, 'hinglish', p, shops)) };
     }
 
-    // whatsapp / call / grahak: who.
+    // whatsapp / call / grahak: who — the exact grahak, or a question.
     const books = await this.books(target);
     const g = (reply.grahak ?? {}) as { name?: string; phone?: string; address?: string; code?: string; opening?: number; new?: boolean };
     if (!data.buyerId && !data.newGrahak) {
       if (q.job === 'grahak' && g.new) data.newGrahak = true;
+      else if (!data.heard && s.focus.buyerId) data.buyerId = s.focus.buyerId;
+      // No name and nobody in focus ("…ko ledger bhejde" with the name cut off): ask whose.
+      else if (!data.heard) return this.ask(s, q, data, 'buyer', 'text', q.job === 'call' ? 'Kisko call karein? Naam boliye' : 'Kiska? Grahak ka naam boliye', [CANCEL]);
       else {
-        // No name and nobody in focus ("…ko ledger bhejde" with the name cut off): ask whose.
-        if (!data.heard && !s.focus.buyerId) return this.ask(s, q, data, 'buyer', 'text', q.job === 'call' ? 'Kisko call karein? Naam boliye' : 'Kisko bhejein? Grahak ka naam boliye', [CANCEL]);
-        const r = data.heard ? this.who(data.heard, books, reply) : { kind: 'one' as const, who: books.buyers.get(this.refOf(books, s.focus.buyerId!))!, sure: true };
-        if (r.kind === 'some') return this.askBuyer(s, q, r.options, data.heard);
-        if (r.kind === 'none' || !r.who) return this.notFound(s, target, data.heard || 'Grahak', shops, q);
-        data.buyerId = r.who.id;
+        const pick = this.choose(data.heard, books, reply);
+        if (pick.id) data.buyerId = pick.id;
+        else {
+          const others = pick.options.length ? [] : await this.elsewhere(data.heard, shops.filter((x) => x !== shopId));
+          return this.ask(s, q, data, 'buyer', 'choice', others.length ? `${data.heard} is dukaan mein nahi, ${others.map((e) => e.shopName).join(', ')} mein hai. Wahan kholein?` : pick.options.length ? `Kaun ${data.heard}?` : `${data.heard} naam ka grahak nahi mila.`,
+            [...pick.options, ...others.map((e) => ({ label: `${e.name} (${e.shopName})`, value: `go:${e.shopId}:${e.id}` })), { label: `Naya grahak "${titleCase(data.heard)}"`, value: 'new' }, CANCEL]);
+        }
       }
     }
-    // A new grahak: made now, with what was said (a number, purana udhaar).
+    if (data.shopId && data.shopId !== shopId && data.buyerId) return { go: { shopId: data.shopId, buyerId: data.buyerId }, say: 'Us dukaan mein khol rahe hain' };
+
+    // A new grahak, or changes to one: read back, saved on a tap.
     if (data.newGrahak && !data.buyerId) {
-      const name = (g.name || data.heard || '').trim();
-      if (!name) { s.pending = { ...q, expect: 'text', slot: 'name', question: 'Naye grahak ka naam boliye', tries: 0 }; return { ask: { question: 'Naye grahak ka naam boliye', expect: 'text', options: [] } }; }
-      const exists = [...books.buyers.values()].find((b) => fold(b.name) === fold(name));
-      if (exists) data.buyerId = exists.id;
-      else {
-        const made = await this.entries.grahak(phone, target, { name, phone: phoneIn(g.phone ?? '') ?? '', address: g.address ?? '', code: g.code ?? '', openingPaise: g.opening ? Math.round(g.opening * 100) : undefined });
-        data.buyerId = made.id;
-        this.cache.delete(target);
-        if (q.job === 'grahak') { s.focus = { buyerId: made.id, buyerName: name }; return { say: `Naya grahak ${name} ban gaya${g.phone ? `, number ${g.phone}` : ''}`, saved: { buyerId: made.id } }; }
-      }
+      const name = titleCase(g.name || data.heard || '');
+      if (!name) return this.ask(s, q, data, 'buyer', 'text', 'Naye grahak ka naam boliye', [CANCEL]);
+      const ph = phoneIn(g.phone ?? '') ?? '';
+      const detail = [`Naya grahak: ${name}`, ...(ph ? [`Mobile: ${ph}`] : []), ...(g.address ? [`Pata: ${g.address}`] : []), ...(g.opening ? [`Purana udhaar: ${rs(Math.round(g.opening * 100))}`] : [])];
+      if (q.slot !== 'confirm' || value !== 'yes') return this.confirm(s, q, data, `Naya grahak ${name} banayein?`, 'Grahak banao', detail);
+      const made = await this.entries.grahak(phone, target, { name, phone: ph, address: g.address ?? '', code: g.code ?? '', openingPaise: g.opening ? Math.round(g.opening * 100) : undefined });
+      this.cache.delete(target);
+      s.focus = { buyerId: made.id, buyerName: name };
+      if (q.job === 'grahak') return { say: `Naya grahak ${name} ban gaya${ph ? `, number ${ph}` : ''}`, saved: { buyerId: made.id } };
+      data.buyerId = made.id; data.newGrahak = false;
+      return this.advance(phone, shopId, s, { ...q, slot: 'buyer', question: '', data }, undefined, shops);
     }
-    if (q.slot === 'name' && value && !data.buyerId) { g.name = value; reply.grahak = g; return this.advance(phone, shopId, s, { ...q, slot: 'buyer' }, undefined, shops); }
-    const fresh = await this.books(target, data.newGrahak);
+    const fresh = await this.books(target, true);
     const b = [...fresh.buyers.values()].find((x) => x.id === data.buyerId);
-    if (!b) return this.notFound(s, target, data.heard || 'Grahak', shops, q);
+    if (!b) return { say: 'Woh grahak nahi mila, naam phir se boliye' };
     s.focus = { buyerId: b.id, buyerName: b.name };
 
-    // grahak: save what they said on it.
     if (q.job === 'grahak') {
       const ph = g.phone ? phoneIn(g.phone) : null;
-      if (g.phone && !ph) { s.pending = { ...q, data: { ...data }, expect: 'phone', slot: 'phone', question: `${b.name} ka 10 ank ka mobile number boliye`, tries: 0 }; return { ask: { question: s.pending.question, expect: 'phone', options: [] } }; }
-      const patch = { ...(ph ? { phone: ph } : {}), ...(g.address ? { address: g.address } : {}), ...(g.code ? { code: g.code } : {}) };
-      if (q.slot === 'phone' && value && phoneIn(value)) Object.assign(patch, { phone: phoneIn(value)! });
-      if (!Object.keys(patch).length) { s.pending = { ...q, data: { ...data }, expect: 'phone', slot: 'phone', question: `${b.name} ka mobile number boliye`, tries: 0 }; return { ask: { question: s.pending.question, expect: 'phone', options: [] } }; }
-      await this.entries.updateGrahak(phone, target, b.id, patch);
+      if (g.phone && !ph) return this.ask(s, q, data, 'phone', 'phone', `${b.name} ka 10 ank ka mobile number boliye`, [CANCEL]);
+      const patch: { phone?: string; address?: string; code?: string } = { ...(ph ? { phone: ph } : {}), ...(g.address ? { address: g.address } : {}), ...(g.code ? { code: g.code } : {}) };
+      if (q.slot === 'phone' && value && phoneIn(value)) patch.phone = phoneIn(value)!;
+      if (!Object.keys(patch).length) return this.ask(s, q, data, 'phone', 'phone', `${b.name} ka mobile number boliye`, [CANCEL]);
+      (data as Record<string, unknown>).patch = patch;
+      const detail = [b.name, ...(patch.phone ? [`Mobile: ${b.phone || '—'} → ${patch.phone}`] : []), ...(patch.address ? [`Pata: ${patch.address}`] : []), ...(patch.code ? [`Code: ${patch.code}`] : [])];
+      if (q.slot !== 'confirm' || value !== 'yes') return this.confirm(s, q, data, `${b.name} ki jaankari badlein?`, 'Save karo', detail);
+      await this.entries.updateGrahak(phone, target, b.id, ((data as Record<string, unknown>).patch ?? patch) as typeof patch);
       this.cache.delete(target);
-      return { say: `${b.name}: ${patch.phone ? `number ${patch.phone}` : ''}${patch.address ? ` pata ${patch.address}` : ''} save ho gaya`.replace(/\s+/g, ' '), saved: { buyerId: b.id } };
+      return { say: `${b.name} ki jaankari save ho gayi`, saved: { buyerId: b.id } };
     }
 
-    // Nothing to send, or no way to send it: say so before asking for a number that would not help.
     if (q.job === 'whatsapp' && !this.alerts.canSend()) return { say: 'WhatsApp abhi chalu nahi hai' };
     if (q.job === 'whatsapp' && b.balancePaise <= 0) return { say: `${b.name} ka koi udhaar baaki nahi hai` };
 
-    // whatsapp / call need their number: ask once, save it on the grahak, carry on.
+    // whatsapp / call need their number: asked, then saved on the grahak only on a tap.
     let mobile = /^[6-9]\d{9}$/.test(b.phone) ? b.phone : '';
-    if (!mobile && q.slot === 'phone' && value) {
-      const ph = phoneIn(value);
-      if (ph) { await this.entries.updateGrahak(phone, target, b.id, { phone: ph }); this.cache.delete(target); mobile = ph; }
+    const given = (data as Record<string, unknown>).mobile as string | undefined;
+    if (!mobile && q.slot === 'phone' && value && phoneIn(value)) (data as Record<string, unknown>).mobile = phoneIn(value)!;
+    const newNumber = (data as Record<string, unknown>).mobile as string | undefined ?? given;
+    if (!mobile && !newNumber) return this.ask(s, q, data, 'phone', 'phone', `${b.name} ka mobile number save nahi hai. Number boliye`, [CANCEL]);
+    if (!mobile && newNumber) {
+      if (q.slot !== 'confirm' || value !== 'yes') return this.confirm(s, q, data, `${b.name} ka number ${newNumber} save karein?`, q.job === 'call' ? 'Save karke call karo' : 'Save karke WhatsApp dikhao', [b.name, `Mobile: ${newNumber}`]);
+      await this.entries.updateGrahak(phone, target, b.id, { phone: newNumber });
+      this.cache.delete(target);
+      mobile = newNumber;
     }
-    if (!mobile) {
-      const question = q.slot === 'phone' ? `Number 10 ank ka chahiye. ${b.name} ka mobile number phir se boliye` : `${b.name} ka mobile number save nahi hai. Number boliye`;
-      if (q.slot === 'phone' && q.tries >= 2) return { say: 'Number samajh nahi aaya. Grahak ke khata mein number daal kar phir boliye.' };
-      s.pending = { ...q, data: { ...data }, expect: 'phone', slot: 'phone', question, tries: q.slot === 'phone' ? q.tries + 1 : 0 };
-      return { ask: { question, expect: 'phone', options: [] } };
+    if (q.job === 'call') {
+      if (!newNumber && (q.slot !== 'confirm' || value !== 'yes')) return this.confirm(s, q, data, `${b.name} ko call karein?`, `Call karo · ${mobile}`, [b.name, `Mobile: ${mobile}`]);
+      return { call: { phone: mobile, name: b.name }, say: `${b.name} ko call laga rahe hain` };
     }
-    if (q.job === 'call') return { call: { phone: mobile, name: b.name }, say: `${b.name} ko call laga rahe hain` };
+    // whatsapp: the WhatsApp dialog is the preview — the message, the khata PDF, and its Send button.
+    return { whatsapp: { buyerId: b.id, name: b.name }, say: `${b.name} ka WhatsApp dekh kar Bhejein dabaiye` };
+  }
 
-    // whatsapp: read back once — who, which number, how much — and send on a yes. A grahak's
-    // phone buzzing is not undoable, so a misheard name or a "pehle dikha" never sends.
-    if (q.slot === 'confirm' && value === 'show') return data.shopId && data.shopId !== shopId ? { go: { shopId: data.shopId, buyerId: b.id } } : { whatsapp: { buyerId: b.id, name: b.name } };
-    if (q.slot !== 'confirm' || value !== 'yes') {
-      const amt = `₹${Math.round(b.balancePaise / 100).toLocaleString('en-IN')}`;
-      return this.ask(s, q, data, 'confirm', 'choice', `${b.name} (${mobile}) ko ${amt} udhaar aur khata WhatsApp karein?`,
-        [{ label: 'Haan, bhejo', value: 'yes' }, { label: 'Pehle dikhao', value: 'show' }, CANCEL]);
-    }
-    try {
-      const sent = await this.alerts.sendNow(target, b.id, phone);
-      const amt = `₹${Math.round(sent.duePaise / 100).toLocaleString('en-IN')}`;
-      return { say: `${b.name} ko ${amt} udhaar${sent.withPdf ? ' aur khata' : ''} WhatsApp pe bhej diya`, sent: { buyerId: b.id, withPdf: sent.withPdf } };
-    } catch (e) {
-      return { say: (e as Error).message || 'WhatsApp nahi gaya, thodi der baad phir boliye' };
-    }
+  /**
+   * The grahak a name means, only when it cannot be anyone else: their exact name (spellings
+   * folded), their code, or their number — or the one close name when nothing else is near.
+   * Anything less returns the candidates (the model's pick first, then the closest) to ask.
+   */
+  private choose(heard: string, books: Books, reply?: Reply): { id?: string; options: Option[] } {
+    const people = [...books.buyers.values()];
+    const f = key(heard), digits = heard.replace(/\D/g, '');
+    const exact = people.filter((p) => key(p.name) === f || (!!p.code && key(p.code).replace(/\s/g, '') === f.replace(/\s/g, ''))
+      || (digits.length >= 10 && !!p.phone && p.phone.endsWith(digits.slice(-10))));
+    if (exact.length === 1) return { id: exact[0].id, options: [] };
+    const scored = people.map((p) => ({ p, sc: Math.max(score(heard, p), near(heard, p.name) * 0.8) })).filter((x) => x.sc >= 0.5).sort((a, b) => b.sc - a.sc);
+    // One name that has every word they said, and no other name anywhere near it.
+    if (!exact.length && scored.length && scored[0].sc >= 0.85 && (scored.length === 1 || scored[1].sc < 0.6)) return { id: scored[0].p.id, options: [] };
+    const hint = books.buyers.get(String(reply?.buyer ?? '').toLowerCase());
+    const seen = new Set<string>();
+    const cands = [...exact, ...(hint ? [hint] : []), ...scored.map((x) => x.p)].filter((p) => !seen.has(p.id) && !!seen.add(p.id)).slice(0, 4);
+    return { options: cands.map((p) => ({ label: `${p.name}${p.balancePaise > 0 ? ` · ₹${Math.round(p.balancePaise / 100).toLocaleString('en-IN')}` : ''}`, value: p.id })) };
   }
 
   /**
@@ -419,22 +459,32 @@ export class PortalVoiceService {
     return { ask: { question, expect, options, ...(detail?.length ? { detail } : {}) } };
   }
 
-  // ---------------------------------------------------------------- a parchi, made by Bolo
+  /** The preview of something Bolo is about to do: done only on a tap of [yes], never on a heard "haan". */
+  private confirm(s: Session, q: Pending, data: object, question: string, yes: string, detail: string[], extra: Option[] = []) {
+    s.pending = { job: q.job, data: data as Record<string, unknown>, slot: 'confirm', expect: 'choice', question, options: [{ label: yes, value: 'yes' }, ...extra, CANCEL], detail, tries: 0 };
+    return { ask: { question, expect: 'choice', tap: true, options: s.pending.options, detail } };
+  }
+
+  // ---------------------------------------------------------------- a parchi, into the form
 
   /**
-   * "Khurshid ji ko 1300 ek number 40 ke, fatafat bill kaat de": who (a close name is asked, a
-   * new one becomes a new grahak), which gaadi (the only one with enough dana, else a question),
-   * each rate (as said, else today's bhav, else a question), then the slip read back once —
-   * "haan" makes it exactly as the parchi form does (and it prints), "form" opens it there.
+   * "Khurshid ji ko 1300 ek number 40 ke": who (asked unless it can only be one grahak), which
+   * gaadi (asked by number unless they named it — the maal comes on any vehicle), and then the
+   * parchi form opens filled in; the counter checks it there and taps Save, as always.
    */
   private async slipStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined): Promise<Record<string, unknown>> {
     const d = q.data as unknown as SlipJob;
     const r = d.reply;
-    const sl = (r.slip ?? {}) as SlipSaid;
-    const pay = (r.pay ?? {}) as { mode?: string; cash?: number; upi?: number };
     const books = await this.books(shopId);
+    // "35 panni 43 ke" is 35 dana packed in panni: a panni has a name, never a count.
+    const sl = { ...((r.slip ?? {}) as SlipSaid) };
+    if (sl.packing === 'panni' && sl.kattas) {
+      if (!(sl.lines ?? []).some((l) => (l.qty ?? 0) > 0)) sl.lines = [{ ...(sl.lines?.[0] ?? { grade: 'I' }), qty: sl.kattas }, ...(sl.lines ?? []).slice(1)];
+      delete sl.kattas;
+    }
+    r.slip = sl;
     if (value !== undefined) {
-      if (q.slot === 'buyer') { if (value === 'new') d.newGrahak = true; else if (value === 'cash') d.walkIn = true; else if (q.expect === 'text') d.heard = value; else d.buyerId = value; }
+      if (q.slot === 'buyer') { if (value === 'new') d.newGrahak = true; else if (q.expect === 'text') d.heard = value; else d.buyerId = value; }
       if (q.slot === 'gaadi') {
         // A tap carries the id; a spoken or typed number ("3289", "AP39 wali") is matched on the plate.
         const said = plate(value).replace(/(WALI|WALA|GAADI|SE)+$/, '');
@@ -443,124 +493,56 @@ export class PortalVoiceService {
           || (/\d/.test(said) && said.length >= 3 && (plate(t.number).includes(said) || (digits.length >= 3 && plate(t.number).replace(/\D/g, '').endsWith(digits)))));
         if (hit.length === 1) d.truckId = hit[0].id; else d.gaadiMiss = value;
       }
-      if (q.slot === 'qty') d.qty = numberIn(value) ?? undefined;
-      if (q.slot === 'confirm' && value === 'gaadi') { d.truckId = undefined; d.chooseTruck = true; }
-      if (q.slot === 'cash') d.cash = numberIn(value) ?? undefined;
-      if (q.slot === 'rate') { const x = numberIn(value); const g = String(q.data.grade ?? '1'); if (x) d.rates = { ...d.rates, [g]: x }; }
     }
 
-    // What was sold.
-    const lines: { grade: Grade; qty: number; ratePaise: number; said: boolean }[] = (sl.lines ?? []).filter((l) => (l.qty ?? 0) > 0).map((l) => {
-      const said = paise(l.rate) || (l.amount ? Math.round(paise(l.amount) / l.qty!) : 0);
-      return { grade: gradeOf(l.grade), qty: Math.round(l.qty!), ratePaise: said, said: said > 0 };
-    });
-    if (sl.leak?.qty) lines.push({ grade: 'mix', qty: Math.round(sl.leak.qty), ratePaise: sl.leak.amount ? Math.round(paise(sl.leak.amount) / sl.leak.qty) : 0, said: !!sl.leak.amount });
-    if (!lines.length && d.qty) lines.push({ grade: '1', qty: Math.round(d.qty), ratePaise: 0, said: false });
-    if (!lines.length) return this.ask(s, q, d, 'qty', 'number', 'Kitne dana?', [CANCEL]);
-
-    // Who.
-    const free = pay.mode === 'free';
+    // Who: the exact grahak, or a question with the close names and "naya grahak".
     if (!d.buyerId && !d.newGrahak && !d.walkIn) {
       const name = (d.heard || String(r.buyer_name ?? '')).trim();
-      if (!name || /^(cash|nakad|nagad)\b/i.test(name)) {
-        if (pay.mode === 'udhaar' || pay.mode === 'after') return this.ask(s, q, d, 'buyer', 'text', 'Kiske naam likhein? Grahak ka naam boliye', [CANCEL]);
-        d.walkIn = true;
-      } else {
-        const found = this.who(name, books, r);
-        if (found.kind === 'one') d.buyerId = found.who.id;
-        else if (found.kind === 'some') return this.askBuyer(s, { job: 'slip', data: d as unknown as Record<string, unknown> }, found.options, name, true);
-        else { d.newGrahak = true; d.heard = name; }
+      if (!name || /^(cash|nakad|nagad)\b/i.test(name)) d.walkIn = true;
+      else {
+        const pick = this.choose(name, books, r);
+        if (pick.id) d.buyerId = pick.id;
+        else {
+          d.heard = name;
+          return this.ask(s, q, d, 'buyer', 'choice', pick.options.length ? `Kaun ${name}?` : `${name} naam ka grahak nahi mila.`,
+            [...pick.options, { label: `Naya grahak "${titleCase(name)}"`, value: 'new' }, CANCEL]);
+        }
       }
     }
-    const buyer = d.buyerId ? [...books.buyers.values()].find((b) => b.id === d.buyerId) ?? null : null;
-    const newName = titleCase(d.heard || String(r.buyer_name ?? ''));
-    const who = d.walkIn ? 'Cash grahak' : buyer ? buyer.name : `${newName} (naya grahak)`;
 
-    // Which gaadi.
-    const want = lines.reduce((a, l) => a + l.qty, 0);
+    // Which gaadi: named, the only one open, or asked by number.
     const open = [...books.trucks.values()];
     if (!d.truckId) {
       const named = this.truck(r, books);
+      const want = ((sl.lines ?? []).reduce((a, l) => a + (l.qty ?? 0), 0)) + (sl.leak?.qty ?? 0);
       const fits = open.filter((t) => t.left >= want);
-      // Not named: always asked — the maal can come on any vehicle, day to day. Only a shop with
-      // one open gaadi has nothing to choose.
-      if (named && !d.chooseTruck) d.truckId = named.id;
-      else if (!open.length) return { say: 'Koi khuli gaadi nahi hai. Pehle gaadi jodiye, jaise "nayi gaadi 3289, 500 dana".' };
-      else if (open.length === 1 && !r.gaadi_no && !d.chooseTruck) d.truckId = open[0].id;
-      else {
+      if (named && !d.gaadiMiss) d.truckId = named.id;
+      else if (open.length === 1 && !r.gaadi_no && !d.gaadiMiss) d.truckId = open[0].id;
+      else if (open.length) {
         const miss = d.gaadiMiss ?? (r.gaadi_no ? String(r.gaadi_no) : '');
         d.gaadiMiss = undefined;
-        const why = miss ? `Gaadi ${miss} khuli nahi mili. ` : !fits.length ? `Kisi ek gaadi mein ${want} dana nahi bache. ` : '';
-        return this.ask(s, q, d, 'gaadi', 'text', `${why}Kaun si gaadi se? Gaadi number boliye`,
+        return this.ask(s, q, d, 'gaadi', 'text', `${miss ? `Gaadi ${miss} khuli nahi mili. ` : ''}Kaun si gaadi se? Gaadi number boliye`,
           [...(fits.length ? fits : open).slice(0, 6).map((t) => ({ label: `${t.number} · ${t.brand || 'maal'} · ${t.left.toLocaleString('en-IN')} bache`, value: t.id })), CANCEL]);
       }
     }
+
+    // The form, filled in: everything said, the grahak and gaadi settled, a missing rate from today's bhav.
+    const buyer = d.buyerId ? [...books.buyers.values()].find((x) => x.id === d.buyerId) ?? null : null;
+    const newName = titleCase(d.heard || String(r.buyer_name ?? ''));
+    const truckRef = [...books.trucks.entries()].find(([, t]) => t.id === d.truckId)?.[0] ?? null;
+    const draft = this.draft({ ...r, buyer: buyer ? this.refOf(books, buyer.id) : d.newGrahak ? 'new' : null, buyer_name: buyer?.name ?? (d.newGrahak ? newName : ''), gaadi: truckRef, gaadi_no: null } as Reply, books) as Record<string, unknown> & { lines: { grade: Grade; qty: number; ratePaise: number }[]; notes: string[] };
+    draft.truckId = d.truckId ?? null;
     const truck = open.find((t) => t.id === d.truckId);
-    if (!truck) return { say: 'Woh gaadi ab khuli nahi hai. Phir se boliye.' };
-    if (truck.left < want) return { say: `Gaadi ${truck.number} mein sirf ${truck.left.toLocaleString('en-IN')} dana bache hain, ${want.toLocaleString('en-IN')} ki parchi nahi banegi.` };
-
-    // Rates: as said, else what they just told us, else today's bhav, else ask.
-    if (!free) {
-      for (const l of lines) {
-        if (l.ratePaise) continue;
-        const told = d.rates?.[l.grade];
-        l.ratePaise = told ? Math.round(told * 100) : (truck.brandId ? books.rates.get(`${truck.brandId}:${l.grade}`) ?? 0 : 0);
-      }
-      const missing = lines.find((l) => !l.ratePaise);
-      if (missing) {
-        q.data.grade = missing.grade;
-        return this.ask(s, { ...q, data: { ...d, grade: missing.grade } }, { ...d, grade: missing.grade }, 'rate', 'number',
-          lines.length > 1 ? `${roman(missing.grade)} number ka rate kya hai? (ek dana ka)` : 'Rate kya hai? (ek dana ka)', [CANCEL]);
-      }
+    let fromBhav = false;
+    for (const l of draft.lines) {
+      if (l.ratePaise || !truck?.brandId) continue;
+      const bhav = books.rates.get(`${truck.brandId}:${l.grade}`);
+      if (bhav) { l.ratePaise = bhav; fromBhav = true; }
     }
-
-    // How it is paid: as said; else a named grahak is udhaar and a walk-in pays cash, as on the terminal.
-    const goods = free ? 0 : lines.reduce((a, l) => a + l.qty * l.ratePaise, 0);
-    const mode = pay.mode || (d.walkIn ? 'cash' : 'udhaar');
-    let cashPaise = 0, upiPaise = 0;
-    if (mode === 'mixed') {
-      cashPaise = paise(pay.cash) || (d.cash ? Math.round(d.cash * 100) : 0); upiPaise = paise(pay.upi);
-      // "Aadha cash aadha online" with no amounts: how much was cash; the rest is online.
-      if (!cashPaise && !upiPaise) return this.ask(s, q, d, 'cash', 'number', `Kul ${rs(goods)}. Kitna cash mila? (baaki online)`, [CANCEL]);
-      if (cashPaise && !upiPaise) upiPaise = Math.max(0, goods - cashPaise);
-      if (upiPaise && !cashPaise) cashPaise = Math.max(0, goods - upiPaise);
-    }
-    const payWord = mode === 'udhaar' ? 'udhaar' : mode === 'cash' ? 'cash' : mode === 'upi' ? 'UPI' : mode === 'free' ? 'free'
-      : mode === 'after' ? 'paisa aane ke baad' : `cash ${rs(cashPaise)} + UPI ${rs(upiPaise)}`;
-    const packing = (PACKINGS as readonly string[]).includes(sl.packing ?? '') ? sl.packing as ParchiInput['packing'] : 'loose';
-    const bhavUsed = lines.some((l) => !l.said && !d.rates?.[l.grade]);
-    const detail = [
-      `${who} · gaadi ${truck.number}`,
-      ...lines.map((l) => `${roman(l.grade)}: ${l.qty.toLocaleString('en-IN')} dana × ${rs(l.ratePaise)}${!l.said && !d.rates?.[l.grade] ? ' (aaj ka bhav)' : ''}`),
-      `Kul ${rs(goods)} · ${payWord}${packing !== 'loose' ? ` · ${packing.replace(/(\d+)/, ' $1')}` : ''}`,
-    ];
-
-    if (q.slot === 'confirm' && value === 'form') {
-      const ref = buyer ? this.refOf(books, buyer.id) : '';
-      const draft = this.draft({ ...r, buyer: ref || (d.walkIn ? null : 'new'), buyer_name: buyer?.name ?? (d.walkIn ? '' : newName), gaadi: [...books.trucks.entries()].find(([, t]) => t.id === truck.id)?.[0] ?? null, gaadi_no: truck.number } as Reply, books);
-      return { draft: { ...draft, truckId: truck.id, lines: lines.map(({ said: _s, ...l }) => l) } };
-    }
-    if (q.slot !== 'confirm' || value !== 'yes') {
-      return this.ask(s, q, d, 'confirm', 'choice', `${who}, ${want.toLocaleString('en-IN')} dana, kul ${rs(goods)} ${payWord}${bhavUsed ? ' (aaj ke bhav se)' : ''}. Parchi kaat dein?`,
-        [{ label: 'Haan, kaato', value: 'yes' }, ...(open.length > 1 ? [{ label: 'Gaadi badlo', value: 'gaadi' }] : []), { label: 'Form mein kholo', value: 'form' }, CANCEL], detail);
-    }
-
-    const input: ParchiInput = {
-      buyerId: buyer?.id, buyerName: d.walkIn ? 'Cash' : buyer ? undefined : newName, truckId: truck.id,
-      lines: lines.map(({ said: _s, ...l }) => l),
-      pay: mode === 'udhaar' ? 'credit' : mode === 'mixed' ? 'split' : mode as ParchiInput['pay'], cashPaise, upiPaise,
-      packing, panniName: PANNI.find((k) => agrees(k, sl.panni ?? '')) ?? '', kattaName: KATTA.find((k) => agrees(k, sl.katta_name ?? '')) ?? '',
-      parchune: !!sl.parchune, ...(sl.labour ? { labour: true } : {}),
-    };
-    try {
-      const made = await this.entries.parchi(phone, shopId, input);
-      this.cache.delete(shopId);
-      const name = buyer?.name ?? (d.walkIn ? 'Cash' : newName);
-      if (made.buyerId) s.focus = { buyerId: made.buyerId, buyerName: name, billId: made.billId, slipNo: made.slipNo };
-      return { say: `Parchi #${made.slipNo} ban gayi: ${name}, ${rs(goods)} ${payWord}${made.printing ? '. Print ho rahi hai' : ''}`, saved: { billId: made.billId, slipNo: made.slipNo } };
-    } catch (e) {
-      return { say: (e as Error).message || 'Parchi nahi bani, phir se boliye' };
-    }
+    draft.notes = [...draft.notes.filter((n) => !/list mein nahi mila/.test(n)),
+      ...(d.newGrahak ? [`Naya grahak "${newName}" banega`] : []), ...(fromBhav ? ['Rate aaj ke bhav se'] : [])];
+    if (buyer) s.focus = { buyerId: buyer.id, buyerName: buyer.name };
+    return { draft, say: `${buyer?.name ?? (d.newGrahak ? newName : 'Cash grahak')} ki parchi — dekh kar Save dabaiye` };
   }
 
   // ---------------------------------------------------------------- a gaadi, added by Bolo
@@ -613,8 +595,7 @@ export class PortalVoiceService {
       `Supplier: ${supplier || 'baad mein'}${d.freightPaise ? ` · bhada ${rs(d.freightPaise)}` : ''}`,
     ];
     if (q.slot !== 'confirm' || value !== 'yes') {
-      return this.ask(s, q, d, 'confirm', 'choice', `${dup ? `Gaadi ${d.number} pehle se khuli hai! ` : ''}Nayi gaadi ${d.number}, ${maal}, ${total.toLocaleString('en-IN')} dana. Jod dein?`,
-        [{ label: 'Haan, jodo', value: 'yes' }, CANCEL], detail);
+      return this.confirm(s, q, d, `${dup ? `Gaadi ${d.number} pehle se khuli hai! ` : ''}Nayi gaadi ${d.number}, ${maal}, ${total.toLocaleString('en-IN')} dana. Jod dein?`, 'Gaadi jodo', detail);
     }
     try {
       const made = await this.entries.gaadi(phone, shopId, {
@@ -679,14 +660,22 @@ export class PortalVoiceService {
     // A grahak it is about: their udhaar goes in the reminder (or to them, when asked).
     const books = await this.books(shopId);
     if (d.heard && !d.buyerId && !d.skipBuyer) {
-      const found = this.who(d.heard, books, d.reply);
-      if (found.kind === 'one') d.buyerId = found.who.id;
-      else if (found.kind === 'some' && y.send_udhaar) return this.ask(s, q, d, 'buyer', 'choice', `Kaun sa ${d.heard}?`,
-        [...found.options.slice(0, 4).map((o) => ({ label: o.name, value: o.id })), { label: 'Koi grahak nahi', value: 'skip' }]);
+      const pick = this.choose(d.heard, books, d.reply);
+      if (pick.id) d.buyerId = pick.id;
+      else if (pick.options.length) return this.ask(s, q, d, 'buyer', 'choice', `Kaun ${d.heard}?`, [...pick.options, { label: 'Koi grahak nahi', value: 'skip' }]);
     }
     const buyer = d.buyerId ? [...books.buyers.values()].find((b) => b.id === d.buyerId) : undefined;
     const toGrahak = !!y.send_udhaar && !!buyer && /^[6-9]\d{9}$/.test(buyer.phone);
     if (!/^[6-9]\d{9}$/.test(phone)) return { say: 'Aapka mobile number sahi nahi hai, yaad nahi rakh sakte' };
+    if (q.slot !== 'confirm' || value !== 'yes') {
+      d.at = due.at.toISOString();
+      return this.confirm(s, q, d, `Yaad lagayein: ${due.label}?`, 'Yaad lagao', [
+        `Kab: ${due.label}`, `Kya: ${what}`,
+        toGrahak ? `${buyer!.name} ko udhaar WhatsApp jayega` : `WhatsApp ${phone} par aayega${buyer ? ` (${buyer.name} ka udhaar saath mein)` : ''}`,
+        ...(y.send_udhaar && buyer && !toGrahak ? [`${buyer.name} ka number nahi hai, isliye sirf aapko`] : []),
+        ...(this.alerts.canSend() ? [] : ['WhatsApp abhi band hai']),
+      ]);
+    }
     const saved = await this.reminders.create(shopId, phone, { toPhone: phone, what, at: due.at, buyerId: buyer?.id ?? null, action: toGrahak ? 'udhaar_whatsapp' : 'note' });
     const off = this.alerts.canSend() ? '' : ' (WhatsApp abhi band hai, website par dikhega)';
     const where = toGrahak ? `${buyer!.name} ko udhaar WhatsApp jayega` : `WhatsApp ${phone} par aayega`;
@@ -712,8 +701,10 @@ export class PortalVoiceService {
     return { title: 'Hisab', columns: ['hisab', 'rakam'], rows: [...rows, { hisab: 'Kul', rakam: Math.round(total * 100) / 100 }], say: rows.length ? `Kul ${t}` : 'Hisab samajh nahi aaya', speak: rows.length ? `कुल ${Math.round(total).toLocaleString('en-IN')} रुपये` : '' };
   }
 
-  /** Today's bhav as said, each maal matched to the shop's own list. */
-  private async bhav(phone: string, shopId: string, r: Reply, books: Books) {
+  /** Today's bhav as said, each maal matched to the shop's own list: previewed, set on a tap. */
+  private async bhavStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined) {
+    const r = (q.data as { reply: Reply }).reply;
+    const books = await this.books(shopId);
     const rows = ((r.bhav ?? []) as { maal?: string; grade?: string; rate?: number }[]).filter((x) => x.rate && x.rate > 0);
     const set: { brandId: string; grade: '1' | '2' | '3'; ratePaise: number; label: string }[] = [];
     const missed: string[] = [];
@@ -721,12 +712,13 @@ export class PortalVoiceService {
       const m = books.brands.map((b) => ({ b, sc: score(x.maal ?? '', { name: b.name, code: '', phone: '' }) })).sort((a, b) => b.sc - a.sc)[0];
       if (!m || m.sc < 0.6) { missed.push(x.maal ?? '?'); continue; }
       const grade = x.grade === 'II' ? '2' : x.grade === 'III' ? '3' : '1';
-      set.push({ brandId: m.b.id, grade, ratePaise: Math.round(x.rate! * 100), label: `${m.b.name} ${x.grade ?? 'I'} ₹${x.rate}` });
+      set.push({ brandId: m.b.id, grade, ratePaise: Math.round(x.rate! * 100), label: `${m.b.name} ${x.grade ?? 'I'}: ₹${x.rate}` });
     }
     if (!set.length) return { say: missed.length ? `${missed.join(', ')} maal list mein nahi mila` : 'Bhav samajh nahi aaya, maal aur rate boliye' };
+    if (value !== 'yes') return this.confirm(s, q, q.data, 'Aaj ka bhav lagayein?', 'Bhav lagao', [...set.map((x) => x.label), ...(missed.length ? [`${missed.join(', ')}: list mein nahi`] : [])]);
     await this.entries.setBhav(phone, shopId, { rates: set.map(({ label: _l, ...x }) => x) });
     this.cache.delete(shopId);
-    return { say: `Aaj ka bhav: ${set.map((x) => x.label).join(', ')}${missed.length ? ` (${missed.join(', ')} nahi mila)` : ''}`, saved: { bhav: set.length } };
+    return { say: `Aaj ka bhav laga diya: ${set.map((x) => x.label).join(', ')}`, saved: { bhav: set.length } };
   }
 
   // ---------------------------------------------------------------- the books as the model reads them

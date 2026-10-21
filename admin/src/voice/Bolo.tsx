@@ -13,7 +13,7 @@ import { hush, speakText, unlock } from './player'
 import { toBase64, useRecorder } from './useRecorder'
 
 type Reply = { transcript: string; kind: string; say: string }
-type Ask = { question: string; expect: 'phone' | 'choice' | 'yes' | 'number' | 'text'; options: { label: string; value: string }[]; detail?: string[] }
+type Ask = { question: string; expect: 'phone' | 'choice' | 'yes' | 'number' | 'text'; options: { label: string; value: string }[]; detail?: string[]; tap?: boolean }
 type Turn = {
   session?: string | null; ask?: Ask; say?: string; call?: { phone: string; name: string }
   go?: { shopId: string; buyerId: string }; sent?: { buyerId: string }; saved?: unknown
@@ -94,9 +94,11 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
       if (r.ask) {
         setAsked(r.ask); setTyped(''); setTurn(null); setTitle(r.ask.question); setPhase('ask')
         sending.current = false
-        // Listen again once Bolo has finished asking — never to its own voice.
+        // A preview waits for a tap — the mic stays off. A question listens again once Bolo has
+        // finished asking, never to its own voice.
+        const tap = !!r.ask.tap
         void speakText(shopId, r.ask.question, speakLocal).then((ms) => {
-          setTimeout(() => { if (inFlight.current === ctl) void rec.start().catch(() => {}) }, ms + 250)
+          if (!tap) setTimeout(() => { if (inFlight.current === ctl) void rec.start().catch(() => {}) }, ms + 250)
         })
         return
       }
@@ -185,11 +187,11 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
           {phase === 'thinking' && <div className="bolo-spin" aria-hidden />}
           {phase === 'ask' && asked && (
             <div className="bolo-ask">
-              <div ref={orb} className="bolo-orb small" aria-hidden><MicIcon /></div>
+              {!asked.tap && <div ref={orb} className="bolo-orb small" aria-hidden><MicIcon /></div>}
               {asked.detail?.length ? <div className="bolo-detail">{asked.detail.map((l, i) => <div key={i}>{l}</div>)}</div> : null}
               {asked.options.length > 0 && (
                 <div className="bolo-opts">
-                  {asked.options.map((o) => <button key={o.value} type="button" className="btn line" onClick={() => void answer({ pick: o.value })}>{o.label}</button>)}
+                  {asked.options.map((o) => <button key={o.value} type="button" className={`btn ${asked.tap && o.value === 'yes' ? 'primary' : 'line'}`} onClick={() => void answer({ pick: o.value })}>{o.label}</button>)}
                 </div>
               )}
               {(asked.expect === 'phone' || asked.expect === 'text' || asked.expect === 'number') && (
@@ -207,7 +209,7 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
           {phase === 'answer' && !turn?.cards?.length && turn?.reply?.kind === 'answer' && <p className="bolo-say">{turn.reply.say}</p>}
         </div>
         <div className="bolo-ft">
-          {phase === 'listening' || phase === 'ask'
+          {phase === 'ask' && asked?.tap ? null : phase === 'listening' || phase === 'ask'
             ? <button type="button" className="btn primary" autoFocus={phase === 'listening'} onClick={() => { unlock(); send.current() }}>{t('Ho gaya')}</button>
             : phase !== 'thinking' && <button type="button" className="btn primary" autoFocus onClick={() => { unlock(); void listen() }}>{turn?.say || turn?.answer || turn?.cards?.length ? t('Aur boliye') : t('Phir boliye')}</button>}
         </div>

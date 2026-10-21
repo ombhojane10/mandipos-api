@@ -8,7 +8,7 @@ export type Expect = 'phone' | 'choice' | 'yes' | 'number' | 'text'
 export type Option = { label: string; value: string }
 export type Pending = {
   /** The job: what happens once the missing piece is in. */
-  job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open' | 'slip' | 'gaadi' | 'yaad'
+  job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open' | 'slip' | 'gaadi' | 'yaad' | 'bhav'
   /** What was asked and how to read the answer. */
   expect: Expect
   slot: 'buyer' | 'phone' | 'confirm' | 'name' | 'gaadi' | 'qty' | 'rate' | 'number' | 'maal' | 'supplier' | 'when' | 'pick' | 'cash'

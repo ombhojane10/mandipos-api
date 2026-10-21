@@ -12,12 +12,12 @@ export type Resolution =
   | { kind: 'some'; options: Scored[] }
   | { kind: 'none' }
 
-/** Hinglish spellings of one sound folded together: "Jagreeti" = "Jagriti", "Wasim" = "Vasim". */
-export function fold(s: string): string {
+/** Hinglish spellings of one sound folded together: "Jagreeti" = "Jagriti", "Wasim" = "Vasim", "Rajveer" = "Rajbeer". */
+export function fold(s: string, drop = /\b(bhai|ji|sahab|saheb|seth|bhaiya|wale|wala|traders?|fruits?|co|company|and|sons)\b/g): string {
   return s.toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\b(bhai|ji|sahab|saheb|seth|bhaiya|wale|wala|traders?|fruits?|co|company|and|sons)\b/g, ' ')
-    .replace(/ph/g, 'f').replace(/w/g, 'v').replace(/z/g, 'j').replace(/sh/g, 's').replace(/kh/g, 'k').replace(/gh/g, 'g')
+    .replace(drop, ' ')
+    .replace(/ph/g, 'f').replace(/bh/g, 'b').replace(/[wb]/g, 'v').replace(/z/g, 'j').replace(/sh/g, 's').replace(/kh/g, 'k').replace(/gh/g, 'g')
     .replace(/aa/g, 'a').replace(/ee|ii/g, 'i').replace(/oo|uu/g, 'u').replace(/y\b/g, 'i')
     .replace(/(.)\1+/g, '$1')
     .replace(/\s+/g, ' ').trim()
@@ -54,6 +54,19 @@ export function score(heard: string, p: Pick<Person, 'name' | 'code' | 'phone'>)
   const d = lev(h.replace(/\s/g, ''), n.replace(/\s/g, ''))
   const ratio = 1 - d / Math.max(h.replace(/\s/g, '').length, n.replace(/\s/g, '').length)
   return ratio >= 0.75 ? ratio * 0.85 : 0
+}
+
+/** A name as it must match to be "exactly" that grahak: spellings folded, only honorifics dropped ("Bholu" is not "Bholu Traders"). */
+export function key(s: string): string {
+  return fold(s, /\b(bhai|ji|sahab|saheb|seth|bhaiya)\b/g);
+}
+
+/** 0–1: how close a name sounds even when it is not the same name ("Reliance Digital" ~ "Reliance Retail India Ltd"). */
+export function near(heard: string, name: string): number {
+  const ht = fold(heard).split(' ').filter(Boolean), nt = fold(name).split(' ').filter(Boolean);
+  if (!ht.length || !nt.length) return 0;
+  const best = (w: string) => Math.max(...nt.map((x) => 1 - lev(w, x) / Math.max(w.length, x.length)));
+  return ht.reduce((a, w) => a + best(w), 0) / ht.length;
 }
 
 /** A clear winner, a short list to choose from, or nobody. [hintId]: the model's pick, if any. */
