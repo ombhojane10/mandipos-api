@@ -67,7 +67,7 @@ export class InsightsService {
                 (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id) AS buy,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
                 (SELECT COALESCE(SUM(l.qty::bigint * l.rate_paise), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sales,
-                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'spoiled') AS spoiled
+                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled
          FROM trucks t JOIN (${TRUCK_COST}) tc ON tc.id = t.id
          WHERE ${view === 'past' ? 't.closed_at IS NOT NULL' : 't.closed_at IS NULL'}
          ORDER BY ${view === 'past' ? 't.closed_at DESC LIMIT 300' : 't.arrived_at'}`)).rows;

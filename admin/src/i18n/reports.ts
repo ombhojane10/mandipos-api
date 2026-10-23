@@ -169,6 +169,7 @@ export const REPORTS: Record<string, readonly [string, string]> = {
   'Reject ki gayi': ['Rejected', 'रिजेक्ट की गई'],
   'Dukaan {n}': ['Shop {n}', 'दुकान {n}'],
   'Amrud': ['Guava', 'अमरूद'],
+  'Angoor': ['Grapes', 'अंगूर'],
   'Nariyal': ['Coconut', 'नारियल'],
   'Approve': ['Approve', 'मंज़ूर करें'],
   'Reject': ['Reject', 'रिजेक्ट करें'],

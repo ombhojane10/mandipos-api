@@ -77,7 +77,7 @@ export function Settings({ shopId }: { shopId: string }) {
           <Row label={t('Phad')}>{text('phad', 40, { placeholder: 'B-142' })}</Row>
         </>
         <Row label="GSTIN">{text('gstin', 15, { upper: true })}</Row>
-        <Row label={t('Maal')}><span className="set-static">{f.commodity === 'amrud' ? t('Amrud') : t('Nariyal')}</span></Row>
+        <Row label={t('Maal')}><span className="set-static">{f.commodity === 'amrud' ? t('Amrud') : f.commodity === 'angoor' ? t('Angoor') : t('Nariyal')}</span></Row>
       </Section>
 
       <Section title={t('Parchi')}>

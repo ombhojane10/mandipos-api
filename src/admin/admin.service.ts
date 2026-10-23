@@ -144,7 +144,7 @@ export class AdminService {
              (SELECT COALESCE(SUM(billed_qty + free_qty),0) FROM truck_grades g WHERE g.truck_id = t.id)
                - (SELECT COALESCE(SUM(qty),0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
              (SELECT COALESCE(SUM(l.qty),0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
-             (SELECT COALESCE(SUM(qty),0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'spoiled') AS spoiled
+             (SELECT COALESCE(SUM(qty),0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled
            FROM trucks t WHERE t.closed_at IS NULL) x`, []);
 
       const series = (await tx.query<{ d: string; sales: string; slips: string }>(

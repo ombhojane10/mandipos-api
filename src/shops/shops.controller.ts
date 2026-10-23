@@ -16,7 +16,7 @@ const CreateShopBody = z.object({
   role: z.enum(['owner', 'manager', 'munim']).default('owner'),
   ownerName: z.string().trim().max(80).default(''),
   // What the shop sells. Tender coconut is every shop so far; amrud is sold on commission.
-  commodity: z.enum(['nariyal', 'amrud']).default('nariyal'),
+  commodity: z.enum(['nariyal', 'amrud', 'angoor']).default('nariyal'),
 });
 
 const JoinBody = z.object({ code: z.string().regex(/^\d{6}$/, 'must be the 6-digit shop code') });
@@ -137,7 +137,14 @@ export class ShopsController {
   @Post('commodity')
   @HttpCode(204)
   async commodity(@Me() p: Principal, @Body() body: unknown) {
-    await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(['nariyal', 'amrud']) }), body).commodity);
+    await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(['nariyal', 'amrud', 'angoor']) }), body).commodity);
+  }
+
+  /** Admin: the backup code for the accountant lock (angoor). */
+  @Post('staff-backup-code')
+  @HttpCode(204)
+  async staffBackupCode(@Me() p: Principal, @Body() body: unknown) {
+    await this.accounts.setStaffBackupCode(p, parse(z.object({ code: z.string().trim().regex(/^[0-9]{2,8}$/, '2 to 8 digits') }), body).code);
   }
 
   /** Any member: the shop's WiFi printer, which every device of the shop then prints to. */

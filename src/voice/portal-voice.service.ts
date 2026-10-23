@@ -795,7 +795,7 @@ export class PortalVoiceService {
     const last = days.rows[0]?.d?.slice(0, 10) ?? null;
     const day = last && last < today ? last : today;
     const weekday = new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-    lines.push(`Date: ${today} (${weekday}).${day !== today ? ` Working day: ${day} (no slips yet today, so "aaj" means ${day} and "kal" the day before it).` : ''} Commodity: ${opts.commodity === 'amrud' ? 'amrud (guava), sold per box' : 'nariyal (tender coconut), sold per dana'}.`);
+    lines.push(`Date: ${today} (${weekday}).${day !== today ? ` Working day: ${day} (no slips yet today, so "aaj" means ${day} and "kal" the day before it).` : ''} Commodity: ${opts.commodity === 'amrud' ? 'amrud (guava), sold per box' : opts.commodity === 'angoor' ? 'angoor (grapes), sold per box' : 'nariyal (tender coconut), sold per dana'}.`);
     const rates = new Map(opts.rates.map((x) => [`${x.brandId}:${x.grade}`, x.ratePaise] as const));
     const books = { text: lines.join('\n'), at: Date.now(), buyers, trucks, day, brands: opts.brands, rates, suppliers: opts.suppliers };
     this.cache.set(shopId, books);

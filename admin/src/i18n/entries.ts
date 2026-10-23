@@ -40,6 +40,7 @@ export const ENTRIES: Record<string, readonly [string, string]> = {
   // Nayi parchi
   'Nayi Parchi': ['New Slip', 'नई पर्ची'],
   'Amrud ki parchi app se banayein.': ['Make guava slips in the app.', 'अमरूद की पर्ची ऐप से बनाएं।'],
+  'Angoor ki parchi app se banayein.': ['Make grapes slips in the app.', 'अंगूर की पर्ची ऐप से बनाएं।'],
   'Koi khuli gaadi nahi': ['No open truck', 'कोई खुली गाड़ी नहीं'],
   'Koi khuli gaadi nahi — pehle Nayi Gaadi jodein': ['No open truck — add a New Truck first', 'कोई खुली गाड़ी नहीं — पहले नई गाड़ी जोड़ें'],
   'Nag daalein': ['Enter pcs', 'नग डालें'],
@@ -121,6 +122,7 @@ export const ENTRIES: Record<string, readonly [string, string]> = {
   // Nayi gaadi
   'Nayi Gaadi': ['New Truck', 'नई गाड़ी'],
   'Amrud ki party app se jodein.': ['Add guava lots in the app.', 'अमरूद की पार्टी ऐप से जोड़ें।'],
+  'Angoor ki party app se jodein.': ['Add grapes lots in the app.', 'अंगूर की पार्टी ऐप से जोड़ें।'],
   'Gaadi number daalein': ['Enter truck number', 'गाड़ी नंबर डालें'],
   'Dana daalein': ['Enter pcs', 'दाना डालें'],
   'Gaadi {n} jud gayi': ['Truck {n} added', 'गाड़ी {n} जुड़ गई'],
@@ -155,6 +157,7 @@ export const ENTRIES: Record<string, readonly [string, string]> = {
   'Dukaan no.': ['Shop no.', 'दुकान नं.'],
   'Phad': ['Phad', 'फड़'],
   'Amrud': ['Guava', 'अमरूद'],
+  'Angoor': ['Grapes', 'अंगूर'],
   'Nariyal': ['Coconut', 'नारियल'],
   'Parchi': ['Slip', 'पर्ची'],
   'Parchi code': ['Slip code', 'पर्ची कोड'],

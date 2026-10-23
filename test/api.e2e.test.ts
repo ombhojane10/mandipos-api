@@ -198,6 +198,64 @@ describe('amrud', () => {
   });
 });
 
+describe('angoor', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('syncs where the gaadi stands, box weight, track-only APMC, pickups, store/broken and the accountant roster', async () => {
+    const s = await login('9829200001');
+    const res = await createApproved(s.accessToken, { name: 'Angoor Shop', mandi: 'Azadpur', shopNo: 'C-22', role: 'owner', commodity: 'angoor' });
+    const owner = res.accessToken;
+    expect(res.me.shop.commodity).toBe('angoor');
+    expect(res.me.shop.staffBackupCode).toBe('99');
+    await http().post('/v1/shops/staff-backup-code').set(auth(owner)).send({ code: '4321' }).expect(204);
+    await http().post('/v1/shops/staff-backup-code').set(auth(owner)).send({ code: 'ab' }).expect(400);
+    expect((await http().get('/v1/me').set(auth(owner))).body.shop.staffBackupCode).toBe('4321');
+
+    // Gaadi 3289 from Manat, standing at Pillar 320; 50 boxes of Royal at 10 kg, our own bhav ₹1,200.
+    // 10 Royal sold for cash at ₹1,500 plus ₹10 a box mazdoori: ₹15,100, APMC ₹150 kept aside.
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7(), billId = uuidv7(), staffId = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Royal', sort_order: 1, shelf_days: 7 } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '3289', supplier: 'Manat', arrived_at: t, location: 'Pillar 320, Shed 11' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 50, received_qty: 50, rate_paise: 120000, box_grams: 10000 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: day, pay_mode: 'cash', total_paise: 1510000, paid_paise: 1510000, cash_paise: 1510000, chungi_paise: 10000, apmc_paise: 15000, slip_no: 1 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 10, rate_paise: 150000 } },
+      { table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: billId, qty: 6 } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 20, business_date: day, kind: 'store', note: 'Box 32' } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 2, business_date: day, kind: 'broken' } },
+      { table: 'staff', row: { id: staffId, created_at: t, updated_at: t, name: 'Nilesh', passcode: '5650' } },
+      { table: 'bill_voids', row: { id: uuidv7(), created_at: t, bill_id: billId, slip_no: 1, reason: 'deleted', staff_name: 'Nilesh' } },
+    ] }).expect(200);
+    expect(pushed.body.results.map((r: any) => r.status)).toEqual(Array(10).fill('applied'));
+
+    const bad = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, business_date: day, kind: 'storee' } },
+      { table: 'staff', row: { id: uuidv7(), created_at: t, updated_at: t, name: 'X', passcode: 'abcd' } },
+    ] }).expect(200);
+    expect(bad.body.results.map((r: any) => r.status)).toEqual(['rejected', 'rejected']);
+
+    // An older terminal that closes the truck without knowing `location` leaves it alone.
+    const later = new Date(Date.now() + 1000).toISOString();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: later, number: '3289', supplier: 'Manat', arrived_at: t, closed_at: later } },
+    ] }).expect(200);
+
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200);
+    const rows = (table: string) => pulled.body.changes.filter((c: any) => c.table === table).map((c: any) => c.row);
+    expect(rows('bills')[0]).toMatchObject({ total_paise: 1510000, apmc_paise: 15000, chungi_paise: 10000 });
+    expect(rows('truck_grades')[0]).toMatchObject({ box_grams: 10000, rate_paise: 120000 });
+    expect(rows('trucks').at(-1)).toMatchObject({ location: 'Pillar 320, Shed 11' });
+    expect(rows('trucks').at(-1).closed_at).toBeTruthy();
+    expect(rows('pickups')[0]).toMatchObject({ bill_id: billId, qty: 6 });
+    expect(rows('spoilage').map((r: any) => [r.kind, r.note])).toEqual(expect.arrayContaining([['store', 'Box 32'], ['broken', '']]));
+    expect(rows('staff')[0]).toMatchObject({ name: 'Nilesh', passcode: '5650', hidden: false });
+    expect(rows('bill_voids')[0]).toMatchObject({ staff_name: 'Nilesh' });
+
+  });
+});
+
 describe('slip limit', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 

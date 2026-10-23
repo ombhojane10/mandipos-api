@@ -75,7 +75,7 @@ export class EntriesService {
                 (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id)
                   - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
-                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'spoiled') AS spoiled
+                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled
          FROM trucks t WHERE t.closed_at IS NULL ORDER BY t.arrived_at DESC`)).rows.map((t) => {
         const lots = t.lots ?? [];
         // The maal a slip off this gaadi is booked under: the lot with the most (Models.sellBrandId).
@@ -133,13 +133,13 @@ export class EntriesService {
 
     const pre = await this.db.withShop(shopId, async (tx) => {
       const shop = (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0];
-      if (shop.commodity === 'amrud') throw new UnprocessableEntityException('Amrud ki parchi app se banayein');
+      if (shop.commodity !== 'nariyal') throw new UnprocessableEntityException('Is maal ki parchi app se banayein');
       const truck = (await tx.query<{ id: string; recv: string; sold: string; spoiled: string }>(
         `SELECT t.id,
                 (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id)
                   - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
-                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'spoiled') AS spoiled
+                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled
          FROM trucks t WHERE t.id = $1 AND (t.closed_at IS NULL OR t.id = $2)`, [input.truckId, editing?.truck_id ?? null])).rows[0];
       if (!truck) throw new BadRequestException('Yeh gaadi khuli nahi hai');
       // The dana the slip being edited took off this gaadi come back when it is replaced.
@@ -471,7 +471,7 @@ export class EntriesService {
     const now = new Date().toISOString();
     const { supplier, brandIds } = await this.db.withShop(shopId, async (tx) => {
       const shop = (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0];
-      if (shop.commodity === 'amrud') throw new UnprocessableEntityException('Amrud ki party app se jodein');
+      if (shop.commodity !== 'nariyal') throw new UnprocessableEntityException('Is maal ki party app se jodein');
       const known = (await tx.query<{ s: string }>(`SELECT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows
         .find((r) => nameKey(r.s) === nameKey(input.supplier))?.s;
       const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;

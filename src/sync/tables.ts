@@ -69,6 +69,9 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       // Arhat plus market fee, as an amount; part of landed cost.
       commission_paise: paise.default(0),
       closed_at: at.nullable().default(null),
+      // Angoor: where the gaadi stands ("Pillar 320, Shed 11"). Optional with no default, so an
+      // older terminal that edits or closes the truck leaves it as it is instead of blanking it.
+      location: z.string().trim().max(80).optional(),
     }),
   },
   // A lot: this many nuts of one brand and grade off one truck, at the rate they were bought.
@@ -78,6 +81,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       id, created_at: at, truck_id: id, brand_id: id, grade,
       billed_qty: z.number().int().min(0), free_qty: z.number().int().min(0).default(0),
       received_qty: z.number().int().min(0), rate_paise: paise,
+      // Weight of one box in grams (angoor: 10 kg = 10000); 0 = not said.
+      box_grams: z.number().int().min(0).max(1_000_000).default(0),
     }),
   },
   // The parchi. total_paise is the goods — what the customer owes. labour_paise rides along
@@ -104,6 +109,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       chungi_paise: paise.default(0),
       // The shop's bank account the UPI part went to ("ICICI ··4521"); '' = not said.
       upi_bank: text(80),
+      // Angoor: the 1% APMC fee on the goods, for the shop's books only — never inside total_paise.
+      apmc_paise: paise.default(0),
     }),
   },
   // Udhaar not from a slip: a grahak's balance from the old book, or credit added by hand.
@@ -124,6 +131,8 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       slip_no: z.number().int().positive().max(9_999_999).nullable().default(null),
       // A paid slip deleted with its money handed back ('refunded') or kept as advance ('advance').
       reason: z.enum(['deleted', 'edited', 'refunded', 'advance']).default('deleted'),
+      // Who cancelled or edited it (angoor's accountant lock); '' on older terminals.
+      staff_name: text(60),
     }),
   },
   bill_lines: {
@@ -174,7 +183,23 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'fact',
     row: z.object({
       id, created_at: at, truck_id: id, brand_id: id, grade, qty, business_date: day,
-      kind: z.enum(['spoiled', 'correction']).default('spoiled'),
+      // store = sent back to cold storage, broken = broken crates (angoor); the note says where/why.
+      kind: z.enum(['spoiled', 'correction', 'store', 'broken']).default('spoiled'),
+      note: text(200),
+    }),
+  },
+  // Boxes collected at the gaadi against a slip (angoor: the labour scans the slip's QR).
+  pickups: {
+    kind: 'fact',
+    row: z.object({ id, created_at: at, bill_id: id, qty, note: text(200) }),
+  },
+  // Accountants with their own passcode (angoor). The passcode is checked on the terminal.
+  staff: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at,
+      name: z.string().trim().min(1).max(60), passcode: z.string().trim().regex(/^[0-9]{0,8}$/).default(''),
+      hidden: bool.default(false),
     }),
   },
   // The daybook's manual entries. Cash sales and vasooli are never written here — they are
