@@ -8,11 +8,11 @@ export type DeviceInfo = { label: string; platform: string; appVersion: string }
 export type MeView = {
   user: { id: string; phone: string; name: string };
   device: { id: string; code: string | null };
-  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; dispatchPhone: string; slipCode: string; udhaarRates: boolean; slipPhones: string[]; address: string; bankAccounts: BankAccount[]; commodity: string; staffBackupCode: string; printer: { host: string; dots: number } } | null;
+  shop: { id: string; name: string; mandi: string; shopNo: string; phad: string; gstin: string; role: string; slipLimitPaise: number; phone: string; dispatchPhone: string; slipCode: string; udhaarRates: boolean; slipPhones: string[]; address: string; bankAccounts: BankAccount[]; commodity: string; staffBackupCode: string; apmcOn: boolean; slipWhatsapp: boolean; printer: { host: string; dots: number } } | null;
   /** The shop this number registered that MandiPlus hasn't approved yet (or turned down). */
   pendingShop: PendingShop | null;
   /** Every approved shop this number belongs to; a device switches between them. */
-  shops: { id: string; name: string; mandi: string; role: string; current: boolean }[];
+  shops: { id: string; name: string; mandi: string; role: string; commodity: string; current: boolean }[];
 };
 
 export type PendingShop = { id: string; name: string; mandi: string; status: 'pending' | 'rejected'; reason: string; createdAt: string };
@@ -283,6 +283,22 @@ export class AccountsService {
     });
   }
 
+  /** Admin: whether new slips carry the 1% APMC (angoor). */
+  async setApmc(p: Principal, on: boolean) {
+    return this.db.tx(async (tx) => {
+      await this.requireAdmin(tx, p);
+      await tx.query(`UPDATE shops SET apmc_on = $2 WHERE id = $1`, [p.shopId, on]);
+    });
+  }
+
+  /** Admin: whether each slip goes to the grahak on WhatsApp as it is saved. */
+  async setSlipWhatsapp(p: Principal, on: boolean) {
+    return this.db.tx(async (tx) => {
+      await this.requireAdmin(tx, p);
+      await tx.query(`UPDATE shops SET slip_whatsapp = $2 WHERE id = $1`, [p.shopId, on]);
+    });
+  }
+
   /** Any member: what the shop sells — tender coconut, amrud or angoor. */
   async setCommodity(p: Principal, commodity: string) {
     return this.db.tx(async (tx) => {
@@ -385,10 +401,10 @@ export class AccountsService {
   private async me(tx: Tx, p: Principal): Promise<MeView> {
     const { rows } = await tx.query<{
       user_id: string; phone: string; user_name: string; device_id: string; code: string | null;
-      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null; shop_phone: string | null; dispatch_phone: string | null; slip_code: string | null; udhaar_rates: boolean | null; slip_phones: string[] | null; address: string | null; bank_accounts: BankAccount[] | null; commodity: string | null; staff_backup_code: string | null; printer_host: string | null; printer_dots: number | null;
+      shop_id: string | null; shop_name: string | null; mandi: string | null; shop_no: string | null; phad: string | null; gstin: string | null; role: string | null; slip_limit_paise: string | null; shop_phone: string | null; dispatch_phone: string | null; slip_code: string | null; udhaar_rates: boolean | null; slip_phones: string[] | null; address: string | null; bank_accounts: BankAccount[] | null; commodity: string | null; staff_backup_code: string | null; apmc_on: boolean | null; slip_whatsapp: boolean | null; printer_host: string | null; printer_dots: number | null;
     }>(
       `SELECT u.id AS user_id, u.phone, u.name AS user_name, d.id AS device_id, d.code,
-              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise, s.phone AS shop_phone, s.dispatch_phone, s.slip_code, s.udhaar_rates, s.slip_phones, s.address, s.bank_accounts, s.commodity, s.staff_backup_code, s.printer_host, s.printer_dots
+              s.id AS shop_id, s.name AS shop_name, s.mandi, s.shop_no, s.phad, s.gstin, m.role, s.slip_limit_paise, s.phone AS shop_phone, s.dispatch_phone, s.slip_code, s.udhaar_rates, s.slip_phones, s.address, s.bank_accounts, s.commodity, s.staff_backup_code, s.apmc_on, s.slip_whatsapp, s.printer_host, s.printer_dots
        FROM devices d JOIN users u ON u.id = d.user_id
        LEFT JOIN shops s ON s.id = d.shop_id
        LEFT JOIN shop_members m ON m.shop_id = d.shop_id AND m.user_id = d.user_id
@@ -396,8 +412,8 @@ export class AccountsService {
       [p.deviceId, p.userId],
     );
     const r = rows[0];
-    const shops = (await tx.query<{ id: string; name: string; mandi: string; role: string }>(
-      `SELECT s.id, s.name, s.mandi, m.role FROM shop_members m JOIN shops s ON s.id = m.shop_id
+    const shops = (await tx.query<{ id: string; name: string; mandi: string; role: string; commodity: string }>(
+      `SELECT s.id, s.name, s.mandi, m.role, s.commodity FROM shop_members m JOIN shops s ON s.id = m.shop_id
        WHERE m.user_id = $1 AND s.approved_at IS NOT NULL ORDER BY m.created_at`, [p.userId])).rows;
     // A shop asked for and not yet approved — or turned down — shows whether or not a shop is open.
     const pending = (await tx.query<{ id: string; name: string; mandi: string; rejected_at: Date | null; reject_reason: string; created_at: Date }>(
@@ -405,14 +421,14 @@ export class AccountsService {
        WHERE created_by = $1 AND approved_at IS NULL ORDER BY created_at DESC LIMIT 1`, [p.userId],
     )).rows[0];
     return {
-      shops: shops.map((s) => ({ id: s.id, name: s.name, mandi: s.mandi, role: s.role, current: s.id === r.shop_id })),
+      shops: shops.map((s) => ({ id: s.id, name: s.name, mandi: s.mandi, role: s.role, commodity: s.commodity, current: s.id === r.shop_id })),
       pendingShop: pending
         ? { id: pending.id, name: pending.name, mandi: pending.mandi, status: pending.rejected_at ? 'rejected' : 'pending', reason: pending.reject_reason, createdAt: pending.created_at.toISOString() }
         : null,
       user: { id: r.user_id, phone: r.phone, name: r.user_name },
       device: { id: r.device_id, code: r.code },
       shop: r.shop_id
-        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0), phone: r.shop_phone ?? '', dispatchPhone: r.dispatch_phone ?? '', slipCode: r.slip_code ?? '', udhaarRates: r.udhaar_rates ?? false, slipPhones: r.slip_phones ?? [], address: r.address ?? '', bankAccounts: r.bank_accounts ?? [], commodity: r.commodity ?? 'nariyal', staffBackupCode: r.staff_backup_code ?? '99', printer: { host: r.printer_host ?? '', dots: r.printer_dots ?? 576 } }
+        ? { id: r.shop_id, name: r.shop_name!, mandi: r.mandi!, shopNo: r.shop_no!, phad: r.phad ?? '', gstin: r.gstin!, role: r.role!, slipLimitPaise: Number(r.slip_limit_paise ?? 0), phone: r.shop_phone ?? '', dispatchPhone: r.dispatch_phone ?? '', slipCode: r.slip_code ?? '', udhaarRates: r.udhaar_rates ?? false, slipPhones: r.slip_phones ?? [], address: r.address ?? '', bankAccounts: r.bank_accounts ?? [], commodity: r.commodity ?? 'nariyal', staffBackupCode: r.staff_backup_code ?? '99', apmcOn: r.apmc_on ?? true, slipWhatsapp: r.slip_whatsapp ?? false, printer: { host: r.printer_host ?? '', dots: r.printer_dots ?? 576 } }
         : null,
     };
   }

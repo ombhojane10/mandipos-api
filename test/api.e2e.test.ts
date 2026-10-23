@@ -256,6 +256,47 @@ describe('angoor', () => {
   });
 });
 
+describe('angoor round 2', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('switches APMC and slip WhatsApp, syncs samples and supplier phones, and holds sends until the template is approved', async () => {
+    const s = await login('9829200011');
+    const res = await createApproved(s.accessToken, { name: 'Angoor Two', mandi: 'Azadpur', shopNo: 'C-23', role: 'owner', commodity: 'angoor' });
+    const owner = res.accessToken;
+    expect(res.me.shop).toMatchObject({ apmcOn: true, slipWhatsapp: false });
+    expect(res.me.shops).toEqual([expect.objectContaining({ name: 'Angoor Two', commodity: 'angoor' })]);
+    await http().post('/v1/shops/apmc').set(auth(owner)).send({ on: false }).expect(204);
+    await http().post('/v1/shops/slip-whatsapp').set(auth(owner)).send({ on: true }).expect(204);
+    expect((await http().get('/v1/me').set(auth(owner))).body.shop).toMatchObject({ apmcOn: false, slipWhatsapp: true });
+
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7(), billId = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Rocket', sort_order: 1, shelf_days: 7 } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '3289', supplier: 'Sai', arrived_at: t } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 300, received_qty: 300, rate_paise: 0, box_grams: 15000 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: day, pay_mode: 'cash', total_paise: 50000, paid_paise: 50000, cash_paise: 50000, slip_no: 1 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, rate_paise: 50000 } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, business_date: day, kind: 'sample', note: '5 piece' } },
+      { table: 'supplier_phones', row: { id: uuidv7(), created_at: t, updated_at: t, name: 'Sai', phone: '9606995351' } },
+    ] }).expect(200);
+    expect(pushed.body.results.map((r: any) => r.status)).toEqual(Array(7).fill('applied'));
+    const bad = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, business_date: day, kind: 'samplee' } },
+      { table: 'supplier_phones', row: { id: uuidv7(), created_at: t, updated_at: t, name: 'X', phone: '12345' } },
+    ] }).expect(200);
+    expect(bad.body.results.map((r: any) => r.status)).toEqual(['rejected', 'rejected']);
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200);
+    expect(pulled.body.changes.find((c: any) => c.table === 'supplier_phones').row).toMatchObject({ name: 'Sai', phone: '9606995351' });
+
+    // Nothing goes out before Meta approves the template, and a bad number is refused first.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]).toString('base64');
+    await http().post('/v1/whatsapp/slip').set(auth(owner)).send({ id: billId, phone: '9606995351', image: png, params: ['Cash'] }).expect(409);
+    await http().post('/v1/whatsapp/beejak').set(auth(owner)).send({ id: truckId, phone: '123', image: png, params: ['Sai'] }).expect(400);
+  });
+});
+
 describe('slip limit', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 

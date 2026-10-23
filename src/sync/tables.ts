@@ -183,8 +183,9 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'fact',
     row: z.object({
       id, created_at: at, truck_id: id, brand_id: id, grade, qty, business_date: day,
-      // store = sent back to cold storage, broken = broken crates (angoor); the note says where/why.
-      kind: z.enum(['spoiled', 'correction', 'store', 'broken']).default('spoiled'),
+      // store = sent back to cold storage, broken = broken crates, sample = opened for the display
+      // pieces (angoor); the note says where/why.
+      kind: z.enum(['spoiled', 'correction', 'store', 'broken', 'sample']).default('spoiled'),
       note: text(200),
     }),
   },
@@ -192,6 +193,14 @@ export const SYNC_TABLES: Record<string, TableDef> = {
   pickups: {
     kind: 'fact',
     row: z.object({ id, created_at: at, bill_id: id, qty, note: text(200) }),
+  },
+  // The WhatsApp number a party's beejak goes to, per supplier name (angoor).
+  supplier_phones: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at,
+      name: z.string().trim().min(1).max(120), phone: z.string().trim().regex(/^([6-9][0-9]{9})?$/).default(''),
+    }),
   },
   // Accountants with their own passcode (angoor). The passcode is checked on the terminal.
   staff: {

@@ -140,6 +140,20 @@ export class ShopsController {
     await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(['nariyal', 'amrud', 'angoor']) }), body).commodity);
   }
 
+  /** Admin: APMC on new slips, on or off (angoor). */
+  @Post('apmc')
+  @HttpCode(204)
+  async apmc(@Me() p: Principal, @Body() body: unknown) {
+    await this.accounts.setApmc(p, parse(z.object({ on: z.boolean() }), body).on);
+  }
+
+  /** Admin: send each slip to the grahak on WhatsApp as it is saved. */
+  @Post('slip-whatsapp')
+  @HttpCode(204)
+  async slipWhatsapp(@Me() p: Principal, @Body() body: unknown) {
+    await this.accounts.setSlipWhatsapp(p, parse(z.object({ on: z.boolean() }), body).on);
+  }
+
   /** Admin: the backup code for the accountant lock (angoor). */
   @Post('staff-backup-code')
   @HttpCode(204)

@@ -30,6 +30,10 @@ const schema = z
     UDHAAR_PDF_TEMPLATE: z.string().default('udhaar_khata_pdf_v1'),
     // Bolo's "kal mujhe yaad dilana": the reminder to the person who set it (UTILITY, hi).
     REMINDER_TEMPLATE: z.string().default('pos_yaad_dilao_v1'),
+    // Angoor: the slip to the grahak and the beejak to the party, as an image header (UTILITY, hi).
+    // Empty until Meta approves them (pos_parchi_v1 / pos_beejak_v1); sends answer 409 till then.
+    SLIP_TEMPLATE: z.string().default(''),
+    BEEJAK_TEMPLATE: z.string().default(''),
     /**
      * Grahak eKYC through ULIP's DigiLocker APIs (same account as the MandiPlus backend).
      * Unset = the eKYC screen says it is not switched on. A staging URL means test KYCs:
