@@ -66,7 +66,7 @@ const PACKINGS = ['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni'] 
 /** One cell as it is said: "505 dana", "₹1,25,000", "₹44.5" for a rate, a count plain. */
 function cellText(k: string, v: unknown): string {
   if (typeof v !== 'number') return String(v ?? '');
-  if (/dana|nag|qty|bacha$|bika$|aaya$|kharab$/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} dana`;
+  if (/dana|nag|qty|box|diye|bacha$|bika$|aaya$|kharab$/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} dana`;
   if (/parchiyan|parchi/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} parchi`;
   if (/count|ginti|kitne|baar/i.test(k)) return Math.round(v).toLocaleString('en-IN');
   if (/bhav|rate/i.test(k)) return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -996,7 +996,8 @@ export class PortalVoiceService {
     }
     // The answer is said from the rows themselves — no second model call, so no number can drift.
     const shown = result.columns ?? Object.keys(result.rows[0] ?? {}).filter((k) => k !== 'id' && !k.endsWith('_id'));
-    const say = sayRows(title, shown, result.rows);
+    // Grapes are counted in boxes: the same columns, said as box.
+    const say = books.commodity === 'angoor' ? sayRows(title, shown, result.rows).replace(/\bdana\b/g, 'box') : sayRows(title, shown, result.rows);
     return { title, ...result, say, speak: say };
   }
 

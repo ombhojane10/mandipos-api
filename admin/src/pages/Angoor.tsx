@@ -24,7 +24,7 @@ import { MicIcon } from '../voice/MicIcon'
 export type Desk = {
   from: string; to: string; commissionBps: number
   slips: { billId: string; slipNo: number | null; buyer: string; date: string; at: string; payMode: string; totalPaise: number
-    boxes: number; picked: number; left: number; lastPickAt: string | null; gaadis: { truckId: string; number: string; location: string; qty: number }[] }[]
+    boxes: number; picked: number; left: number; lastPickAt: string | null; firstPickAt: string | null; gaadis: { truckId: string; number: string; location: string; qty: number }[] }[]
   gaadis: Gaadi[]
   suppliers: { key: string; name: string; gaadis: { truckId: string; number: string }[]; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }[]
   days: { date: string; slips: number; goodsPaise: number; apmcPaise: number; labourPaise: number; labourPaidPaise: number }[]
@@ -99,7 +99,8 @@ export function Dispatch({ shopId }: { shopId: string }) {
                 {rows.map((s) => (
                   <tr key={s.billId} data-row tabIndex={0} onClick={() => openVoucher(shopId, s.billId)} onKeyDown={(e) => { if (e.key === 'Enter') openVoucher(shopId, s.billId) }}>
                     <td className="main-col"><b>{slipName(s)} · {s.buyer}</b>
-                      <small>{[period.from !== period.to ? shortDate(s.date) : '', time(s.at), s.lastPickAt ? t('diya {at}', { at: time(s.lastPickAt) }) : ''].filter(Boolean).join(' · ')}
+                      <small>{[period.from !== period.to ? shortDate(s.date) : '', t('Bill {at}', { at: time(s.at) }),
+                        s.firstPickAt ? t('Dispatch {at}', { at: s.lastPickAt && s.lastPickAt !== s.firstPickAt ? `${time(s.firstPickAt)}–${time(s.lastPickAt)}` : time(s.firstPickAt) }) : ''].filter(Boolean).join(' · ')}
                         <span className="show-sm"> · {s.gaadis.map((g) => g.number).join(', ')}</span></small></td>
                     <td className="opt-col">{s.gaadis.map((g) => <div key={g.truckId}><b>{g.number}</b>{g.location && <small className="muted"> · {g.location}</small>}</div>)}</td>
                     <td className="num opt-col money">{count(s.boxes)}</td>

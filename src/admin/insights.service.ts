@@ -135,11 +135,12 @@ export class InsightsService {
   async angoor(shopId: string, from: string, to: string, commissionBps: number) {
     if (from > to) throw new BadRequestException('from must be on or before to');
     return this.db.withShop(shopId, async (tx) => {
-      const slips = (await tx.query<{ id: string; slip_no: number | null; buyer: string; day: string; at: Date; pay_mode: string; total: string; boxes: string; picked: string; last_pick: Date | null; gaadis: { truckId: string; number: string; location: string; qty: number }[] }>(
+      const slips = (await tx.query<{ id: string; slip_no: number | null; buyer: string; day: string; at: Date; pay_mode: string; total: string; boxes: string; picked: string; last_pick: Date | null; first_pick: Date | null; gaadis: { truckId: string; number: string; location: string; qty: number }[] }>(
         `SELECT lb.id, lb.slip_no, lb.buyer_name AS buyer, lb.business_date::text AS day, lb.created_at AS at, lb.pay_mode, lb.total_paise AS total,
                 (SELECT COALESCE(SUM(qty), 0) FROM bill_lines l WHERE l.bill_id = lb.id) AS boxes,
                 (SELECT COALESCE(SUM(qty), 0) FROM pickups p WHERE p.bill_id = lb.id) AS picked,
                 (SELECT MAX(created_at) FROM pickups p WHERE p.bill_id = lb.id) AS last_pick,
+                (SELECT MIN(created_at) FROM pickups p WHERE p.bill_id = lb.id) AS first_pick,
                 (SELECT COALESCE(json_agg(json_build_object('truckId', t.id, 'number', t.number, 'location', t.location, 'qty', g.qty) ORDER BY t.number), '[]')
                  FROM (SELECT truck_id, SUM(qty)::int AS qty FROM bill_lines l WHERE l.bill_id = lb.id AND l.truck_id IS NOT NULL GROUP BY truck_id) g
                  JOIN trucks t ON t.id = g.truck_id) AS gaadis
@@ -147,7 +148,7 @@ export class InsightsService {
          ORDER BY lb.created_at DESC`, [from, to])).rows.map((r) => {
         const boxes = n(r.boxes), picked = Math.min(n(r.picked), boxes);
         return { billId: r.id, slipNo: r.slip_no, buyer: r.buyer, date: r.day, at: r.at, payMode: r.pay_mode, totalPaise: n(r.total),
-          boxes, picked, left: boxes - picked, lastPickAt: r.last_pick, gaadis: r.gaadis };
+          boxes, picked, left: boxes - picked, lastPickAt: r.last_pick, firstPickAt: r.first_pick, gaadis: r.gaadis };
       }).filter((s) => s.boxes > 0);
 
       // What is still to be handed over at each open gaadi, whatever day the slip was cut: a slip's

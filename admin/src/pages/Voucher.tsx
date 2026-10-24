@@ -15,6 +15,7 @@ type Bill = {
   payments: { id: string; at: string; amountPaise: number; receiptNo: number | null; voided: boolean }[]
   collected: { cashPaise: number; upiPaise: number }
   pickedQty?: number
+  pickups?: { at: string; qty: number; by: string }[]
   voided: { reason: string; at: string; by: string } | null
   delivery: { address: string; stand: string } | null
 }
@@ -129,6 +130,15 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
             <div className="b"><span>{b.openPaise > 0 ? t('Baaki') : t('Poora mila')}</span><span className={`money${b.openPaise > 0 ? ' due' : ' jama'}`}>{b.openPaise > 0 ? rupees(b.openPaise) : '✓'}</span></div>
             {b.labourPaise > 0 && <div className="muted"><span>{t('Mazdoori ({n} nag)', { n: count(b.packs) })}</span><span className="money">{rupees(b.labourPaise)}</span></div>}
           </div>
+          {!!b.pickups?.length && (
+            <div className="voucher-pay dispatch-log">
+              <div className="muted"><span>{t('Parchi kati')}</span><span>{time(b.at)}</span></div>
+              {b.pickups.map((p, i) => (
+                <div key={i}><span>{t('Dispatch')} · {p.at.slice(0, 10) !== b.at.slice(0, 10) ? `${date(p.at.slice(0, 10))} · ` : ''}{time(p.at)}{p.by ? ` · ${p.by}` : ''}</span><span className="money jama">{t('{n} box', { n: count(p.qty) })}</span></div>
+              ))}
+              <div className="b"><span>{qty - (b.pickedQty ?? 0) > 0 ? t('Dena baaki') : t('Sab maal de diya')}</span><span className="money">{qty - (b.pickedQty ?? 0) > 0 ? t('{n} box', { n: count(qty - (b.pickedQty ?? 0)) }) : '✓'}</span></div>
+            </div>
+          )}
           {blocked && <p className="error" role="alert">{blocked}</p>}
         </>
       )}

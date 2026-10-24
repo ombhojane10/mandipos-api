@@ -411,6 +411,11 @@ export class AdminService {
         collected: { cashPaise: live.reduce((s, c) => s + n(c.cash), 0), upiPaise: live.reduce((s, c) => s + n(c.upi), 0) },
         // Angoor: boxes already handed over at the gaadi — the slip is locked.
         pickedQty: n((await tx.query<{ n: string }>(`SELECT COALESCE(SUM(qty), 0) AS n FROM pickups WHERE bill_id = $1`, [billId])).rows[0].n),
+        // The dispatch log: each hand-over at the gaadi, when, how many, on which machine.
+        pickups: (await tx.query<{ at: Date; qty: number; by: string | null }>(
+          `SELECT p.created_at AS at, p.qty, CONCAT_WS(' · ', d.code, NULLIF(d.label, '')) AS by
+           FROM pickups p LEFT JOIN devices d ON d.id = p.device_id WHERE p.bill_id = $1 ORDER BY p.created_at`, [billId])).rows
+          .map((p) => ({ at: p.at.toISOString(), qty: p.qty, by: p.by ?? '' })),
         machine: [b.device, b.device_label].filter(Boolean).join(' · '),
         // truckId/brandId: a party slip's lines each come off their own gaadi (angoor's Alter needs them).
         lines: lines.map((l) => ({ brand: l.brand ?? 'Maal', grade: l.grade, qty: l.qty, ratePaise: n(l.rate), leak: l.leak, truckId: l.truck_id, brandId: l.brand_id })),
