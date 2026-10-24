@@ -4,7 +4,7 @@ import { rupees, count } from '../format'
 import { t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
-import type { EditBill, EditRaseed, EntryKind, Editing, VoiceDraft } from './kinds'
+import type { EditBill, EditGaadi, EditRaseed, EntryKind, Editing, VoiceDraft } from './kinds'
 import { AngoorGaadiForm, AngoorParchiForm, type AngoorOptions } from './Angoor'
 
 type Options = AngoorOptions & {
@@ -49,7 +49,7 @@ export function EntryForm({ kind, shopId, editing, draft, onClose, onSaved }: {
     case 'vasooli': return <VasooliForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'vasooli' ? editing.raseed : undefined} draft={draft?.kind === 'vasooli' ? draft : undefined} />
     case 'kharcha': return <KharchaForm shopId={shopId} onClose={onClose} onDone={done} draft={draft?.kind === 'kharcha' ? draft : undefined} />
     case 'supplier': return <SupplierForm shopId={shopId} onClose={onClose} onDone={done} />
-    case 'gaadi': return <GaadiForm shopId={shopId} onClose={onClose} onDone={done} />
+    case 'gaadi': return <GaadiForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'gaadi' ? editing.gaadi : undefined} />
     case 'grahak': return <GrahakForm shopId={shopId} onClose={onClose} onDone={done} />
     default: return <UdhaarForm shopId={shopId} onClose={onClose} onDone={done} />
   }
@@ -183,7 +183,7 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
   }
 
   const title = editing ? t('Parchi #{n} badlein', { n: String(editing.slipNo ?? '') }) : t('Nayi Parchi')
-  if (o?.commodity === 'angoor') return <AngoorParchiForm shopId={shopId} o={o} editing={editing} onClose={onClose} onDone={onDone} />
+  if (o?.commodity === 'angoor') return <AngoorParchiForm shopId={shopId} o={o} editing={editing} draft={draft} onClose={onClose} onDone={onDone} />
   if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={title} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki parchi app se banayein.')}</p></Sheet>
   return (
     <Sheet title={title} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
@@ -371,7 +371,7 @@ function fromDraft(d: Draft<'parchi'>) {
 function KharchaForm({ shopId, onClose, onDone, draft }: FormProps & { draft?: Draft<'kharcha'> }) {
   const { saving, error, setError, save } = useSave(onDone)
   const [dir, setDir] = useState<'out' | 'in'>(draft?.dir ?? 'out')
-  const [cat, setCat] = useState(draft?.dir === 'in' ? 'aur_aaya' : 'kharcha')
+  const [cat, setCat] = useState(draft?.category ?? (draft?.dir === 'in' ? 'aur_aaya' : 'kharcha'))
   const [mode, setMode] = useState<'cash' | 'office' | 'upi'>('cash')
   const [amount, setAmount] = useState(draft?.amountPaise ?? 0)
   const [party, setParty] = useState('')
@@ -439,7 +439,7 @@ function SupplierForm({ shopId, onClose, onDone }: FormProps) {
 
 type Lot = { brandId: string; brandName: string; grade: '1' | '2' | '3'; qty: number; ratePaise: number }
 
-function GaadiForm({ shopId, onClose, onDone }: FormProps) {
+function GaadiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?: EditGaadi }) {
   const o = useOptions(shopId)
   const { saving, error, setError, save } = useSave(onDone)
   const [number, setNumber] = useState('')
@@ -449,7 +449,7 @@ function GaadiForm({ shopId, onClose, onDone }: FormProps) {
   useEffect(() => { if (o?.brands[0]) setLots((ls) => ls.map((l) => (l.brandId || l.brandName ? l : { ...l, brandId: o.brands[0].id }))) }, [o])
   const set = (i: number, patch: Partial<Lot>) => setLots(lots.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const total = lots.reduce((s, l) => s + l.qty * l.ratePaise, 0) + freight
-  if (o?.commodity === 'angoor') return <AngoorGaadiForm shopId={shopId} o={o} onClose={onClose} onDone={onDone} />
+  if (o?.commodity === 'angoor') return <AngoorGaadiForm shopId={shopId} o={o} editing={editing} onClose={onClose} onDone={onDone} />
   if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={t('Nayi Gaadi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki party app se jodein.')}</p></Sheet>
   return (
     <Sheet title={t('Nayi Gaadi')} onClose={onClose} saving={saving} error={error}

@@ -11,7 +11,7 @@ export type Pending = {
   job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open' | 'slip' | 'gaadi' | 'yaad' | 'bhav'
   /** What was asked and how to read the answer. */
   expect: Expect
-  slot: 'buyer' | 'phone' | 'confirm' | 'name' | 'gaadi' | 'qty' | 'rate' | 'number' | 'maal' | 'supplier' | 'when' | 'pick' | 'cash'
+  slot: 'buyer' | 'phone' | 'confirm' | 'name' | 'gaadi' | 'qty' | 'rate' | 'number' | 'maal' | 'supplier' | 'when' | 'pick' | 'cash' | 'lot'
   question: string
   options?: Option[]
   /** Lines shown under the question (the slip or gaadi being read back). */

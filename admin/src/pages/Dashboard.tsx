@@ -7,7 +7,8 @@ import { useLoad } from '../useLoad'
 import { Ages, Change, Kpi, PeriodBar, Skeleton } from '../ui'
 import { EntryTable } from './DayBook'
 import * as I from '../icons'
-import { openEntry, type EntryKind } from '../entries/kinds'
+import { openBolo, openEntry, type EntryKind } from '../entries/kinds'
+import { MicIcon } from '../voice/MicIcon'
 import { t } from '../i18n'
 import { useSession } from '../App'
 import { AngoorStrip } from './Angoor'
@@ -40,6 +41,11 @@ export function Dashboard({ shopId }: { shopId: string }) {
         {angoor && (
           <button type="button" onClick={() => openScan(shopId)}>
             <span className="ic t-green"><I.IScan /></span><span><b>{t('Scan')}</b> · {t('Maal dein')}</span>
+          </button>
+        )}
+        {angoor && (
+          <button type="button" onClick={openBolo}>
+            <span className="ic t-blue"><MicIcon /></span><span><b>{t('Bolo')}</b> · {t('Parchi bolein')}</span>
           </button>
         )}
         {QUICK.map((q) => (

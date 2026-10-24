@@ -39,7 +39,10 @@ type Books = {
   text: string; at: number; buyers: Map<string, Buyer>; trucks: Map<string, Truck>; day: string; brands: { id: string; name: string }[]
   /** Today's bhav by "brandId:grade", in paise. */
   rates: Map<string, number>; suppliers: string[]
+  /** Angoor: every quality on every open gaadi, by its "l1" ref — a slip line names one. */
+  commodity: string; lots: Map<string, Lot>
 };
+type Lot = { truckId: string; brandId: string; number: string; supplier: string; quality: string; left: number }
 
 const PANNI = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'];
 const KATTA = ['Green', 'Jaipur', 'White'];
@@ -87,7 +90,7 @@ type SlipSaid = {
   lines?: { grade?: string; qty?: number; rate?: number; amount?: number }[]; leak?: { qty?: number; amount?: number }
   packing?: string; panni?: string; katta_name?: string; kattas?: number; parchune?: boolean; delivery?: boolean; labour?: boolean
 };
-type SlipJob = { reply: Reply; heard: string; buyerId?: string; newGrahak?: boolean; walkIn?: boolean; truckId?: string; chooseTruck?: boolean; gaadiMiss?: string; qty?: number; rates?: Record<string, number>; cash?: number };
+type SlipJob = { reply: Reply; heard: string; lotRef?: string; buyerId?: string; newGrahak?: boolean; walkIn?: boolean; truckId?: string; chooseTruck?: boolean; gaadiMiss?: string; qty?: number; rates?: Record<string, number>; cash?: number };
 type GaadiSaid = { number?: string; supplier?: string; maal?: string; lines?: { grade?: string; qty?: number; rate?: number }[]; freight?: number };
 type GaadiJob = {
   reply: Reply; init?: boolean; number?: string; supplier?: string; maal?: string; brandId?: string; newMaal?: string
@@ -506,6 +509,7 @@ export class PortalVoiceService {
     r.slip = sl;
     if (value !== undefined) {
       if (q.slot === 'buyer') { if (value === 'new') d.newGrahak = true; else if (q.expect === 'text') d.heard = value; else d.buyerId = value; }
+      if (q.slot === 'lot') d.lotRef = value;
       if (q.slot === 'gaadi') {
         // A tap carries the id; a spoken or typed number ("3289", "AP39 wali") is matched on the plate.
         const said = plate(value).replace(/(WALI|WALA|GAADI|SE)+$/, '');
@@ -530,6 +534,8 @@ export class PortalVoiceService {
         }
       }
     }
+
+    if (books.commodity === 'angoor') return this.angoorSlip(s, q, d, books);
 
     // Which gaadi: named, the only one open, or asked by number.
     const open = [...books.trucks.values()];
@@ -562,6 +568,40 @@ export class PortalVoiceService {
     }
     draft.notes = [...draft.notes.filter((n) => !/list mein nahi mila/.test(n)),
       ...(d.newGrahak ? [`Naya grahak "${newName}" banega`] : []), ...(fromBhav ? ['Rate aaj ke bhav se'] : [])];
+    if (buyer) s.focus = { buyerId: buyer.id, buyerName: buyer.name };
+    return { draft, say: `${buyer?.name ?? (d.newGrahak ? newName : 'Cash grahak')} ki parchi — dekh kar Save dabaiye` };
+  }
+
+  /**
+   * Grapes: each line is one quality off one gaadi — the LOT the model named, else the only one
+   * open, else asked once ("Kaun si quality?") and used for every line that named none. The
+   * grapes parchi form opens filled in.
+   */
+  private angoorSlip(s: Session, q: Pending, d: SlipJob, books: Books): Record<string, unknown> {
+    const r = d.reply;
+    const said = ((r.slip ?? {}) as { lines?: { qty?: number; rate?: number; amount?: number; lot?: string }[] }).lines ?? [];
+    const lines = said.filter((l) => (l.qty ?? 0) > 0);
+    const all = [...books.lots.values()];
+    const pickedRef = d.lotRef && books.lots.has(d.lotRef) ? d.lotRef : undefined;
+    const fallback = pickedRef ? books.lots.get(pickedRef) : all.length === 1 ? all[0] : undefined;
+    if (!fallback && lines.some((l) => !l.lot || !books.lots.has(l.lot))) {
+      if (!all.length) return { answer: 'Koi khuli gaadi nahi — pehle Nayi Gaadi jodein' };
+      return this.ask(s, q, d, 'lot', 'choice', 'Kaun si quality, kaun si gaadi?',
+        [...all.slice(0, 8).map((l, i) => ({ label: `${l.quality} · ${l.number} · ${l.supplier || '-'} · ${l.left.toLocaleString('en-IN')} baaki`, value: [...books.lots.keys()][i] })), CANCEL]);
+    }
+    const base = this.draft({ ...r, slip: { ...(r.slip as object), lines: [] } } as Reply, books) as Record<string, unknown> & { notes: string[] };
+    const buyer = d.buyerId ? [...books.buyers.values()].find((x) => x.id === d.buyerId) ?? null : null;
+    const newName = titleCase(d.heard || String(r.buyer_name ?? ''));
+    const lots = (lines.length ? lines : [{ qty: 0 }]).map((l: { qty?: number; rate?: number; amount?: number; lot?: string }) => {
+      const lot = (l.lot && books.lots.get(l.lot)) || fallback!;
+      const qty = Math.round(l.qty ?? 0);
+      return { truckId: lot.truckId, brandId: lot.brandId, qty, ratePaise: paise(l.rate) || (l.amount && qty ? Math.round(paise(l.amount) / qty) : 0) };
+    });
+    const draft = {
+      ...base, kind: 'parchi', truckId: null, lines: [], lots,
+      buyer: buyer ? { id: buyer.id, name: buyer.name, balancePaise: buyer.balancePaise } : d.newGrahak ? { id: null, name: newName } : null,
+      notes: [...base.notes.filter((n) => !/list mein nahi mila|Gaadi/.test(n)), ...(d.newGrahak ? [`Naya grahak "${newName}" banega`] : [])],
+    };
     if (buyer) s.focus = { buyerId: buyer.id, buyerName: buyer.name };
     return { draft, say: `${buyer?.name ?? (d.newGrahak ? newName : 'Cash grahak')} ki parchi — dekh kar Save dabaiye` };
   }
@@ -786,7 +826,14 @@ export class PortalVoiceService {
     });
     if (opts.brands.length) lines.push(`MAAL: ${opts.brands.map((x) => x.name).join(', ')}`);
     lines.push(`PANNI: ${PANNI.join(', ')}`, `KATTA: ${KATTA.join(', ')} (10, 15 or 20 dana)`);
-    opts.trucks.slice(0, 40).forEach((t, i) => {
+    const lots = new Map<string, Lot>();
+    if (opts.commodity === 'angoor') {
+      (opts.lots ?? []).slice(0, 60).forEach((l, i) => {
+        const ref = `l${i + 1}`;
+        lots.set(ref, { truckId: l.truckId, brandId: l.brandId, number: l.number, supplier: l.supplier, quality: l.quality, left: l.left });
+        lines.push(`LOT ${ref} | gaadi ${l.number} | party ${l.supplier || '-'} | mark ${l.quality} | left ${l.left}`);
+      });
+    } else opts.trucks.slice(0, 40).forEach((t, i) => {
       const ref = `g${i + 1}`;
       trucks.set(ref, { id: t.id, number: t.number, supplier: t.supplier, left: t.left, brand: t.brand, brandId: t.brandId });
       lines.push(`GAADI ${ref} | ${t.number} | ${t.brand || '-'} | supplier ${t.supplier || '-'} | left ${t.left}`);
@@ -797,7 +844,7 @@ export class PortalVoiceService {
     const weekday = new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
     lines.push(`Date: ${today} (${weekday}).${day !== today ? ` Working day: ${day} (no slips yet today, so "aaj" means ${day} and "kal" the day before it).` : ''} Commodity: ${opts.commodity === 'amrud' ? 'amrud (guava), sold per box' : opts.commodity === 'angoor' ? 'angoor (grapes), sold per box' : 'nariyal (tender coconut), sold per dana'}.`);
     const rates = new Map(opts.rates.map((x) => [`${x.brandId}:${x.grade}`, x.ratePaise] as const));
-    const books = { text: lines.join('\n'), at: Date.now(), buyers, trucks, day, brands: opts.brands, rates, suppliers: opts.suppliers };
+    const books = { text: lines.join('\n'), at: Date.now(), buyers, trucks, day, brands: opts.brands, rates, suppliers: opts.suppliers, commodity: opts.commodity, lots };
     this.cache.set(shopId, books);
     return books;
   }

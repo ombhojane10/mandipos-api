@@ -382,7 +382,7 @@ describe('angoor on the website', () => {
     const desk = (await http().get(`${base}/angoor?from=${today}&to=${today}&commissionBps=500`).set(web).expect(200)).body;
     expect(desk.totals).toMatchObject({ slips: 4, boxes: 30, picked: 5, pendingSlips: 4, doneSlips: 0, openGaadis: 3, apmcPaise: 10200 + 20000 + 2000, labourPaise: 24000 });
     expect(desk.slips.find((x: any) => x.billId === b.billId)).toMatchObject({ boxes: 20, picked: 5, left: 15, gaadis: [expect.objectContaining({ number: '3289', location: 'Pillar 320', qty: 20 })] });
-    expect(desk.gaadis.find((x: any) => x.truckId === sai)).toMatchObject({ location: 'Pillar 320', received: 10, sold: 25, left: -15, waiting: 4 + 15 + 1 });
+    expect(desk.gaadis.find((x: any) => x.truckId === sai)).toMatchObject({ location: 'Pillar 320', received: 10, sold: 25, left: 0, over: 15, waiting: 4 + 15 + 1 });
     expect(desk.suppliers.find((x: any) => x.name === 'Sai')).toMatchObject({ key: 'sai', boxes: 25, salesPaise: 2700000, commissionPaise: 135000, netPaise: 2565000 });
     expect(desk.suppliers.find((x: any) => x.name === 'Manat')).toMatchObject({ boxes: 5, salesPaise: 620000 });
     expect(desk.days).toEqual([expect.objectContaining({ date: today, slips: 4, apmcPaise: 32200, labourPaise: 24000, labourPaidPaise: 0 })]);
@@ -398,6 +398,50 @@ describe('angoor on the website', () => {
     await http().post(`${base}/pickup`).set(web).send({ billId: a.billId, qty: 1 }).expect(400);
     const after = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
     expect(after.body.changes.filter((x: any) => x.table === 'pickups' && x.row.bill_id === b.billId).map((x: any) => x.row.qty).sort()).toEqual([15, 5]);
+
+    // The party's beejak for gaadi 3289: Royal 25 boxes, ₹27,000 gross.
+    const bj = (await http().get(`${base}/beejak/${sai}`).set(web).expect(200)).body;
+    expect(bj).toMatchObject({ number: '3289', party: 'Sai', received: 10, sold: 25, grossPaise: 2700000, groups: [{ quality: 'Royal', qty: 25, amountPaise: 2700000, avgRatePaise: 108000 }] });
+
+    // Gaadi edited on the website: moved, bhada, Royal up to 30 boxes, then down to 28 (a correction).
+    const royalLot = (q: number) => ({ number: '3289', supplier: 'Sai', location: 'Pillar 321', freightPaise: 500000, lots: [{ brandId: royal, grade: '1', qty: q, ratePaise: 0 }] });
+    await http().post(`${base}/gaadi/${sai}`).set(web).send(royalLot(30)).expect(201);
+    let g3289 = (await http().get(`${base}/angoor?from=${today}&to=${today}`).set(web).expect(200)).body.gaadis.find((x: any) => x.truckId === sai);
+    expect(g3289).toMatchObject({ location: 'Pillar 321', freightPaise: 500000, received: 30, left: 5, over: 0, qualities: [expect.objectContaining({ name: 'Royal', received: 30, ratePaise: 120000, kg: 10 })] });
+    await http().post(`${base}/gaadi/${sai}`).set(web).send(royalLot(28)).expect(201);
+    g3289 = (await http().get(`${base}/angoor?from=${today}&to=${today}`).set(web).expect(200)).body.gaadis.find((x: any) => x.truckId === sai);
+    expect(g3289).toMatchObject({ received: 28, left: 3 });
+
+    // Mazdoori: the udhaar slip's labour listed, and labour paid from the day book.
+    await http().post(`${base}/entries/daybook`).set(web).send({ direction: 'out', category: 'mazdoori', mode: 'cash', amountPaise: 50000, party: 'Ramu', note: '' }).expect(201);
+    const lab = (await http().get(`${base}/angoor?from=${today}&to=${today}`).set(web).expect(200)).body;
+    expect(lab.labourSlips).toEqual([expect.objectContaining({ billId: b.billId, labourPaise: 24000, boxes: 20 })]);
+    expect(lab.labourPaid).toEqual([expect.objectContaining({ party: 'Ramu', amountPaise: 50000 })]);
+    expect(lab.totals.labourPaidPaise).toBe(50000);
+
+    // Bolo on the website cuts a grapes slip: lines name a LOT (quality off a gaadi); none named and
+    // several open → asked once which, then the grapes form opens filled in.
+    const { GeminiClient } = await import('../src/voice/gemini.client');
+    const gemini = app.get(GeminiClient);
+    const real = gemini.generate.bind(gemini);
+    gemini.generate = async (payload: any) => {
+      const text = String(payload.contents?.[0]?.parts?.[0]?.text ?? '');
+      const said = (text.match(/# They typed\n([\s\S]*)$/)?.[1] ?? '').trim().toLowerCase();
+      const lot = text.match(/\nLOT (l\d+) \| gaadi 3289 \| party Sai \| mark Royal/)?.[1];
+      const reply = said.startsWith('cash')
+        ? { kind: 'slip', say: 'Cash', slip: { lines: [{ qty: 5, rate: 1500, lot }] }, pay: { mode: 'cash' } }
+        : { kind: 'slip', say: 'Grahak', heard: 'Web Angoor Grahak', buyer_name: 'Web Angoor Grahak', slip: { lines: [{ qty: 3, rate: 1400 }] }, pay: { mode: 'udhaar' } };
+      return { text: JSON.stringify({ transcript: said, ...reply }), model: 'stub', tokensIn: 0, tokensOut: 0 };
+    };
+    try {
+      const v1 = (await http().post(`${base}/voice`).set(web).send({ text: 'cash 5 box royal 3289 wali 1500 ke', session: 'ang1' }).expect(200)).body;
+      expect(v1.draft).toMatchObject({ kind: 'parchi', pay: 'cash', lots: [{ truckId: sai, brandId: royal, qty: 5, ratePaise: 150000 }] });
+      const v2 = (await http().post(`${base}/voice`).set(web).send({ text: 'web angoor grahak ko 3 box 1400 ke', session: 'ang2' }).expect(200)).body;
+      expect(v2.ask.question).toBe('Kaun si quality, kaun si gaadi?');
+      const manatOpt = v2.ask.options.find((o: any) => /HR26X1111/.test(o.label));
+      const v3 = (await http().post(`${base}/voice`).set(web).send({ pick: manatOpt.value, session: 'ang2' }).expect(200)).body;
+      expect(v3.draft).toMatchObject({ kind: 'parchi', pay: 'credit', buyer: { name: 'Web Angoor Grahak' }, lots: [{ truckId: manat, brandId: royal, qty: 3, ratePaise: 140000 }] });
+    } finally { gemini.generate = real; }
   });
 });
 

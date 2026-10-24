@@ -4,7 +4,7 @@ import { count, rupees } from '../format'
 import { t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { BuyerPicker, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
-import type { EditBill } from './kinds'
+import type { EditBill, EditGaadi, VoiceDraft } from './kinds'
 
 /** What the grapes forms read from entry-options: every quality on every open gaadi, and each supplier's last gaadi. */
 export type AngoorOptions = {
@@ -45,30 +45,31 @@ function useSave(onDone: (msg: string) => void) {
  * on one slip), no count limit, 1% APMC when the shop has it on, and on an udhaar slip the labour
  * at a rate that can be changed.
  */
-export function AngoorParchiForm({ shopId, o, editing, onClose, onDone }: {
-  shopId: string; o: AngoorOptions; editing?: EditBill; onClose: () => void; onDone: (msg: string) => void
+export function AngoorParchiForm({ shopId, o, editing, draft, onClose, onDone }: {
+  shopId: string; o: AngoorOptions; editing?: EditBill; draft?: Extract<VoiceDraft, { kind: 'parchi' }>; onClose: () => void; onDone: (msg: string) => void
 }) {
   const { saving, error, setError, save } = useSave(onDone)
   const lots = o.lots ?? []
-  const [buyer, setBuyer] = useState<PickedBuyer | null>(() => !editing ? null
+  const [buyer, setBuyer] = useState<PickedBuyer | null>(() => !editing ? (draft?.buyer as PickedBuyer | null) ?? null
     : editing.buyerId ? { id: editing.buyerId, name: editing.buyerName } : { id: null, name: isWalkInName(editing.buyerName) ? editing.buyerName : 'Cash' })
   const [lines, setLines] = useState<Line[]>(() => editing
     ? editing.lines.filter((l) => !l.leak && l.truckId && l.brandId).map((l) => ({ key: keyOf(l.truckId!, l.brandId!), qty: l.qty, ratePaise: l.ratePaise }))
+    : draft?.lots?.length ? draft.lots.map((l) => ({ key: keyOf(l.truckId, l.brandId), qty: l.qty, ratePaise: l.ratePaise }))
     : [{ key: lots[0] ? keyOf(lots[0].truckId, lots[0].brandId) : '', qty: 0, ratePaise: 0 }])
   const [pay, setPay] = useState<Pay>(() => {
-    if (!editing) return 'cash'
+    if (!editing) return draft?.pay ?? (draft?.buyer?.id ? 'credit' : 'cash')
     const b = editing
     return b.payMode === 'free' ? 'free' : b.payMode === 'after' ? 'after' : b.paidPaise === 0 ? 'credit'
       : b.cashPaise === b.totalPaise ? 'cash' : b.upiPaise === b.totalPaise ? 'upi' : 'split'
   })
-  const [cash, setCash] = useState(editing?.cashPaise ?? 0)
-  const [upi, setUpi] = useState(editing?.upiPaise ?? 0)
+  const [cash, setCash] = useState(editing?.cashPaise ?? draft?.cashPaise ?? 0)
+  const [upi, setUpi] = useState(editing?.upiPaise ?? draft?.upiPaise ?? 0)
   const [bank, setBank] = useState(editing?.upiBank || o.banks[0] || '')
   const boxesEdited = editing?.lines.reduce((s, l) => s + l.qty, 0) ?? 0
-  const [labour, setLabour] = useState(!!editing && editing.labourPaise > 0)
+  const [labour, setLabour] = useState(editing ? editing.labourPaise > 0 : !!draft?.labour)
   const [rate, setRate] = useState(() => editing && editing.labourPaise > 0 && boxesEdited > 0
     ? Math.round(editing.labourPaise / boxesEdited) : Number(remembered('mp.angoorLabourRate', '1000')) || 1000)
-  const [delivery, setDelivery] = useState(!!editing?.delivery)
+  const [delivery, setDelivery] = useState(!!editing?.delivery || !!draft?.delivery)
   const [address, setAddress] = useState(editing?.delivery?.address ?? '')
   const [stand, setStand] = useState(editing?.delivery?.stand ?? '')
   const [staff, setStaff] = useState(() => editing ? (editing.staff === 'Website' ? '' : editing.staff) : remembered('mp.staff', ''))
@@ -121,7 +122,8 @@ export function AngoorParchiForm({ shopId, o, editing, onClose, onDone }: {
         }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) })
           : t(r.printing ? 'Parchi #{n} save hui · machine par chhapegi' : 'Parchi #{n} save hui', { n: String(r.slipNo) })))
       }}>
-      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus /></Field>
+      {draft?.notes.length ? <p className="muted">{draft.notes.join(' · ')}</p> : null}
+      <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus={!draft} /></Field>
 
       <div className="fld">
         <span className="fld-lb">{t('Quality')}</span>
@@ -190,42 +192,56 @@ export function AngoorParchiForm({ shopId, o, editing, onClose, onDone }: {
   )
 }
 
-type GLot = { quality: string; qty: number; kg: string; ratePaise: number }
+type GLot = { quality: string; qty: number; kg: string; ratePaise: number; fixed?: boolean }
 
 /**
  * Angoor's Nayi Gaadi, vehicle first as the shop says it: number, bhada, whose maal, where it
  * stands, then each quality with its boxes, box kg and our own bhav. It opens on the newest
  * arrival's supplier, and picking a known supplier fills his place and qualities.
  */
-export function AngoorGaadiForm({ shopId, o, onClose, onDone }: {
-  shopId: string; o: AngoorOptions; onClose: () => void; onDone: (msg: string) => void
+export function AngoorGaadiForm({ shopId, o, editing, onClose, onDone }: {
+  shopId: string; o: AngoorOptions; editing?: EditGaadi; onClose: () => void; onDone: (msg: string) => void
 }) {
   const { saving, error, setError, save } = useSave(onDone)
   const from = (sup: string) => o.lastArrivals?.find((a) => a.supplier.trim().toLowerCase() === sup.trim().toLowerCase())
   const fill = (a: NonNullable<AngoorOptions['lastArrivals']>[number] | undefined): GLot[] =>
     a?.lots.length ? a.lots.map((l) => ({ quality: l.quality, qty: 0, kg: l.boxGrams ? String(l.boxGrams / 1000) : '10', ratePaise: l.ratePaise }))
       : [{ quality: '', qty: 0, kg: '10', ratePaise: 0 }]
-  const first = o.lastArrivals?.[0]
-  const [number, setNumber] = useState('')
-  const [freight, setFreight] = useState(0)
-  const [supplier, setSupplier] = useState(first?.supplier ?? '')
-  const [location, setLocation] = useState(first?.location ?? '')
-  const [lots, setLots] = useState<GLot[]>(() => fill(first))
+  const first = editing ? undefined : o.lastArrivals?.[0]
+  const [number, setNumber] = useState(editing?.number ?? '')
+  const [freight, setFreight] = useState(editing?.freightPaise ?? 0)
+  const [supplier, setSupplier] = useState(editing?.supplier ?? first?.supplier ?? '')
+  const [location, setLocation] = useState(editing?.location ?? first?.location ?? '')
+  // An existing quality keeps its kg and bhav (they are on the lots already sold); only its boxes change.
+  const [lots, setLots] = useState<GLot[]>(() => editing
+    ? editing.qualities.map((q) => ({ quality: q.name, qty: q.received, kg: String(q.kg || ''), ratePaise: q.ratePaise, fixed: true }))
+    : fill(first))
   const set = (i: number, patch: Partial<GLot>) => setLots(lots.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const pickSupplier = (v: string) => {
     setSupplier(v)
     const a = from(v)
     // His last gaadi fills the rest, unless boxes are already typed.
-    if (a && lots.every((l) => !l.qty)) { setLocation(a.location); setLots(fill(a)) }
+    if (!editing && a && lots.every((l) => !l.qty)) { setLocation(a.location); setLots(fill(a)) }
   }
   const brandId = (name: string) => o.brands.find((b) => b.name.trim().toLowerCase() === name.trim().toLowerCase())?.id
   const boxes = lots.reduce((s, l) => s + l.qty, 0)
 
   return (
-    <Sheet title={t('Nayi Gaadi')} onClose={onClose} saving={saving} error={error}
+    <Sheet title={editing ? t('Gaadi {n} badlein', { n: editing.number }) : t('Nayi Gaadi')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
         if (!number.trim()) return setError(t('Gaadi number daalein'))
         if (!supplier.trim()) return setError(t('Supplier ka naam daalein'))
+        if (editing) {
+          if (lots.some((l) => !l.fixed && l.qty > 0 && !l.quality.trim())) return setError(t('Har box ki quality likhein'))
+          return void save(`/v1/admin/shops/${shopId}/gaadi/${editing.truckId}`, {
+            number, supplier, location, freightPaise: freight,
+            lots: lots.filter((l) => l.fixed || l.qty > 0).map((l) => {
+              const id = editing.qualities.find((q) => q.name === l.quality && l.fixed)?.brandId ?? brandId(l.quality)
+              return { brandId: id ?? undefined, brandName: id ? undefined : l.quality.trim(), grade: '1', qty: l.qty, ratePaise: l.ratePaise,
+                boxGrams: Math.max(0, Math.round((Number(l.kg) || 0) * 1000)) }
+            }),
+          }, () => t('Gaadi {n} badli', { n: number.toUpperCase().replace(/\s+/g, '') }))
+        }
         const filled = lots.filter((l) => l.qty > 0)
         if (!filled.length) return setError(t('Quality aur box daalein'))
         if (filled.some((l) => !l.quality.trim())) return setError(t('Har box ki quality likhein'))
@@ -254,11 +270,11 @@ export function AngoorGaadiForm({ shopId, o, onClose, onDone }: {
         <div className="lines-in">
           {lots.map((l, i) => (
             <div key={i} className="line-in wide-pick gaadi-q">
-              <input className="field" list="angoor-q" placeholder={t('Quality')} aria-label={t('Quality')} value={l.quality} onChange={(e) => set(i, { quality: e.target.value })} />
+              <input className="field" list="angoor-q" placeholder={t('Quality')} aria-label={t('Quality')} value={l.quality} disabled={l.fixed} onChange={(e) => set(i, { quality: e.target.value })} />
               <input className="field" inputMode="numeric" placeholder={t('Box')} aria-label={t('Box')} value={l.qty || ''} onChange={(e) => set(i, { qty: Number(e.target.value.replace(/\D/g, '') || 0) })} />
-              <input className="field short" inputMode="decimal" placeholder="Kg" aria-label="Kg" value={l.kg} onChange={(e) => set(i, { kg: e.target.value.replace(/[^\d.]/g, '').slice(0, 5) })} />
-              <Money value={l.ratePaise} onChange={(v) => set(i, { ratePaise: v })} placeholder={t('Apna bhav')} />
-              {lots.length > 1 ? <button type="button" className="icon-btn" aria-label={t('Hatayein')} onClick={() => setLots(lots.filter((_, j) => j !== i))}>✕</button> : <span className="icon-gap" />}
+              <input className="field short" inputMode="decimal" placeholder="Kg" aria-label="Kg" value={l.kg} disabled={l.fixed} onChange={(e) => set(i, { kg: e.target.value.replace(/[^\d.]/g, '').slice(0, 5) })} />
+              {l.fixed ? <span className="money muted">{l.ratePaise ? rupees(l.ratePaise) : ''}</span> : <Money value={l.ratePaise} onChange={(v) => set(i, { ratePaise: v })} placeholder={t('Apna bhav')} />}
+              {lots.length > 1 && !l.fixed ? <button type="button" className="icon-btn" aria-label={t('Hatayein')} onClick={() => setLots(lots.filter((_, j) => j !== i))}>✕</button> : <span className="icon-gap" />}
             </div>
           ))}
           <datalist id="angoor-q">{o.brands.map((b) => <option key={b.id} value={b.name} />)}</datalist>

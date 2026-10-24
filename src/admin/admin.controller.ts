@@ -301,6 +301,12 @@ export class AdminController {
     return this.insights.angoor(mine(v, id), r.from, r.to, r.commissionBps);
   }
 
+  /** A party's beejak for one gaadi: qualities sold, average bhav, gross and bhada. */
+  @Get('shops/:id/beejak/:truckId')
+  beejak(@See() v: Viewer, @Param('id') id: string, @Param('truckId') truckId: string) {
+    return this.insights.beejak(mine(v, id), parse(z.uuid(), truckId));
+  }
+
   /** Tally's exception reports: what an owner should look at. */
   @Get('shops/:id/nigrani')
   nigrani(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
@@ -433,6 +439,12 @@ export class AdminController {
   @Post('shops/:id/pickup')
   pickup(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
     return this.entries.pickup(v.phone, mine(v, id), parse(z.object({ billId: z.uuid(), qty: z.number().int().min(1).max(100000) }), body));
+  }
+
+  /** A grapes gaadi changed: number, supplier, place, bhada, and each quality's boxes. */
+  @Post('shops/:id/gaadi/:truckId')
+  editGaadi(@See() v: Viewer, @Param('id') id: string, @Param('truckId') truckId: string, @Body() body: unknown) {
+    return this.entries.editGaadi(v.phone, mine(v, id), parse(z.uuid(), truckId), parse(GaadiBody, body));
   }
 
   @Post('shops/:id/entries/parchi')

@@ -52,9 +52,11 @@ const emit = () => listeners.forEach((l) => l())
 export function useExport(build: Builder | null, deps: unknown[]) {
   useEffect(() => {
     if (!build) return
+    // A sheet over a page (a beejak) exports itself, and the page's own export comes back after.
+    const prev = current
     current = build
     emit()
-    return () => { if (current === build) { current = null; emit() } }
+    return () => { if (current === build) { current = prev; emit() } }
   }, deps) // eslint-disable-line react-hooks/exhaustive-deps
 }
 

@@ -890,3 +890,24 @@ a.vc-row:hover { background: var(--accent-soft); }
 .scan-gaadi { display: grid; gap: 4px; font-size: 15px; }
 .scan-lines > * { padding: 7px 0; }
 .scan-qty { font-size: 22px; font-weight: 700; }
+.quick:has(> button:nth-child(6)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 760px) { .g2 { grid-template-columns: minmax(0, 1fr); } }
+.desk-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.desk-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.desk-actions svg, .btn.line svg { width: 16px; height: 16px; }
+.btn.sm { padding: 3px 10px; font-size: 12.5px; min-height: 0; }
+.tbl td.row-act { width: 1%; white-space: nowrap; text-align: right; }
+.gaadi-acts { display: flex; gap: 6px; margin-top: 10px; }
+button.chip { border: 0; cursor: pointer; }
+.beejak-links { display: flex !important; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sheet.beejak { max-width: 620px; }
+.beejak-hd { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.beejak-hd > div { display: grid; gap: 2px; font-size: 14px; }
+.beejak-hd .muted { font-size: 12px; }
+.beejak-exp { display: grid; gap: 8px; }
+.beejak-exp label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.beejak-exp label > span:first-child { flex: 1; min-width: 0; }
+.beejak-exp label > b { width: 96px; text-align: right; flex: none; }
+.beejak-exp .field { width: 80px; padding: 6px 8px; text-align: right; flex: none; }
+.total-line.big b { font-size: 22px; }

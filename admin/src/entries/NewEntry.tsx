@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { EntryForm } from './Entries'
-import { EDIT_ENTRY, ENTRY_TYPES, OPEN_ENTRY, type EntryKind, type Editing, type VoiceDraft } from './kinds'
+import { EDIT_ENTRY, ENTRY_TYPES, OPEN_BOLO, OPEN_DRAFT, OPEN_ENTRY, type EntryKind, type Editing, type VoiceDraft } from './kinds'
 import { ENTRY_KEYS, letterOf } from '../keys'
 import { Hot } from '../Hot'
 import { t } from '../i18n'
@@ -27,9 +27,13 @@ export function NewEntry({ shopId }: { shopId: string }) {
   useEffect(() => {
     const on = (e: Event) => { const k = (e as CustomEvent<EntryKind | undefined>).detail; setEditing(null); setDraft(null); if (k) { setKind(k); setMenu(false) } else setMenu(true) }
     const edit = (e: Event) => { const x = (e as CustomEvent<Editing>).detail; setEditing(x); setKind(x.kind); setMenu(false) }
+    const filled = (e: Event) => { const d = (e as CustomEvent<VoiceDraft>).detail; setEditing(null); setDraft(d); setKind(d.kind); setMenu(false) }
+    const bolo = () => { unlock(); setMenu(false); setVoice(true) }
     addEventListener(OPEN_ENTRY, on)
     addEventListener(EDIT_ENTRY, edit)
-    return () => { removeEventListener(OPEN_ENTRY, on); removeEventListener(EDIT_ENTRY, edit) }
+    addEventListener(OPEN_DRAFT, filled)
+    addEventListener(OPEN_BOLO, bolo)
+    return () => { removeEventListener(OPEN_ENTRY, on); removeEventListener(EDIT_ENTRY, edit); removeEventListener(OPEN_DRAFT, filled); removeEventListener(OPEN_BOLO, bolo) }
   }, [])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 3500); return () => clearTimeout(t) }, [toast])
 
@@ -62,7 +66,7 @@ export function NewEntry({ shopId }: { shopId: string }) {
           <Bolo shopId={shopId} onClose={() => setVoice(false)} onDraft={(d) => { setVoice(false); setEditing(null); setDraft(d); setKind(d.kind) }} />
         </Suspense>
       )}
-      {kind && <EntryForm key={editing ? `edit-${editing.kind === 'parchi' ? editing.bill.id : editing.raseed.id}` : draft ? `voice-${kind}-${draftSeq(draft)}` : kind} kind={kind} editing={editing?.kind === kind ? editing : null}
+      {kind && <EntryForm key={editing ? `edit-${editing.kind === 'parchi' ? editing.bill.id : editing.kind === 'gaadi' ? editing.gaadi.truckId : editing.raseed.id}` : draft ? `voice-${kind}-${draftSeq(draft)}` : kind} kind={kind} editing={editing?.kind === kind ? editing : null}
         draft={draft?.kind === kind ? draft : null} shopId={shopId}
         onClose={() => { setKind(null); setEditing(null); setDraft(null) }} onSaved={setToast} />}
       {toast && <div className="toast" role="status">✓ {toast}</div>}

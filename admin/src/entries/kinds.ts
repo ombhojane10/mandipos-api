@@ -15,6 +15,12 @@ export const ENTRY_TYPES: { kind: EntryKind; label: string; sub: string }[] = [
 /** Opens an entry form from anywhere: the + button, the dashboard, or Alt+N. No kind = the menu. */
 export const OPEN_ENTRY = 'mandipos:new-entry'
 export const openEntry = (kind?: EntryKind) => dispatchEvent(new CustomEvent(OPEN_ENTRY, { detail: kind }))
+/** A form opened already filled in (a page's own button, as Bolo does it). */
+export const OPEN_DRAFT = 'mandipos:open-draft'
+export const openDraft = (d: VoiceDraft) => dispatchEvent(new CustomEvent(OPEN_DRAFT, { detail: d }))
+/** Bolo, the voice entry, opened from a page's mic button. */
+export const OPEN_BOLO = 'mandipos:open-bolo'
+export const openBolo = () => dispatchEvent(new Event(OPEN_BOLO))
 
 /** A parchi opened to alter, as the voucher has it (GET bills/:id). */
 export type EditBill = {
@@ -26,7 +32,12 @@ export type EditBill = {
 }
 /** A raseed opened to alter (GET collections/:id). */
 export type EditRaseed = { id: string; receiptNo: number | null; buyerId: string; buyerName: string; cashPaise: number; upiPaise: number; ref: string; upiBank: string }
-export type Editing = { kind: 'parchi'; bill: EditBill } | { kind: 'vasooli'; raseed: EditRaseed }
+/** A grapes gaadi as it stands, for its own form to change. */
+export type EditGaadi = {
+  truckId: string; number: string; supplier: string; location: string; freightPaise: number
+  qualities: { brandId: string | null; name: string; kg: number; ratePaise: number; received: number }[]
+}
+export type Editing = { kind: 'parchi'; bill: EditBill } | { kind: 'vasooli'; raseed: EditRaseed } | { kind: 'gaadi'; gaadi: EditGaadi }
 
 /** Alter (A on a voucher): the entry's own form, filled in as it stands. */
 export const EDIT_ENTRY = 'mandipos:edit-entry'
@@ -47,6 +58,8 @@ export type VoiceDraft =
       packing: 'loose' | 'katta' | 'panni' | null; size: 'katta10' | 'katta15' | 'katta20' | 'katta25' | null
       kattaName: string; kattas: number | null; panni: string; parchune: boolean; delivery: boolean; labour: boolean
       notes: string[]
+      /** Angoor: each line one quality off one gaadi. */
+      lots?: { truckId: string; brandId: string; qty: number; ratePaise: number }[]
     }
   | { kind: 'vasooli'; buyer: VoiceBuyer; cashPaise: number; upiPaise: number; notes: string[] }
-  | { kind: 'kharcha'; dir: 'in' | 'out'; amountPaise: number; note: string; notes: string[] }
+  | { kind: 'kharcha'; dir: 'in' | 'out'; amountPaise: number; note: string; notes: string[]; category?: string }
