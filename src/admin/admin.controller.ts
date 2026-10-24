@@ -424,6 +424,17 @@ export class AdminController {
     return this.entries.options(mine(v, id));
   }
 
+  /** Dispatch at the gaadi: a slip by its QR (bill id) or number, and boxes handed over against it. */
+  @Get('shops/:id/pickup')
+  pickupSlip(@See() v: Viewer, @Param('id') id: string, @Query('code') code?: string) {
+    return this.entries.pickupSlip(mine(v, id), parse(z.string().trim().min(1).max(40), code ?? ''));
+  }
+
+  @Post('shops/:id/pickup')
+  pickup(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.pickup(v.phone, mine(v, id), parse(z.object({ billId: z.uuid(), qty: z.number().int().min(1).max(100000) }), body));
+  }
+
   @Post('shops/:id/entries/parchi')
   parchi(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
     return this.entries.parchi(v.phone, mine(v, id), parse(ParchiBody, body));

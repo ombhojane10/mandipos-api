@@ -387,6 +387,17 @@ describe('angoor on the website', () => {
     expect(desk.suppliers.find((x: any) => x.name === 'Manat')).toMatchObject({ boxes: 5, salesPaise: 620000 });
     expect(desk.days).toEqual([expect.objectContaining({ date: today, slips: 4, apmcPaise: 32200, labourPaise: 24000, labourPaidPaise: 0 })]);
     await http().get(`${base}/angoor?from=${today}&to=2020-01-01`).set(web).expect(400);
+
+    // The portal's scanner: by number, by an edited slip's old QR (followed to the live slip), then hand over.
+    const byNo = (await http().get(`${base}/pickup?code=${b.slipNo}`).set(web).expect(200)).body;
+    expect(byNo).toMatchObject({ billId: b.billId, boxes: 20, picked: 5, left: 15, lines: [{ quality: 'Royal', gaadi: '3289', location: 'Pillar 320', qty: 20 }] });
+    expect((await http().get(`${base}/pickup?code=${a.billId}`).set(web).expect(200)).body).toMatchObject({ billId: a2.billId, boxes: 7 });
+    await http().get(`${base}/pickup?code=99999`).set(web).expect(404);
+    expect((await http().post(`${base}/pickup`).set(web).send({ billId: b.billId, qty: 15 }).expect(201)).body).toMatchObject({ picked: 20, left: 0 });
+    await http().post(`${base}/pickup`).set(web).send({ billId: b.billId, qty: 1 }).expect(400);
+    await http().post(`${base}/pickup`).set(web).send({ billId: a.billId, qty: 1 }).expect(400);
+    const after = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
+    expect(after.body.changes.filter((x: any) => x.table === 'pickups' && x.row.bill_id === b.billId).map((x: any) => x.row.qty).sort()).toEqual([15, 5]);
   });
 });
 

@@ -716,6 +716,45 @@ export class EntriesService {
     return { date: d, saved: items.length };
   }
 
+  /**
+   * A slip for the dispatch scanner: its QR carries the bill id, or the slip number is typed.
+   * An edited slip keeps its number on a new bill, so an old QR is followed to the live one.
+   */
+  async pickupSlip(shopId: string, code: string) {
+    return this.db.withShop(shopId, async (tx) => {
+      const c = code.trim();
+      const uuid = /^[0-9a-f-]{36}$/i.test(c);
+      const slipNo = uuid
+        ? (await tx.query<{ slip_no: number | null }>(`SELECT slip_no FROM bills WHERE id = $1`, [c])).rows[0]?.slip_no ?? null
+        : /^\d{1,7}$/.test(c) ? Number(c) : null;
+      const live = (await tx.query<{ id: string }>(
+        `SELECT lb.id FROM (SELECT * FROM bills b WHERE NOT EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id)) lb
+         WHERE ${uuid ? '(lb.id::text = $1 OR (lb.slip_no IS NOT NULL AND lb.slip_no = $2))' : 'lb.slip_no = $2'}
+         ORDER BY (lb.id::text = $1) DESC, lb.created_at DESC LIMIT 1`, [uuid ? c : '', slipNo])).rows[0];
+      if (!live) throw new NotFoundException('Yeh parchi nahi mili');
+      const head = (await tx.query<{ id: string; slip_no: number | null; buyer_name: string; business_date: string; picked: string }>(
+        `SELECT id, slip_no, buyer_name, business_date::text, (SELECT COALESCE(SUM(qty), 0) FROM pickups p WHERE p.bill_id = b.id) AS picked
+         FROM bills b WHERE id = $1`, [live.id])).rows[0];
+      const lines = (await tx.query<{ quality: string | null; number: string | null; location: string | null; qty: string }>(
+        `SELECT br.name AS quality, t.number, t.location, SUM(l.qty) AS qty FROM bill_lines l
+         LEFT JOIN brands br ON br.id = l.brand_id LEFT JOIN trucks t ON t.id = l.truck_id
+         WHERE l.bill_id = $1 GROUP BY br.name, t.number, t.location ORDER BY t.number, br.name`, [live.id])).rows;
+      const boxes = lines.reduce((s, l) => s + Number(l.qty), 0), picked = Math.min(Number(head.picked), boxes);
+      return { billId: head.id, slipNo: head.slip_no, buyer: head.buyer_name, date: head.business_date, boxes, picked, left: boxes - picked,
+        lines: lines.map((l) => ({ quality: l.quality ?? '', gaadi: l.number ?? '', location: l.location ?? '', qty: Number(l.qty) })) };
+    });
+  }
+
+  /** Boxes handed over at the gaadi against a slip, as the app's scanner records them. Never more than is left. */
+  async pickup(phone: string, shopId: string, input: { billId: string; qty: number }) {
+    const slip = await this.pickupSlip(shopId, input.billId);
+    if (slip.billId !== input.billId) throw new BadRequestException('Parchi badal gayi hai, dobara scan karein');
+    if (input.qty > slip.left) throw new BadRequestException(slip.left ? `Is parchi par sirf ${slip.left} box baaki` : 'Is parchi ka saara maal ja chuka hai');
+    const p = await this.device(phone, shopId);
+    await this.push(p, shopId, [{ table: 'pickups', txn: uuidv7(), row: { id: uuidv7(), created_at: new Date().toISOString(), bill_id: slip.billId, qty: input.qty } }]);
+    return { ...slip, picked: slip.picked + input.qty, left: slip.left - input.qty };
+  }
+
   private async device(phone: string, shopId: string): Promise<Principal> {
     const p = await this.accounts.webDevice(phone, shopId);
     await this.db.query(`UPDATE devices SET last_seen_at = now() WHERE id = $1`, [p.deviceId]);

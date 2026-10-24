@@ -28,6 +28,7 @@ import { Help } from './Help'
 import { VoucherHost } from './pages/Voucher'
 import { ExportHost } from './export/Preview'
 import { WhatsAppHost } from './WhatsApp'
+import { ScanHost, openScan } from './Scan'
 import { exportBuilder, openExport, useCanExport } from './export/doc'
 import { t } from './i18n'
 
@@ -276,6 +277,7 @@ export default function App() {
           <span className="spacer" />
           <span className="top-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).replace(/ (\w{3}) /, '-$1-')}</span>
           {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
+          {shopId && shop?.commodity === 'angoor' && <button className="export-btn scan-btn" onClick={() => openScan(shopId)} aria-label={t('Scan')}><I.IScan /><span>{t('Scan')}</span></button>}
           {shopId && <button className="new-btn top-new" onClick={() => openEntry()}>+ {t('Nayi entry')}</button>}
           <button className="goto" onClick={() => setGoto(true)} aria-label={t('Go To')}>
             <I.ISearch /><span className="label">{t('Dhoondhein')}…</span>
@@ -308,6 +310,7 @@ export default function App() {
         {shopId && <NewEntry key={shopId} shopId={shopId} />}
         <VoucherHost />
         <WhatsAppHost />
+        <ScanHost />
         <ExportHost shopId={shopId} fallback={shop ?? null} />
         <Help />
       </div>

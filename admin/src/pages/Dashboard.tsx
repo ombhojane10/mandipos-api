@@ -11,6 +11,7 @@ import { openEntry, type EntryKind } from '../entries/kinds'
 import { t } from '../i18n'
 import { useSession } from '../App'
 import { AngoorStrip } from './Angoor'
+import { openScan } from '../Scan'
 
 const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
   { kind: 'parchi', key: 'F8', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
@@ -36,6 +37,11 @@ export function Dashboard({ shopId }: { shopId: string }) {
   return (
     <>
       <div className="quick" style={{ marginBottom: 10 }}>
+        {angoor && (
+          <button type="button" onClick={() => openScan(shopId)}>
+            <span className="ic t-green"><I.IScan /></span><span><b>{t('Scan')}</b> · {t('Maal dein')}</span>
+          </button>
+        )}
         {QUICK.map((q) => (
           <button key={q.kind} type="button" onClick={() => openEntry(q.kind)}>
             <span className={`ic t-${q.tone}`}><q.icon /></span><span><kbd>{q.key}: </kbd><b>{q.label}</b></span>

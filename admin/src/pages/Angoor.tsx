@@ -5,6 +5,7 @@ import { count, rupees, shortDate, time } from '../format'
 import { usePeriod } from '../hooks'
 import { t } from '../i18n'
 import { openVoucher } from '../keys'
+import { openScan } from '../Scan'
 import { hashQuery, href, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
 import { Kpi, PeriodBar, Skeleton } from '../ui'
@@ -56,6 +57,7 @@ export function Dispatch({ shopId }: { shopId: string }) {
   return (
     <>
       <div className="toolbar">
+        <button type="button" className="btn primary" onClick={() => openScan(shopId)}><I.IScan /> {t('Scan')}</button>
         <PeriodBar value={period} onChange={setPeriod} />
         <div className="seg" role="group">
           <button aria-pressed={view === 'baaki'} onClick={() => pick('baaki')}>{t('Baaki')}{data ? ` · ${data.totals.pendingSlips}` : ''}</button>
