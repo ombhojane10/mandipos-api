@@ -26,13 +26,14 @@ export type Desk = {
   slips: { billId: string; slipNo: number | null; buyer: string; date: string; at: string; payMode: string; totalPaise: number
     boxes: number; picked: number; left: number; lastPickAt: string | null; firstPickAt: string | null; gaadis: { truckId: string; number: string; location: string; qty: number }[] }[]
   gaadis: Gaadi[]
-  suppliers: { key: string; name: string; gaadis: { truckId: string; number: string }[]; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }[]
+  suppliers: { key: string; name: string; gaadis: Consignment[]; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }[]
   days: { date: string; slips: number; goodsPaise: number; apmcPaise: number; labourPaise: number; labourPaidPaise: number }[]
   labourSlips: { billId: string; slipNo: number | null; buyer: string; date: string; boxes: number; labourPaise: number }[]
   labourPaid: { id: string; date: string; party: string; note: string; mode: string; amountPaise: number }[]
   totals: { slips: number; boxes: number; picked: number; pendingSlips: number; doneSlips: number; openGaadis: number; boxesLeft: number
     salesPaise: number; commissionPaise: number; goodsPaise: number; apmcPaise: number; labourPaise: number; labourPaidPaise: number }
 }
+type Consignment = { truckId: string; number: string; location: string; arrivedOn: string; closed: boolean; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }
 type Gaadi = { truckId: string; number: string; supplier: string; supplierKey: string; location: string; arrivedOn: string; freightPaise: number
   received: number; sold: number; soldNow: number; left: number; over: number; waiting: number
   qualities: { brandId: string | null; name: string; kg: number; ratePaise: number; received: number; sold: number; off: number; left: number; over: number }[] }
@@ -194,11 +195,17 @@ const store = {
   get: (k: string, fallback: number) => { try { const raw = localStorage.getItem(k); const v = Number(raw); return raw !== null && Number.isFinite(v) ? v : fallback } catch { return fallback } },
   set: (k: string, v: number) => { try { localStorage.setItem(k, String(v)) } catch { /* stays for this visit */ } },
 }
+// The beejak's deductions start where the app's do (Prefs: 6%, ₹7 a box, ₹10 dak) and are then
+// remembered on this computer, as the app remembers them on the machine.
 const BPS_KEY = (shopId: string) => `mp.angoor.bps.${shopId}`
-const LABOUR_KEY = (shopId: string) => `mp.angoor.beejakLabour.${shopId}`
-const DAK_KEY = (shopId: string) => `mp.angoor.beejakDak.${shopId}`
+const LABOUR_KEY = (shopId: string) => `mp.angoor.beejak.labour.${shopId}`
+const DAK_KEY = (shopId: string) => `mp.angoor.beejak.dak.${shopId}`
 
-/** Each party's boxes and bikri over the period, and the shop's commission on it; each gaadi opens its beejak. */
+/**
+ * Each party's consignments — every open gaadi, and the ones that came or sold in the period —
+ * with all each has sold, the shop's commission on it and what goes to the party. Each gaadi
+ * opens its beejak.
+ */
 export function Commission({ shopId }: { shopId: string }) {
   const [period, setPeriod] = usePeriod('7')
   const [bps, setBps] = useState(() => store.get(BPS_KEY(shopId), 600))
@@ -211,11 +218,12 @@ export function Commission({ shopId }: { shopId: string }) {
     if (!Number.isFinite(n) || n < 0 || n > 5000) return
     setBps(n); store.set(BPS_KEY(shopId), n)
   }
+  const rows = (data?.suppliers ?? []).flatMap((s) => s.gaadis.map((g, i) => ({ s, g, first: i === 0 })))
 
   useExport(data ? () => ({
     style: 'book' as const, title: `${t('Supplier commission')} · ${bps / 100}%`, dateLine: dayRange(period.from, period.to), file: fileName('Commission', period.from, period.to),
     columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), wide: true }, { label: t('Box'), num: true }, { label: t('Bikri'), num: true }, { label: t('Commission'), num: true }, { label: t('Party ko'), num: true }],
-    rows: data.suppliers.map((s) => ({ cells: [s.name, s.gaadis.map((g) => g.number).join(', '), count(s.boxes), rs(s.salesPaise), rs(s.commissionPaise), rs(s.netPaise)] })),
+    rows: rows.map(({ s, g, first }) => ({ cells: [first ? s.name : '', g.number, count(g.boxes), rs(g.salesPaise), rs(g.commissionPaise), rs(g.netPaise)] })),
     foot: [t('Kul'), '', count(data.suppliers.reduce((x, s) => x + s.boxes, 0)), rs(data.totals.salesPaise), rs(data.totals.commissionPaise), rs(data.totals.salesPaise - data.totals.commissionPaise)],
   }) : null, [data, bps])
 
@@ -235,22 +243,23 @@ export function Commission({ shopId }: { shopId: string }) {
           </div>
           <div className="card wrap-x">
             <table className="tbl fold">
-              <thead><tr><th>{t('Supplier')}</th><th className="num">{t('Box')}</th><th className="num">{t('Bikri')}</th><th className="num">{t('Party ko')}</th><th className="num">{t('Commission')}</th></tr></thead>
+              <thead><tr><th>{t('Supplier · Gaadi')}</th><th className="num">{t('Box')}</th><th className="num">{t('Bikri')}</th><th className="num">{t('Party ko')}</th><th className="num">{t('Commission')}</th><th /></tr></thead>
               <tbody>
-                {data.suppliers.map((s) => (
-                  <tr key={s.key || s.name}>
-                    <td className="main-col"><b>{s.key ? <a href={href({ page: 'supplier', shopId, key: s.key })}>{s.name}</a> : s.name}</b>
-                      <small className="beejak-links">{s.gaadis.map((g) => <button key={g.truckId} type="button" className="chip blue" onClick={() => setBeejak(g.truckId)}>{g.number} · {t('Beejak')}</button>)}
-                        <span className="show-sm"> {box(s.boxes)} · {rupees(s.salesPaise)}</span></small></td>
-                    <td className="num opt-col money">{count(s.boxes)}</td>
-                    <td className="num opt-col money">{rupees(s.salesPaise)}</td>
-                    <td className="num opt-col money">{rupees(s.netPaise)}</td>
-                    <td className="num amt-col"><span className="money b jama">{rupees(s.commissionPaise)}</span></td>
+                {rows.map(({ s, g }) => (
+                  <tr key={g.truckId} data-row tabIndex={0} onClick={() => setBeejak(g.truckId)} onKeyDown={(e) => { if (e.key === 'Enter') setBeejak(g.truckId) }}>
+                    <td className="main-col"><b>{s.name}</b>
+                      <small>{[g.number, g.location, shortDate(g.arrivedOn), g.closed ? t('Band') : ''].filter(Boolean).join(' · ')}
+                        <span className="show-sm"> · {box(g.boxes)} · {rupees(g.salesPaise)}</span></small></td>
+                    <td className="num opt-col money">{count(g.boxes)}</td>
+                    <td className="num opt-col money">{rupees(g.salesPaise)}</td>
+                    <td className="num opt-col money">{rupees(g.netPaise)}</td>
+                    <td className="num amt-col"><span className="money b jama">{rupees(g.commissionPaise)}</span></td>
+                    <td className="row-act"><span className="chip blue">{t('Beejak')} ›</span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {data.suppliers.length === 0 && <p className="empty">{t('Is period mein bikri nahi')}</p>}
+            {rows.length === 0 && <p className="empty">{t('Koi gaadi nahi')}</p>}
           </div>
         </div>
       )}
@@ -261,42 +270,49 @@ export function Commission({ shopId }: { shopId: string }) {
 
 type Beejak = { truckId: string; number: string; party: string; supplierKey: string; location: string; arrivedOn: string; closed: boolean
   received: number; sold: number; off: number; left: number; freightPaise: number; grossPaise: number; from: string | null; to: string | null
-  groups: { quality: string; qty: number; avgRatePaise: number; amountPaise: number }[] }
+  groups: { quality: string; ratePaise: number; qty: number; amountPaise: number }[] }
 
 /**
- * The party's beejak (sale proceed) for one gaadi, as the shop's old books print it: each quality,
- * boxes, average bhav and amount; the gross; commission, bhada, mazdoori and dak off it; nett sale.
- * The deductions are the counter's to set here and are remembered on this computer.
+ * The party's beejak for one gaadi, the same sheet the app makes: each quality at each rate
+ * (boxes × bhav = rakam), the gross; commission, mazdoori a box, dak and the gaadi's bhada off
+ * it; and the shudh bikri the party is paid. Printed in the app's BEEJAK layout.
  */
 function BeejakSheet({ shopId, truckId, onClose }: { shopId: string; truckId: string; onClose: () => void }) {
   const { data: b, error } = useLoad(() => api<Beejak>(`/v1/admin/shops/${shopId}/beejak/${truckId}`), [shopId, truckId])
   const [pct, setPct] = useState(() => String(store.get(BPS_KEY(shopId), 600) / 100))
-  const [labour, setLabour] = useState(() => String(store.get(LABOUR_KEY(shopId), 600) / 100))
-  const [dak, setDak] = useState(() => String(store.get(DAK_KEY(shopId), 2000) / 100))
+  const [labour, setLabour] = useState(() => String(store.get(LABOUR_KEY(shopId), 700) / 100))
+  const [dak, setDak] = useState(() => String(store.get(DAK_KEY(shopId), 1000) / 100))
   const [freight, setFreight] = useState<string | null>(null)
   const num = (v: string) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0)
   const bps = Math.round(num(pct) * 100)
   const gross = b?.grossPaise ?? 0
   const commission = Math.round((gross * bps) / 10_000)
-  const freightPaise = freight === null ? b?.freightPaise ?? 0 : Math.round(num(freight) * 100)
-  const labourPaise = Math.round(num(labour) * 100) * (b?.sold ?? 0)
+  const labourRate = Math.round(num(labour) * 100)
+  const labourPaise = labourRate * (b?.sold ?? 0)
   const dakPaise = Math.round(num(dak) * 100)
-  const expenses = commission + freightPaise + labourPaise + dakPaise
+  const freightPaise = freight === null ? b?.freightPaise ?? 0 : Math.round(num(freight) * 100)
+  const expenses = commission + labourPaise + dakPaise + freightPaise
   const nett = gross - expenses
-  const keep = () => { store.set(BPS_KEY(shopId), bps); store.set(LABOUR_KEY(shopId), Math.round(num(labour) * 100)); store.set(DAK_KEY(shopId), dakPaise) }
-  const exp: [string, number][] = [[`${t('Commission')} ${num(pct)}%`, commission], [t('Bhada (R/F)'), freightPaise], [`${t('Mazdoori (R/L)')} ${count(b?.sold ?? 0)} × ${rate(Math.round(num(labour) * 100))}`, labourPaise], [t('Dak (Tele & Post)'), dakPaise]]
+  const keep = () => { store.set(BPS_KEY(shopId), bps); store.set(LABOUR_KEY(shopId), labourRate); store.set(DAK_KEY(shopId), dakPaise) }
+  const pctLabel = `${num(pct)}%`
+  const exp: [string, number][] = [
+    [`${t('Commission')} ${pctLabel}`, commission],
+    [`${t('Mazdoori')} (${count(b?.sold ?? 0)} × ${rate(labourRate).slice(1)})`, labourPaise],
+    [t('Dak'), dakPaise],
+    ...(freightPaise > 0 ? [[t('Bhada'), freightPaise] as [string, number]] : []),
+  ]
 
   useExport(b ? () => ({
-    style: 'book' as const, title: t('BEEJAK · SALE PROCEED'), dateLine: b.from && b.to ? dayRange(b.from, b.to) : undefined, file: fileName('Beejak', b.number),
-    summary: [[t('Party'), b.party || '—'], [t('Gaadi'), b.number], [t('Box'), count(b.received)]],
-    columns: [{ label: t('Quality'), wide: true }, { label: t('Box'), num: true }, { label: t('Avg bhav'), num: true }, { label: t('Rakam'), num: true }],
+    style: 'book' as const, title: 'BEEJAK', dateLine: b.from && b.to ? dayRange(b.from, b.to) : undefined, file: fileName('Beejak', b.party || b.number, b.number),
+    summary: [[t('Party'), b.party || '—'], [t('Gaadi'), b.number], [t('Aaya'), shortDate(b.arrivedOn)], [t('Box aaye · bike · baaki'), `${count(b.received)} · ${count(b.sold)} · ${count(b.left)}`]],
+    columns: [{ label: t('Mark'), wide: true }, { label: t('Box × Bhav'), num: true }, { label: t('Rakam'), num: true }],
     rows: [
-      ...b.groups.map((g) => ({ cells: [g.quality, count(g.qty), (g.avgRatePaise / 100).toFixed(2), rs(g.amountPaise)] })),
-      { kind: 'total' as const, bold: true, cells: [t('Gross amount'), count(b.sold), '', rs(gross)] },
-      { kind: 'heading' as const, bold: true, cells: [t('KHARCHA')] },
-      ...exp.map(([l, v]) => ({ cells: [l, '', '', rs(v)] })),
-      { kind: 'total' as const, bold: true, cells: [t('Kul kharcha'), '', '', rs(expenses)] },
-      { kind: 'final' as const, bold: true, cells: [t('Nett sale'), '', '', rs(nett)] },
+      ...b.groups.map((g) => ({ cells: [g.quality, `${count(g.qty)} × ${rate(g.ratePaise).slice(1)}`, rs(g.amountPaise)] })),
+      { kind: 'total' as const, bold: true, cells: [t('Kul bikri'), '', rs(gross)] },
+      { kind: 'heading' as const, bold: true, cells: [t('Kharcha')] },
+      ...exp.map(([l, v]) => ({ cells: [l, '', rs(v)] })),
+      { kind: 'total' as const, bold: true, cells: [t('Kul kharcha'), '', rs(expenses)] },
+      { kind: 'final' as const, bold: true, cells: [t('Shudh bikri'), '', rs(nett)] },
     ],
     sign: true,
   }) : null, [b, pct, labour, dak, freight])
@@ -304,36 +320,40 @@ function BeejakSheet({ shopId, truckId, onClose }: { shopId: string; truckId: st
   return (
     <div className="scrim sheet-scrim" onClick={onClose}>
       <div className="sheet beejak" role="dialog" aria-label={t('Beejak')} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}>
-        <div className="sheet-hd"><h3>{t('Beejak')}{b ? ` · ${b.number}` : ''}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
+        <div className="sheet-hd"><h3>{t('Beejak')}{b ? ` · ${b.party || b.number}` : ''}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
         <div className="sheet-bd">
           {error && <p className="error">{error}</p>}
           {!b ? <Skeleton rows={4} /> : (
             <>
-              <div className="beejak-hd">
-                <div><span className="muted">{t('Party')}</span><b>{b.party || '—'}</b></div>
-                <div><span className="muted">{t('Gaadi')}</span><b>{b.number}</b></div>
-                <div><span className="muted">{t('Box aaye · bike · baaki')}</span><b>{count(b.received)} · {count(b.sold)} · {count(b.left)}</b></div>
+              <div className="beejak-top">
+                <b>{b.party || '—'}</b>
+                <small>{[[...new Set(b.groups.map((g) => g.quality))].join(', '), b.number, shortDate(b.arrivedOn)].filter(Boolean).join(' · ')}</small>
+                <div className="beejak-stats">
+                  <div><b>{count(b.received)}</b><span>{t('Box aaye')}</span></div>
+                  <div><b>{count(b.sold)}</b><span>{t('Bike')}</span></div>
+                  <div><b>{count(b.left)}</b><span>{t('Baaki')}</span></div>
+                </div>
               </div>
               <table className="tbl">
-                <thead><tr><th>{t('Quality')}</th><th className="num">{t('Box')}</th><th className="num">{t('Avg bhav')}</th><th className="num">{t('Rakam')}</th></tr></thead>
-                <tbody>{b.groups.map((g) => <tr key={g.quality}><td>{g.quality}</td><td className="num money">{count(g.qty)}</td><td className="num money">{rate(g.avgRatePaise)}</td><td className="num money">{rupees(g.amountPaise)}</td></tr>)}</tbody>
-                <tfoot><tr><td>{t('Gross amount')}</td><td className="num money">{count(b.sold)}</td><td /><td className="num money b">{rupees(gross)}</td></tr></tfoot>
+                <thead><tr><th>{t('Mark')}</th><th className="num">{t('Box × Bhav')}</th><th className="num">{t('Rakam')}</th></tr></thead>
+                <tbody>{b.groups.map((g, i) => <tr key={i}><td><span className="chip green">{g.quality}</span></td><td className="num money">{count(g.qty)} × {rate(g.ratePaise).slice(1)}</td><td className="num money">{rupees(g.amountPaise)}</td></tr>)}</tbody>
+                <tfoot><tr><td>{t('Kul bikri')}</td><td /><td className="num money b">{rupees(gross)}</td></tr></tfoot>
               </table>
-              {b.groups.length === 0 && <p className="empty">{t('Is gaadi se abhi kuch nahi bika')}</p>}
+              {b.groups.length === 0 && <p className="empty">{t('Abhi koi box nahi bika')}</p>}
               <div className="beejak-exp">
-                <label><span>{t('Commission')}</span><input className="field" inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value)} /><span>%</span><b className="money">{rupees(commission)}</b></label>
-                <label><span>{t('Bhada (R/F)')}</span><span>₹</span><input className="field" inputMode="decimal" value={freight ?? String(b.freightPaise / 100)} onChange={(e) => setFreight(e.target.value)} /><b className="money">{rupees(freightPaise)}</b></label>
-                <label><span>{t('Mazdoori (R/L)')}</span><span>₹</span><input className="field" inputMode="decimal" value={labour} onChange={(e) => setLabour(e.target.value)} /><span className="muted">× {count(b.sold)}</span><b className="money">{rupees(labourPaise)}</b></label>
-                <label><span>{t('Dak (Tele & Post)')}</span><span>₹</span><input className="field" inputMode="decimal" value={dak} onChange={(e) => setDak(e.target.value)} /><b className="money">{rupees(dakPaise)}</b></label>
+                <label><span>{t('Commission')}</span><input className="field" inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value)} /><span className="unit">%</span><b className="money">{rupees(commission)}</b></label>
+                <label><span>{t('Mazdoori')}</span><input className="field" inputMode="decimal" value={labour} onChange={(e) => setLabour(e.target.value)} /><span className="unit">₹/box</span><b className="money">{rupees(labourPaise)}</b></label>
+                <label><span>{t('Dak')}</span><input className="field" inputMode="decimal" value={dak} onChange={(e) => setDak(e.target.value)} /><span className="unit">₹</span><b className="money">{rupees(dakPaise)}</b></label>
+                <label><span>{t('Bhada')}</span><input className="field" inputMode="decimal" placeholder="0" value={freight ?? (b.freightPaise ? String(b.freightPaise / 100) : '')} onChange={(e) => setFreight(e.target.value)} /><span className="unit">₹</span><b className="money">{rupees(freightPaise)}</b></label>
               </div>
               <div className="total-line"><span>{t('Kul kharcha')}</span><b className="money">{rupees(expenses)}</b></div>
-              <div className="total-line big"><span>{t('Nett sale')}</span><b className={`money ${nett < 0 ? 'due' : 'jama'}`}>{nett < 0 ? '−' : ''}{rupees(Math.abs(nett))}</b></div>
+              <div className="total-line big net"><span>{t('Shudh bikri')}</span><b className="money">{nett < 0 ? '−' : ''}{rupees(Math.abs(nett))}</b></div>
             </>
           )}
         </div>
         <div className="sheet-ft">
           <button type="button" className="btn ghost" onClick={onClose}>{t('Band karein')}</button>
-          <button type="button" className="btn primary" disabled={!b} onClick={() => { keep(); openExport() }}><I.IExport /> {t('PDF / Print')}</button>
+          <button type="button" className="btn primary" disabled={!b} onClick={() => { keep(); openExport() }}><I.IExport /> {t('Beejak chhapein')}</button>
         </div>
       </div>
     </div>

@@ -193,21 +193,28 @@ export class InsightsService {
         gaadis.set(r.truck_id, g);
       }
 
-      const sales = (await tx.query<{ truck_id: string; number: string; supplier: string; boxes: string; sales: string }>(
-        `SELECT t.id AS truck_id, t.number, TRIM(t.supplier) AS supplier, SUM(l.qty) AS boxes, SUM(l.qty::bigint * l.rate_paise) AS sales
-         FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id JOIN trucks t ON t.id = l.truck_id
-         WHERE lb.business_date BETWEEN $1 AND $2 GROUP BY t.id ORDER BY t.number`, [from, to])).rows;
-      const parties = new Map<string, { key: string; name: string; gaadis: { truckId: string; number: string }[]; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }>();
+      // Commission is per consignment, as the beejak is: each gaadi with all it has sold. Every open
+      // gaadi is listed (sold or not yet), and a closed one when it came or sold in the period.
+      const sales = (await tx.query<{ truck_id: string; number: string; supplier: string; location: string; arrived: string; closed: boolean; boxes: string; sales: string }>(
+        `SELECT t.id AS truck_id, t.number, TRIM(t.supplier) AS supplier, t.location, ${IST_DAY('t.arrived_at')}::text AS arrived, t.closed_at IS NOT NULL AS closed,
+                COALESCE(SUM(l.qty), 0) AS boxes, COALESCE(SUM(l.qty::bigint * l.rate_paise), 0) AS sales
+         FROM trucks t
+         LEFT JOIN (SELECT l.* FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id) l ON l.truck_id = t.id
+         WHERE t.closed_at IS NULL OR ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2
+            OR EXISTS (SELECT 1 FROM bill_lines z JOIN ${LIVE_BILLS} zb ON zb.id = z.bill_id WHERE z.truck_id = t.id AND zb.business_date BETWEEN $1 AND $2)
+         GROUP BY t.id ORDER BY t.arrived_at DESC`, [from, to])).rows;
+      type Consignment = { truckId: string; number: string; location: string; arrivedOn: string; closed: boolean; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }
+      const parties = new Map<string, { key: string; name: string; gaadis: Consignment[]; boxes: number; salesPaise: number; commissionPaise: number; netPaise: number }>();
       for (const r of sales) {
         const key = nameKey(r.supplier) || `gaadi:${r.truck_id}`;
         const p = parties.get(key) ?? { key, name: r.supplier || r.number, gaadis: [], boxes: 0, salesPaise: 0, commissionPaise: 0, netPaise: 0 };
-        p.gaadis.push({ truckId: r.truck_id, number: r.number }); p.boxes += n(r.boxes); p.salesPaise += n(r.sales);
+        const sale = n(r.sales), commission = Math.round((sale * commissionBps) / 10_000);
+        p.gaadis.push({ truckId: r.truck_id, number: r.number, location: r.location, arrivedOn: r.arrived, closed: r.closed, boxes: n(r.boxes), salesPaise: sale, commissionPaise: commission, netPaise: sale - commission });
+        p.boxes += n(r.boxes); p.salesPaise += sale; p.commissionPaise += commission; p.netPaise += sale - commission;
         parties.set(key, p);
       }
-      const suppliers = [...parties.values()].map((p) => {
-        const commission = Math.round((p.salesPaise * commissionBps) / 10_000);
-        return { ...p, key: p.key.startsWith('gaadi:') ? '' : p.key, commissionPaise: commission, netPaise: p.salesPaise - commission };
-      }).sort((a, b) => b.salesPaise - a.salesPaise);
+      const suppliers = [...parties.values()].map((p) => ({ ...p, key: p.key.startsWith('gaadi:') ? '' : p.key }))
+        .sort((a, b) => b.salesPaise - a.salesPaise || a.name.localeCompare(b.name));
 
       const dayRows = (await tx.query<{ day: string; slips: string; goods: string; apmc: string; labour: string; paid: string }>(
         `SELECT d::date::text AS day,
@@ -255,12 +262,13 @@ export class InsightsService {
         `SELECT id, number, TRIM(supplier) AS supplier, location, ${IST_DAY('arrived_at')}::text AS arrived, closed_at IS NOT NULL AS closed, freight_paise AS freight
          FROM trucks WHERE id = $1`, [truckId])).rows[0];
       if (!t) throw new NotFoundException('Gaadi nahi mili');
-      const groups = (await tx.query<{ quality: string | null; qty: string; amount: string; first: string; last: string }>(
-        `SELECT br.name AS quality, SUM(l.qty) AS qty, SUM(l.qty::bigint * l.rate_paise) AS amount,
+      // A line per quality and rate, as the app's beejak prints it ("Rocket · 100 × 50").
+      const groups = (await tx.query<{ quality: string | null; rate: string; qty: string; amount: string; first: string; last: string }>(
+        `SELECT br.name AS quality, l.rate_paise AS rate, SUM(l.qty) AS qty, SUM(l.qty::bigint * l.rate_paise) AS amount,
                 MIN(lb.business_date)::text AS first, MAX(lb.business_date)::text AS last
          FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id LEFT JOIN brands br ON br.id = l.brand_id
-         WHERE l.truck_id = $1 GROUP BY br.name ORDER BY SUM(l.qty) DESC`, [truckId])).rows
-        .map((r) => ({ quality: r.quality ?? '', qty: n(r.qty), amountPaise: n(r.amount), avgRatePaise: n(r.qty) ? Math.round(n(r.amount) / n(r.qty)) : 0, first: r.first, last: r.last }));
+         WHERE l.truck_id = $1 GROUP BY br.name, l.rate_paise ORDER BY MIN(br.name), l.rate_paise DESC`, [truckId])).rows
+        .map((r) => ({ quality: r.quality ?? '', ratePaise: n(r.rate), qty: n(r.qty), amountPaise: n(r.amount), first: r.first, last: r.last }));
       const came = (await tx.query<{ received: string; corrected: string; off: string }>(
         `SELECT (SELECT COALESCE(SUM(received_qty), 0) FROM truck_grades WHERE truck_id = $1) AS received,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage WHERE truck_id = $1 AND kind = 'correction') AS corrected,
