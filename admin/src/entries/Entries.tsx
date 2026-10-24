@@ -5,8 +5,9 @@ import { t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
 import type { EditBill, EditRaseed, EntryKind, Editing, VoiceDraft } from './kinds'
+import { AngoorGaadiForm, AngoorParchiForm, type AngoorOptions } from './Angoor'
 
-type Options = {
+type Options = AngoorOptions & {
   commodity: string
   trucks: { id: string; number: string; supplier: string; arrivedAt: string; left: number; brandId: string | null; brand: string }[]
   rates: { brandId: string; grade: string; ratePaise: number }[]
@@ -182,7 +183,8 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
   }
 
   const title = editing ? t('Parchi #{n} badlein', { n: String(editing.slipNo ?? '') }) : t('Nayi Parchi')
-  if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={title} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{o.commodity === 'angoor' ? t('Angoor ki parchi app se banayein.') : t('Amrud ki parchi app se banayein.')}</p></Sheet>
+  if (o?.commodity === 'angoor') return <AngoorParchiForm shopId={shopId} o={o} editing={editing} onClose={onClose} onDone={onDone} />
+  if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={title} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki parchi app se banayein.')}</p></Sheet>
   return (
     <Sheet title={title} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
       onSave={() => {
@@ -447,7 +449,8 @@ function GaadiForm({ shopId, onClose, onDone }: FormProps) {
   useEffect(() => { if (o?.brands[0]) setLots((ls) => ls.map((l) => (l.brandId || l.brandName ? l : { ...l, brandId: o.brands[0].id }))) }, [o])
   const set = (i: number, patch: Partial<Lot>) => setLots(lots.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const total = lots.reduce((s, l) => s + l.qty * l.ratePaise, 0) + freight
-  if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={t('Nayi Gaadi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{o.commodity === 'angoor' ? t('Angoor ki party app se jodein.') : t('Amrud ki party app se jodein.')}</p></Sheet>
+  if (o?.commodity === 'angoor') return <AngoorGaadiForm shopId={shopId} o={o} onClose={onClose} onDone={onDone} />
+  if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={t('Nayi Gaadi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki party app se jodein.')}</p></Sheet>
   return (
     <Sheet title={t('Nayi Gaadi')} onClose={onClose} saving={saving} error={error}
       onSave={() => {

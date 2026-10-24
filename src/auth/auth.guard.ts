@@ -16,14 +16,16 @@ export class AuthGuard implements CanActivate {
     if (!header.startsWith('Bearer ')) throw new UnauthorizedException('Login zaroori hai');
     const principal = this.tokens.verifyAccess(header.slice(7));
 
-    // One cheap query: device still active; last_seen_at written at most every 5 minutes.
+    // One cheap query: device still active; last_seen_at written at most every 5 minutes. The app
+    // says its version on every call (X-App-Version), so a machine that updated itself shows it.
+    const version = String(req.headers['x-app-version'] ?? '').trim().slice(0, 40);
     const device = await this.db.one<{ revoked_at: Date | null }>(
       `WITH seen AS (
-         UPDATE devices SET last_seen_at = now()
-         WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 minutes')
+         UPDATE devices SET last_seen_at = now(), app_version = CASE WHEN $3 = '' THEN app_version ELSE $3 END
+         WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 minutes' OR ($3 <> '' AND app_version <> $3))
        )
        SELECT revoked_at FROM devices WHERE id = $1 AND user_id = $2`,
-      [principal.deviceId, principal.userId],
+      [principal.deviceId, principal.userId, version],
     );
     if (!device || device.revoked_at) throw new UnauthorizedException('Yeh machine band kar di gayi hai');
 

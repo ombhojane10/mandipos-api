@@ -36,8 +36,10 @@ const payModeCode = (cash: number, upi: number) => (cash > 0 && upi > 0 ? 'mixed
 export type Grade = '1' | '2' | '3' | 'mix';
 
 export type ParchiInput = {
-  buyerId?: string; buyerName?: string; truckId: string;
-  lines: { grade: Grade; qty: number; ratePaise: number }[];
+  buyerId?: string; buyerName?: string; truckId?: string;
+  lines?: { grade: Grade; qty: number; ratePaise: number }[];
+  /** Angoor: each line is one quality off one gaadi. */
+  lots?: { truckId: string; brandId: string; qty: number; ratePaise: number }[];
   pay: 'cash' | 'upi' | 'credit' | 'after' | 'split' | 'free'; cashPaise?: number; upiPaise?: number; upiBank?: string;
   packing: 'loose' | 'katta10' | 'katta15' | 'katta20' | 'katta25' | 'panni'; panniName?: string;
   /** Which katta (Green, Jaipur, White) — kept in panni_name, as the app does. */
@@ -53,7 +55,10 @@ export type VasooliInput = { buyerId: string; cashPaise: number; upiPaise: numbe
 export type DaybookInput = { direction: 'in' | 'out'; category: string; mode: 'cash' | 'office' | 'upi' | 'bank'; amountPaise: number; party?: string; note?: string; date?: string };
 export type UdhaarInput = { buyerId: string; amountPaise: number; note?: string; date?: string };
 export type GrahakInput = { name: string; phone?: string; address?: string; destination?: string; code?: string; vehicle?: string; openingPaise?: number };
-export type GaadiInput = { number: string; supplier: string; freightPaise?: number; lots: { brandId?: string; brandName?: string; grade: Grade; qty: number; ratePaise: number }[] };
+export type GaadiInput = {
+  number: string; supplier: string; freightPaise?: number; location?: string;
+  lots: { brandId?: string; brandName?: string; grade: Grade; qty: number; ratePaise: number; boxGrams?: number }[];
+};
 export type SupplierPaymentInput = { supplier: string; mode: 'cash' | 'office' | 'upi' | 'bank'; amountPaise: number; note?: string; date?: string };
 
 @Injectable()
@@ -66,8 +71,8 @@ export class EntriesService {
   /** What the entry forms need: open gaadis and their maal, today's bhav, maal list, suppliers, bank accounts. */
   async options(shopId: string) {
     return this.db.withShop(shopId, async (tx) => {
-      const shop = (await tx.query<{ commodity: string; bank_accounts: { bank: string; account: string }[] }>(
-        `SELECT commodity, bank_accounts FROM shops WHERE id = $1`, [shopId])).rows[0];
+      const shop = (await tx.query<{ commodity: string; bank_accounts: { bank: string; account: string }[]; apmc_on: boolean }>(
+        `SELECT commodity, bank_accounts, apmc_on FROM shops WHERE id = $1`, [shopId])).rows[0];
       const trucks = (await tx.query<{ id: string; number: string; supplier: string; arrived_at: Date; lots: { brand_id: string; brand: string; grade: string; qty: number }[] | null; recv: string; sold: string; spoiled: string }>(
         `SELECT t.id, t.number, t.supplier, t.arrived_at,
                 (SELECT json_agg(json_build_object('brand_id', g.brand_id, 'brand', br.name, 'grade', g.grade, 'qty', g.billed_qty + g.free_qty) ORDER BY g.created_at)
@@ -92,8 +97,36 @@ export class EntriesService {
       for (const r of (await tx.query<{ s: string }>(`SELECT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows) {
         if (!suppliers.has(nameKey(r.s))) suppliers.set(nameKey(r.s), r.s);
       }
+      // Angoor: every quality on every open gaadi (sold past its count included — angoor never
+      // refuses a sale), and each supplier's last gaadi for Nayi gaadi's smart defaults.
+      const angoor = shop.commodity !== 'angoor' ? undefined : await (async () => {
+        const lots = (await tx.query<{ truck_id: string; number: string; supplier: string; location: string; brand_id: string; quality: string; recv: string; sold: string; off: string; grams: number }>(
+          `SELECT t.id AS truck_id, t.number, t.supplier, t.location, g.brand_id, COALESCE(br.name, '?') AS quality,
+                  SUM(g.billed_qty + g.free_qty) AS recv, MAX(g.box_grams) AS grams,
+                  (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id AND l.brand_id = g.brand_id) AS sold,
+                  (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.brand_id = g.brand_id) AS off
+           FROM trucks t JOIN truck_grades g ON g.truck_id = t.id LEFT JOIN brands br ON br.id = g.brand_id
+           WHERE t.closed_at IS NULL GROUP BY t.id, g.brand_id, br.name ORDER BY t.arrived_at DESC, MIN(g.created_at)`)).rows;
+        const lastBySupplier = new Map<string, { supplier: string; location: string; truckId: string }>();
+        for (const r of (await tx.query<{ id: string; supplier: string; location: string }>(
+          `SELECT id, TRIM(supplier) AS supplier, location FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows) {
+          if (!lastBySupplier.has(nameKey(r.supplier))) lastBySupplier.set(nameKey(r.supplier), { supplier: r.supplier, location: r.location, truckId: r.id });
+        }
+        const lastLots = (await tx.query<{ truck_id: string; quality: string; grams: number; rate: string }>(
+          `SELECT g.truck_id, COALESCE(br.name, '?') AS quality, MAX(g.box_grams) AS grams, MAX(g.rate_paise) AS rate
+           FROM truck_grades g LEFT JOIN brands br ON br.id = g.brand_id WHERE g.truck_id = ANY($1::uuid[])
+           GROUP BY g.truck_id, g.brand_id, br.name ORDER BY MIN(g.created_at)`, [[...lastBySupplier.values()].map((v) => v.truckId)])).rows;
+        return {
+          apmcOn: shop.apmc_on,
+          lots: lots.map((l) => ({ truckId: l.truck_id, number: l.number, supplier: l.supplier, location: l.location, brandId: l.brand_id,
+            quality: l.quality, left: n(l.recv) - n(l.sold) - n(l.off), boxGrams: l.grams ?? 0 })),
+          lastArrivals: [...lastBySupplier.values()].map((v) => ({ supplier: v.supplier, location: v.location,
+            lots: lastLots.filter((l) => l.truck_id === v.truckId).map((l) => ({ quality: l.quality, boxGrams: l.grams ?? 0, ratePaise: n(l.rate) })) })),
+        };
+      })();
       return {
         commodity: shop.commodity,
+        ...(angoor ?? {}),
         trucks: trucks.filter((t) => t.left > 0),
         rates: rates.map((r) => ({ brandId: r.brand_id, grade: r.grade, ratePaise: n(r.rate) })),
         brands,
@@ -126,6 +159,11 @@ export class EntriesService {
   }
 
   private async writeParchi(p: Principal, shopId: string, input: ParchiInput, editing: LiveBill | null) {
+    const commodity = await this.db.withShop(shopId, async (tx) =>
+      (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0].commodity);
+    if (commodity === 'angoor') return this.writeAngoorParchi(p, shopId, input, editing);
+    if (!input.truckId || !input.lines) throw new BadRequestException('Gaadi aur maal chunein');
+    const truckId = input.truckId;
     const lines = input.lines.filter((l) => l.qty > 0);
     if (!lines.length) throw new BadRequestException('Kam se kam ek line daalein');
     const now = new Date().toISOString();
@@ -140,16 +178,16 @@ export class EntriesService {
                   - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled
-         FROM trucks t WHERE t.id = $1 AND (t.closed_at IS NULL OR t.id = $2)`, [input.truckId, editing?.truck_id ?? null])).rows[0];
+         FROM trucks t WHERE t.id = $1 AND (t.closed_at IS NULL OR t.id = $2)`, [truckId, editing?.truck_id ?? null])).rows[0];
       if (!truck) throw new BadRequestException('Yeh gaadi khuli nahi hai');
       // The dana the slip being edited took off this gaadi come back when it is replaced.
       const own = editing ? n((await tx.query<{ q: string }>(
-        `SELECT COALESCE(SUM(qty), 0) AS q FROM bill_lines WHERE bill_id = $1 AND truck_id = $2`, [editing.id, input.truckId])).rows[0].q) : 0;
+        `SELECT COALESCE(SUM(qty), 0) AS q FROM bill_lines WHERE bill_id = $1 AND truck_id = $2`, [editing.id, truckId])).rows[0].q) : 0;
       const left = n(truck.recv) - n(truck.sold) - n(truck.spoiled) + own;
       const qty = lines.reduce((s, l) => s + l.qty, 0);
       if (qty > left) throw new UnprocessableEntityException(`Gaadi mein sirf ${left} nag baaki hain`);
       const brand = (await tx.query<{ brand_id: string }>(
-        `SELECT brand_id FROM truck_grades WHERE truck_id = $1 GROUP BY brand_id ORDER BY SUM(billed_qty + free_qty) DESC LIMIT 1`, [input.truckId])).rows[0];
+        `SELECT brand_id FROM truck_grades WHERE truck_id = $1 GROUP BY brand_id ORDER BY SUM(billed_qty + free_qty) DESC LIMIT 1`, [truckId])).rows[0];
       let buyer: { id: string; name: string } | null = null;
       if (input.buyerId) {
         buyer = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM buyers WHERE id = $1`, [input.buyerId])).rows[0] ?? null;
@@ -203,7 +241,7 @@ export class EntriesService {
         // A corrected slip stays on its own day (and time): editing an old slip never moves it to today.
         id: billId, created_at: editing ? editing.created_at.toISOString() : now, number: pre.number, kind: 'kachchi', buyer_id: buyerId, buyer_name: buyerName,
         business_date: editing ? editing.day.slice(0, 10) : todayIst(), pay_mode: payMode, total_paise: goods, paid_paise: cash + upi, cash_paise: cash, upi_paise: upi,
-        payment_ref: '', slip_no: slipNo, truck_id: input.truckId,
+        payment_ref: '', slip_no: slipNo, truck_id: truckId,
         labour_paise: labourQty * (input.labourRatePaise ?? LABOUR_PAISE_PER_NAG),
         packing: input.packing, panni_name: panniName, packs: labourQty,
         delivery: !!delivery, staff_name: (input.staff ?? '').trim().slice(0, 60) || 'Website', chungi_paise: 0,
@@ -212,7 +250,7 @@ export class EntriesService {
     });
     for (const l of lines) {
       items.push({ table: 'bill_lines', txn, row: {
-        id: uuidv7(), created_at: now, bill_id: billId, truck_id: input.truckId, brand_id: pre.brandId, grade: l.grade, qty: l.qty,
+        id: uuidv7(), created_at: now, bill_id: billId, truck_id: truckId, brand_id: pre.brandId, grade: l.grade, qty: l.qty,
         rate_paise: free ? 0 : l.ratePaise, leak: false,
       } });
     }
@@ -225,6 +263,98 @@ export class EntriesService {
     const no = bill.renumbered?.to ?? slipNo;
     // A new slip prints on the shop's print machine by itself, as one saved on a phone does;
     // an edit prints only when asked, as in the app.
+    const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
+    return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, results };
+  }
+
+  /**
+   * Angoor's parchi, as the app writes it (Store.saveParchi): each line one quality off one
+   * gaadi, several gaadis on a slip, no count limit. The grahak pays the goods plus 1% APMC
+   * (when the shop has it on) plus, on an udhaar slip with labour ticked, boxes × the labour
+   * rate. chungi_paise holds APMC + labour, apmc_paise the APMC, labour_paise the labour.
+   */
+  private async writeAngoorParchi(p: Principal, shopId: string, input: ParchiInput, editing: LiveBill | null) {
+    const lots = (input.lots ?? []).filter((l) => l.qty > 0);
+    if (!lots.length) throw new BadRequestException('Kam se kam ek quality aur box daalein');
+    const now = new Date().toISOString();
+    const free = input.pay === 'free';
+
+    const pre = await this.db.withShop(shopId, async (tx) => {
+      const shop = (await tx.query<{ apmc_on: boolean }>(`SELECT apmc_on FROM shops WHERE id = $1`, [shopId])).rows[0];
+      // The slip being changed may sit on a gaadi closed since; its own gaadis stay allowed.
+      const own = editing ? (await tx.query<{ truck_id: string }>(`SELECT DISTINCT truck_id FROM bill_lines WHERE bill_id = $1`, [editing.id])).rows.map((r) => r.truck_id) : [];
+      for (const l of lots) {
+        const ok = (await tx.query(
+          `SELECT 1 FROM truck_grades g JOIN trucks t ON t.id = g.truck_id
+           WHERE g.truck_id = $1 AND g.brand_id = $2 AND (t.closed_at IS NULL OR t.id = ANY($3::uuid[])) LIMIT 1`,
+          [l.truckId, l.brandId, own])).rowCount;
+        if (!ok) throw new BadRequestException('Yeh quality is gaadi par nahi hai');
+      }
+      let buyer: { id: string; name: string } | null = null;
+      if (input.buyerId) {
+        buyer = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM buyers WHERE id = $1`, [input.buyerId])).rows[0] ?? null;
+        if (!buyer) throw new BadRequestException('Grahak nahi mila');
+      }
+      return { apmcOn: shop.apmc_on, slipNo: await nextNumber(tx, 'bills', 'slip_no', 'bill_voids'), number: await this.billNumber(tx, p.deviceId) };
+    });
+
+    const items: PushItem[] = [];
+    let buyerId = input.buyerId ?? null;
+    let buyerName = (input.buyerName ?? '').trim();
+    const walkIn = /^(cash|bank|free)$/i.test(buyerName) || (!buyerId && !buyerName);
+    if (!buyerId && buyerName && !walkIn) {
+      buyerId = uuidv7();
+      items.push({ table: 'buyers', row: this.buyerRow(buyerId, { name: buyerName }, now), txn: uuidv7() });
+    }
+    if (buyerId && !input.buyerName) buyerName = (await this.db.withShop(shopId, async (tx) => (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE id = $1`, [buyerId])).rows[0]?.name)) ?? '';
+    if (free) { buyerId = null; buyerName = 'Free'; }
+    if (!buyerId && !buyerName) buyerName = 'Cash';
+
+    const boxes = lots.reduce((s, l) => s + l.qty, 0);
+    const goods = free ? 0 : lots.reduce((s, l) => s + l.qty * l.ratePaise, 0);
+    const apmc = pre.apmcOn ? Math.round(goods * 0.01) : 0;
+    // Labour only for an udhaar grahak who is charged it.
+    const credit = input.pay === 'credit' || input.pay === 'after';
+    const labour = !free && credit && input.labour ? boxes * (input.labourRatePaise ?? 1000) : 0;
+    const total = goods + apmc + labour;
+    let cash = 0, upi = 0;
+    if (input.pay === 'cash') cash = total;
+    else if (input.pay === 'upi') upi = total;
+    else if (input.pay === 'split') { cash = input.cashPaise ?? 0; upi = input.upiPaise ?? 0; }
+    if (cash + upi > total) throw new BadRequestException('Jama rakam parchi se zyada hai');
+    if (!buyerId && cash + upi < total && !free) throw new BadRequestException('Udhaar ke liye grahak chunein');
+    const chosen = free ? 'free' : input.pay === 'split' ? null : input.pay;
+    const payMode = chosen && (total === 0 || chosen === 'after') ? chosen : payModeCode(cash, upi);
+    const delivery = input.delivery && (input.delivery.address.trim() || input.delivery.stand.trim()) ? input.delivery : null;
+    const billId = uuidv7();
+    const txn = uuidv7();
+    const slipNo = editing ? (editing.slip_no ?? pre.slipNo) : (input.slipNo ?? pre.slipNo);
+    if (editing) items.push({ table: 'bill_voids', txn, row: {
+      id: uuidv7(), created_at: now, bill_id: editing.id, slip_no: editing.slip_no, reason: 'edited',
+    } });
+    items.push({
+      table: 'bills', txn, row: {
+        id: billId, created_at: editing ? editing.created_at.toISOString() : now, number: pre.number, kind: 'kachchi', buyer_id: buyerId, buyer_name: buyerName,
+        business_date: editing ? editing.day.slice(0, 10) : todayIst(), pay_mode: payMode, total_paise: total, paid_paise: cash + upi, cash_paise: cash, upi_paise: upi,
+        payment_ref: '', slip_no: slipNo, truck_id: null,
+        labour_paise: labour, packing: 'loose', panni_name: '', packs: labour > 0 ? boxes : 0,
+        delivery: !!delivery, staff_name: (input.staff ?? '').trim().slice(0, 60) || 'Website',
+        chungi_paise: apmc + labour, apmc_paise: apmc,
+        upi_bank: upi > 0 ? (input.upiBank ?? '') : '',
+      },
+    });
+    for (const l of lots) {
+      items.push({ table: 'bill_lines', txn, row: {
+        id: uuidv7(), created_at: now, bill_id: billId, truck_id: l.truckId, brand_id: l.brandId, grade: '1', qty: l.qty,
+        rate_paise: free ? 0 : l.ratePaise, leak: false,
+      } });
+    }
+    if (delivery) items.push({ table: 'delivery_slips', txn: uuidv7(), row: {
+      id: uuidv7(), created_at: now, bill_id: billId, address: delivery.address.trim().slice(0, 200), destination: delivery.stand.trim().slice(0, 120),
+    } });
+    const results = await this.push(p, shopId, items);
+    const bill = results.find((r) => r.id === billId)!;
+    const no = bill.renumbered?.to ?? slipNo;
     const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
     return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, results };
   }
@@ -471,7 +601,8 @@ export class EntriesService {
     const now = new Date().toISOString();
     const { supplier, brandIds } = await this.db.withShop(shopId, async (tx) => {
       const shop = (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0];
-      if (shop.commodity !== 'nariyal') throw new UnprocessableEntityException('Is maal ki party app se jodein');
+      if (shop.commodity === 'amrud') throw new UnprocessableEntityException('Is maal ki party app se jodein');
+      if (shop.commodity === 'angoor' && !input.supplier.trim()) throw new BadRequestException('Supplier ka naam daalein');
       const known = (await tx.query<{ s: string }>(`SELECT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows
         .find((r) => nameKey(r.s) === nameKey(input.supplier))?.s;
       const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;
@@ -496,10 +627,12 @@ export class EntriesService {
     items.push({ table: 'trucks', txn, row: {
       id: truckId, created_at: now, updated_at: now, number, supplier, arrived_at: now,
       freight_paise: input.freightPaise ?? 0, labour_paise: 0, commission_paise: 0, closed_at: null,
+      // Angoor: where the gaadi stands, printed on every slip off it.
+      ...(input.location?.trim() ? { location: input.location.trim().slice(0, 80) } : {}),
     } });
     lots.forEach((l, i) => items.push({ table: 'truck_grades', txn, row: {
       id: uuidv7(), created_at: now, truck_id: truckId, brand_id: brandIds[i], grade: l.grade,
-      billed_qty: l.qty, free_qty: 0, received_qty: l.qty, rate_paise: l.ratePaise,
+      billed_qty: l.qty, free_qty: 0, received_qty: l.qty, rate_paise: l.ratePaise, box_grams: l.boxGrams ?? 0,
     } }));
     const results = await this.push(p, shopId, items);
     return { truckId, results };

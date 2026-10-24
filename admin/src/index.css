@@ -344,6 +344,9 @@ a.kpi:hover { border-color: #cfd3da; }
 .lines-in { display: grid; gap: 8px; }
 .line-in { display: grid; grid-template-columns: 90px 1fr 1fr auto auto; gap: 8px; align-items: center; }
 .line-in .line-amt { min-width: 80px; text-align: right; color: var(--ink-2); }
+/* Angoor: the quality-off-which-gaadi pick is the line's main thing, so it gets the room. */
+.line-in.wide-pick { grid-template-columns: minmax(200px, 2.4fr) 80px 1fr auto auto; }
+.line-in.wide-pick.gaadi-q { grid-template-columns: minmax(140px, 2fr) 80px 64px 1fr auto; }
 .total-line { display: flex; align-items: baseline; gap: 12px; padding: 12px 14px; background: var(--page); border-radius: var(--radius-sm); }
 .total-line span:first-child { flex: 1; color: var(--muted); }
 .total-line b { font-size: 20px; }
@@ -373,6 +376,8 @@ a.kpi:hover { border-color: #cfd3da; }
   .sheet-ft { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   .sheet-ft .btn { flex: 1; height: 46px; }
   .line-in { grid-template-columns: 74px 1fr 1fr auto; }
+  .line-in.wide-pick, .line-in.wide-pick.gaadi-q { grid-template-columns: 1fr 1fr auto; }
+  .line-in.wide-pick > select, .line-in.wide-pick > input:first-child { grid-column: 1 / -1; }
   .line-in .line-amt { display: none; }
   .quick { gap: 10px; }
   .quick button { padding: 12px; gap: 10px; }

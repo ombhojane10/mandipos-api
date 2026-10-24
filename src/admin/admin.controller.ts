@@ -77,8 +77,10 @@ const paise = z.number().int().min(0).max(1_000_000_000_00);
 const grade = z.enum(['1', '2', '3', 'mix']);
 const DayIso = z.iso.date().optional();
 const ParchiBody = z.object({
-  buyerId: z.uuid().optional(), buyerName: z.string().trim().max(120).optional(), truckId: z.uuid(),
-  lines: z.array(z.object({ grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise })).min(1).max(20),
+  buyerId: z.uuid().optional(), buyerName: z.string().trim().max(120).optional(), truckId: z.uuid().optional(),
+  lines: z.array(z.object({ grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise })).min(1).max(20).optional(),
+  // Angoor: each line one quality off one gaadi.
+  lots: z.array(z.object({ truckId: z.uuid(), brandId: z.uuid(), qty: z.number().int().min(0).max(10_000_000), ratePaise: paise })).min(1).max(20).optional(),
   pay: z.enum(['cash', 'upi', 'credit', 'after', 'split', 'free']), cashPaise: paise.optional(), upiPaise: paise.optional(),
   upiBank: z.string().max(80).optional(),
   packing: z.enum(['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni']).default('loose'), panniName: z.string().max(40).optional(),
@@ -119,7 +121,9 @@ const GrahakBody = z.object({
 });
 const GaadiBody = z.object({
   number: z.string().trim().min(1).max(20), supplier: z.string().trim().max(120).default(''), freightPaise: paise.optional(),
-  lots: z.array(z.object({ brandId: z.uuid().optional(), brandName: z.string().trim().max(60).optional(), grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise })).min(1).max(12),
+  location: z.string().trim().max(80).optional(),
+  lots: z.array(z.object({ brandId: z.uuid().optional(), brandName: z.string().trim().max(60).optional(), grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise,
+    boxGrams: z.number().int().min(0).max(1_000_000).optional() })).min(1).max(12),
 });
 const SupplierPayBody = z.object({ supplier: z.string().trim().min(1).max(120), mode: z.enum(['cash', 'office', 'upi', 'bank']), amountPaise: paise.positive(), note: z.string().max(200).optional(), date: DayIso });
 

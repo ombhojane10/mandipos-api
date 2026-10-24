@@ -21,7 +21,7 @@ export type EditBill = {
   id: string; slipNo: number | null; buyerId: string | null; buyerName: string; payMode: string; truckId: string | null; truck: string | null
   totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; packs: number
   packing: string; panniName: string; staff: string; upiBank: string
-  lines: { grade: string; qty: number; ratePaise: number; leak: boolean }[]
+  lines: { grade: string; qty: number; ratePaise: number; leak: boolean; brand: string; truckId?: string; brandId?: string }[]
   delivery: { address: string; stand: string } | null
 }
 /** A raseed opened to alter (GET collections/:id). */

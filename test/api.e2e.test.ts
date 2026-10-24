@@ -297,6 +297,85 @@ describe('angoor round 2', () => {
   });
 });
 
+describe('angoor on the website', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('makes grapes slips and gaadis on the portal as the app does: several gaadis, APMC, udhaar labour, no count limit', async () => {
+    const s = await login('9829200021');
+    const res = await createApproved(s.accessToken, { name: 'Web Angoor', mandi: 'Azadpur', shopNo: 'C-30', role: 'owner', commodity: 'angoor' });
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const royal = uuidv7(), sai = uuidv7(), manat = uuidv7();
+    await http().post('/v1/sync/push').set(auth(res.accessToken)).send({ items: [
+      { table: 'brands', row: { id: royal, created_at: t, updated_at: t, name: 'Royal' } },
+      { table: 'trucks', row: { id: sai, created_at: t, updated_at: t, number: '3289', supplier: 'Sai', arrived_at: t, location: 'Pillar 320' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: sai, brand_id: royal, grade: '1', billed_qty: 10, received_qty: 10, rate_paise: 120000, box_grams: 10000 } },
+      { table: 'trucks', row: { id: manat, created_at: t, updated_at: t, number: 'HR26X1111', supplier: 'Manat', arrived_at: t, location: 'Shed 4' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: manat, brand_id: royal, grade: '1', billed_qty: 40, received_qty: 40, rate_paise: 110000, box_grams: 15000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829200021' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829200021', code: OtpService.issuedForTests.get('9829200021') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+
+    const opts = (await http().get(`${base}/entry-options`).set(web).expect(200)).body;
+    expect(opts.commodity).toBe('angoor');
+    expect(opts.apmcOn).toBe(true);
+    expect(opts.lots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ truckId: sai, brandId: royal, quality: 'Royal', number: '3289', supplier: 'Sai', location: 'Pillar 320', left: 10, boxGrams: 10000 }),
+      expect.objectContaining({ truckId: manat, brandId: royal, left: 40, boxGrams: 15000 }),
+    ]));
+    expect(opts.lastArrivals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ supplier: 'Manat', location: 'Shed 4', lots: [{ quality: 'Royal', boxGrams: 15000, ratePaise: 110000 }] }),
+    ]));
+
+    // Cash: Royal from both gaadis, 5 × ₹1,500 + 3 × ₹1,400 = ₹11,700 + APMC ₹117.
+    const a = (await http().post(`${base}/entries/parchi`).set(web).send({
+      lots: [{ truckId: sai, brandId: royal, qty: 5, ratePaise: 150000 }, { truckId: manat, brandId: royal, qty: 3, ratePaise: 140000 }], pay: 'cash',
+    }).expect(201)).body;
+    // Udhaar with labour, and more boxes than the gaadi shows (angoor never refuses on the count).
+    const b = (await http().post(`${base}/entries/parchi`).set(web).send({
+      buyerName: 'Web Angoor Grahak', lots: [{ truckId: sai, brandId: royal, qty: 20, ratePaise: 100000 }], pay: 'credit', labour: true, labourRatePaise: 1200,
+    }).expect(201)).body;
+    // Labour is for udhaar only: a cash slip asking for it gets none.
+    const c = (await http().post(`${base}/entries/parchi`).set(web).send({
+      lots: [{ truckId: manat, brandId: royal, qty: 2, ratePaise: 100000 }], pay: 'cash', labour: true, labourRatePaise: 1200,
+    }).expect(201)).body;
+    await http().post(`${base}/entries/parchi`).set(web).send({ lots: [{ truckId: sai, brandId: uuidv7(), qty: 1, ratePaise: 1 }], pay: 'cash' }).expect(400);
+
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
+    const bill = (bid: string) => pulled.body.changes.find((x: any) => x.table === 'bills' && x.row.id === bid).row;
+    const lines = (bid: string) => pulled.body.changes.filter((x: any) => x.table === 'bill_lines' && x.row.bill_id === bid).map((x: any) => x.row);
+    expect(bill(a.billId)).toMatchObject({ truck_id: null, total_paise: 1181700, cash_paise: 1181700, chungi_paise: 11700, apmc_paise: 11700, labour_paise: 0, pay_mode: 'cash' });
+    expect(lines(a.billId).map((l: any) => [l.truck_id, l.qty]).sort()).toEqual([[sai, 5], [manat, 3]].sort());
+    expect(bill(b.billId)).toMatchObject({ total_paise: 2000000 + 20000 + 24000, chungi_paise: 44000, apmc_paise: 20000, labour_paise: 24000, packs: 20, pay_mode: 'credit', buyer_name: 'Web Angoor Grahak' });
+    expect(bill(c.billId)).toMatchObject({ total_paise: 202000, labour_paise: 0 });
+
+    // Alter keeps both gaadis; the view carries each line's gaadi.
+    const view = (await http().get(`${base}/bills/${a.billId}`).set(web).expect(200)).body;
+    expect(view.lines.map((l: any) => l.truckId).sort()).toEqual([sai, manat].sort());
+    const a2 = (await http().post(`${base}/bills/${a.billId}/edit`).set(web).send({
+      lots: [{ truckId: sai, brandId: royal, qty: 4, ratePaise: 150000 }, { truckId: manat, brandId: royal, qty: 3, ratePaise: 140000 }], pay: 'cash',
+    }).expect(201)).body;
+    expect(a2.slipNo).toBe(a.slipNo);
+
+    // APMC off: new slips carry none.
+    await http().post('/v1/shops/apmc').set(auth(res.accessToken)).send({ on: false }).expect(204);
+    const d = (await http().post(`${base}/entries/parchi`).set(web).send({ lots: [{ truckId: sai, brandId: royal, qty: 1, ratePaise: 100000 }], pay: 'cash' }).expect(201)).body;
+    const again = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
+    expect(again.body.changes.find((x: any) => x.table === 'bills' && x.row.id === d.billId).row).toMatchObject({ total_paise: 100000, apmc_paise: 0 });
+
+    // Nayi gaadi: vehicle, supplier, where it stands, qualities with box kg and our bhav.
+    const g = (await http().post(`${base}/entries/gaadi`).set(web).send({
+      number: 'hr 55 ab 4455', supplier: 'Sai', location: 'Pillar 320, Shed 11', freightPaise: 800000,
+      lots: [{ brandId: royal, grade: '1', qty: 50, ratePaise: 120000, boxGrams: 10000 }, { brandName: 'Tiger', grade: '1', qty: 30, ratePaise: 70000, boxGrams: 8000 }],
+    }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(web).send({ number: 'X1', supplier: '', lots: [{ brandId: royal, grade: '1', qty: 1, ratePaise: 0 }] }).expect(400);
+    const third = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
+    expect(third.body.changes.filter((x: any) => x.table === 'trucks' && x.row.id === g.truckId).at(-1).row).toMatchObject({ number: 'HR55AB4455', location: 'Pillar 320, Shed 11' });
+    expect(third.body.changes.filter((x: any) => x.table === 'truck_grades' && x.row.truck_id === g.truckId).map((x: any) => x.row.box_grams).sort()).toEqual([10000, 8000].sort());
+  });
+});
+
 describe('slip limit', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
@@ -1015,7 +1094,7 @@ describe('shop approval and the admin portal', () => {
     const voucher = (await http().get(`${base}/bills/${slip.billId}`).set(web).expect(200)).body;
     expect(voucher).toMatchObject({ slipNo: 2, buyerName: 'Raju Fruits', totalPaise: 25000, cashPaise: 12500, openPaise: 12500, packing: 'katta10', truck: 'TN09', voided: null });
     expect(voucher.machine).toMatch(/Website$/);
-    expect(voucher.lines).toEqual([{ brand: 'Pollachi', grade: '1', qty: 10, ratePaise: 2500, leak: false }]);
+    expect(voucher.lines).toEqual([{ brand: 'Pollachi', grade: '1', qty: 10, ratePaise: 2500, leak: false, truckId, brandId }]);
     expect(pulled.filter((c: any) => c.table === 'bill_lines' && c.row.bill_id === slip.billId).map((c: any) => [c.row.qty, c.row.brand_id])).toEqual([[10, brandId]]);
 
     const vas = (await http().post(`${base}/entries/vasooli`).set(web).send({ buyerId: raju, cashPaise: 0, upiPaise: 5000 }).expect(201)).body;

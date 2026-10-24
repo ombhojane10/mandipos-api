@@ -378,15 +378,15 @@ export class AdminService {
   async bill(shopId: string, billId: string) {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
-      const b = (await tx.query<{ id: string; number: string; slip_no: number | null; created_at: Date; day: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; labour: string; chungi: string; packing: string; panni_name: string; packs: number; staff_name: string; upi_bank: string; truck_id: string | null; truck: string | null; device: string | null; device_label: string | null }>(
+      const b = (await tx.query<{ id: string; number: string; slip_no: number | null; created_at: Date; day: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; labour: string; chungi: string; apmc: string; packing: string; panni_name: string; packs: number; staff_name: string; upi_bank: string; truck_id: string | null; truck: string | null; device: string | null; device_label: string | null }>(
         `SELECT b.id, b.number, b.truck_id, b.slip_no, b.created_at, b.business_date::text AS day, b.buyer_id, b.buyer_name, b.pay_mode,
                 b.total_paise AS total, b.paid_paise AS paid, b.cash_paise AS cash, b.upi_paise AS upi, b.labour_paise AS labour,
-                b.chungi_paise AS chungi, b.packing, b.panni_name, b.packs, b.staff_name, b.upi_bank,
+                b.chungi_paise AS chungi, b.apmc_paise AS apmc, b.packing, b.panni_name, b.packs, b.staff_name, b.upi_bank,
                 t.number AS truck, d.code AS device, d.label AS device_label
          FROM bills b LEFT JOIN trucks t ON t.id = b.truck_id LEFT JOIN devices d ON d.id = b.device_id WHERE b.id = $1`, [billId])).rows[0];
       if (!b) throw new NotFoundException('Parchi nahi mili');
-      const lines = (await tx.query<{ brand: string | null; grade: string; qty: number; rate: string; leak: boolean }>(
-        `SELECT br.name AS brand, l.grade, l.qty, l.rate_paise AS rate, l.leak FROM bill_lines l LEFT JOIN brands br ON br.id = l.brand_id
+      const lines = (await tx.query<{ brand: string | null; grade: string; qty: number; rate: string; leak: boolean; truck_id: string; brand_id: string }>(
+        `SELECT br.name AS brand, l.grade, l.qty, l.rate_paise AS rate, l.leak, l.truck_id, l.brand_id FROM bill_lines l LEFT JOIN brands br ON br.id = l.brand_id
          WHERE l.bill_id = $1 ORDER BY l.created_at`, [billId])).rows;
       const later = (await tx.query<{ id: string; at: Date; amount: string; cash: string; upi: string; receipt_no: number | null; voided: boolean }>(
         `SELECT c.id, c.created_at AS at, c.amount_paise AS amount, c.receipt_no,
@@ -404,13 +404,14 @@ export class AdminService {
       return {
         id: b.id, number: b.number, slipNo: b.slip_no, at: b.created_at.toISOString(), date: b.day,
         buyerId: b.buyer_id, buyerName: b.buyer_name, payMode: b.pay_mode,
-        totalPaise: n(b.total), paidPaise: n(b.paid), cashPaise: n(b.cash), upiPaise: n(b.upi), labourPaise: n(b.labour), chungiPaise: n(b.chungi),
+        totalPaise: n(b.total), paidPaise: n(b.paid), cashPaise: n(b.cash), upiPaise: n(b.upi), labourPaise: n(b.labour), chungiPaise: n(b.chungi), apmcPaise: n(b.apmc),
         openPaise: Math.max(0, n(b.total) - n(b.paid) - paidLater),
         packing: b.packing, panniName: b.panni_name, packs: b.packs, staff: b.staff_name, upiBank: b.upi_bank, truckId: b.truck_id, truck: b.truck,
         // Vasooli still standing on the slip: an edit is refused, a delete hands it back or keeps it.
         collected: { cashPaise: live.reduce((s, c) => s + n(c.cash), 0), upiPaise: live.reduce((s, c) => s + n(c.upi), 0) },
         machine: [b.device, b.device_label].filter(Boolean).join(' · '),
-        lines: lines.map((l) => ({ brand: l.brand ?? 'Maal', grade: l.grade, qty: l.qty, ratePaise: n(l.rate), leak: l.leak })),
+        // truckId/brandId: a party slip's lines each come off their own gaadi (angoor's Alter needs them).
+        lines: lines.map((l) => ({ brand: l.brand ?? 'Maal', grade: l.grade, qty: l.qty, ratePaise: n(l.rate), leak: l.leak, truckId: l.truck_id, brandId: l.brand_id })),
         payments: later.map((c) => ({ id: c.id, at: c.at.toISOString(), amountPaise: n(c.amount), receiptNo: c.receipt_no, voided: c.voided })),
         voided: voided ? { reason: voided.reason, at: voided.at.toISOString(), by: voided.by ?? '' } : null,
         delivery: delivery ? { address: delivery.address, stand: delivery.destination } : null,
