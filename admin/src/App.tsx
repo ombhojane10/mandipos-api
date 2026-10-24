@@ -19,6 +19,7 @@ import { Bhav, GaadiHisab, Munafa, Nigrani, SalesRegister, Vasooli } from './pag
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
+import { Apmc, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
 import { openEntry } from './entries/kinds'
 import { F_KEYS, REPORT_KEYS, lastRow, openHelp, pagePath, periodKey } from './keys'
@@ -62,6 +63,17 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
     { report: 'team', label: t('Team & Machine'), key: 'T', icon: I.ITeam },
   ] },
 ]
+
+/** A grapes shop's own desk, under the dashboard: dispatch at the gaadi, gaadis, party commission, APMC, mazdoori. */
+export const ANGOOR_REPORTS: (typeof REPORTS)[number] = { group: t('Angoor'), items: [
+  { report: 'dispatch', label: t('Dispatch'), key: '', icon: I.IScan },
+  { report: 'pata', label: t('Gaadi kahan'), key: '', icon: I.IPin },
+  { report: 'commission', label: t('Supplier commission'), key: '', icon: I.IRupee },
+  { report: 'apmc', label: t('APMC'), key: '', icon: I.IChart },
+  { report: 'mazdoori', label: t('Mazdoori'), key: '', icon: I.IWallet },
+] }
+/** The sidebar's groups for a shop: the grapes desk only where the shop sells grapes. */
+export const reportGroups = (commodity?: string) => (commodity === 'angoor' ? [REPORTS[0], ANGOOR_REPORTS, ...REPORTS.slice(1)] : REPORTS)
 
 const LAST_SHOP = 'mandipos-shop'
 
@@ -223,7 +235,7 @@ export default function App() {
             </div>
           )}
           <nav className="nav">
-            {shopId && REPORTS.map((g) => (
+            {shopId && reportGroups(shop?.commodity).map((g) => (
               <div key={g.group || 'home'}>
                 {g.group && <div className="grp">{g.group}</div>}
                 {g.items.map((it) => (
@@ -320,13 +332,18 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'gaadis': return <GaadiHisab key={shopId} shopId={shopId} />
     case 'bhav': return <Bhav key={shopId} shopId={shopId} />
     case 'nigrani': return <Nigrani key={shopId} shopId={shopId} />
+    case 'dispatch': return <Dispatch key={shopId} shopId={shopId} />
+    case 'pata': return <GaadiPata key={shopId} shopId={shopId} />
+    case 'commission': return <Commission key={shopId} shopId={shopId} />
+    case 'apmc': return <Apmc key={shopId} shopId={shopId} />
+    case 'mazdoori': return <Mazdoori key={shopId} shopId={shopId} />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }
 }
 
 function titleOf(r: Route): string {
   switch (r.page) {
-    case 'report': return r.report === 'settings' ? t('Settings') : REPORTS.flatMap((g) => g.items).find((i) => i.report === r.report)?.label ?? t('Dashboard')
+    case 'report': return r.report === 'settings' ? t('Settings') : [...REPORTS, ANGOOR_REPORTS].flatMap((g) => g.items).find((i) => i.report === r.report)?.label ?? t('Dashboard')
     case 'grahak': return t('Grahak Khata')
     case 'supplier': return t('Supplier Khata')
     case 'shops': return t('Sab Dukaan')

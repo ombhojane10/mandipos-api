@@ -874,3 +874,11 @@ a.vc-row:hover { background: var(--accent-soft); }
 .bolo-opts .btn { height: 40px; text-align: left; justify-content: flex-start; padding: 0 12px; font-size: 14px; }
 .bolo-type { display: flex; gap: 6px; }
 .bolo-type .field { flex: 1; font-size: 18px; letter-spacing: 0.04em; }
+
+/* Grapes desk */
+.pct-in { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.pct-in .field { width: 64px; text-align: right; }
+.gaadi-at { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.gaadi-q-tbl th, .gaadi-q-tbl td { padding-left: 0; }
+.gaadi-ft { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.gaadi-q-tbl small.kg { display: block; }

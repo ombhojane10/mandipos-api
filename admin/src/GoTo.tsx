@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type BuyerRow, type MarketCustomer } from './api'
-import { REPORTS, useSession } from './App'
+import { reportGroups, useSession } from './App'
 import { href, periodQuery } from './routes'
 import { phone, rupees } from './format'
 import { t } from './i18n'
@@ -42,7 +42,7 @@ export function GoTo({ shopId, onClose }: { shopId: string | null; onClose: () =
     return () => { live = false; clearTimeout(timer) }
   }, [query, shopId, me?.admin])
 
-  const reports: Option[] = shopId ? REPORTS.flatMap((g) => g.items)
+  const reports: Option[] = shopId ? reportGroups(shops?.find((s) => s.id === shopId)?.commodity).flatMap((g) => g.items)
     .filter((i) => !query || i.label.toLowerCase().includes(query))
     .map((i) => ({ key: `r-${i.report}`, section: t('Report'), title: i.label, to: href({ page: 'report', shopId, report: i.report }) + periodQuery() })) : []
   const shopOpts: Option[] = (shops ?? []).filter((s) => s.status === 'approved' && (!query || `${s.name} ${s.mandi}`.toLowerCase().includes(query)))

@@ -294,6 +294,13 @@ export class AdminController {
     return this.insights.munafa(mine(v, id), r.from, r.to);
   }
 
+  /** The grapes desk: dispatch, open gaadis and where they stand, party commission, APMC, mazdoori. */
+  @Get('shops/:id/angoor')
+  angoor(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range.extend({ commissionBps: z.coerce.number().int().min(0).max(5000).default(600) }), query);
+    return this.insights.angoor(mine(v, id), r.from, r.to, r.commissionBps);
+  }
+
   /** Tally's exception reports: what an owner should look at. */
   @Get('shops/:id/nigrani')
   nigrani(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {

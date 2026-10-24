@@ -3,6 +3,7 @@
  * #/s/<shop>/…, the market (admin only) under #/market, #/requests and #/shops.
  */
 export type Report = 'dashboard' | 'daybook' | 'cashbook' | 'outstanding' | 'ledger' | 'suppliers' | 'stock' | 'items' | 'team' | 'settings' | 'register' | 'munafa' | 'vasooli' | 'gaadis' | 'bhav' | 'nigrani'
+  | 'dispatch' | 'pata' | 'commission' | 'apmc' | 'mazdoori'
 export type Route =
   | { page: 'home' }
   | { page: 'report'; shopId: string; report: Report }
@@ -13,7 +14,7 @@ export type Route =
   | { page: 'person'; key: string }
   | { page: 'requests' }
 
-const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani']
+const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani', 'dispatch', 'pata', 'commission', 'apmc', 'mazdoori']
 
 export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean).map(decodeURIComponent)

@@ -78,3 +78,57 @@ function niceMax(v: number): number {
   for (const m of [1, 2, 2.5, 5, 10]) if (m * mag >= v) return m * mag
   return 10 * mag
 }
+
+type Series = { key: string; label: string; color: string }
+
+/**
+ * One or two figures a day as bars from one baseline, the day's figures on hover or tap; a legend
+ * only when there are two series. For the grapes desk's APMC and mazdoori.
+ */
+export function DayBars<R extends { date: string }>({ data, series }: { data: R[]; series: Series[] }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const val = (d: R, k: string) => Number((d as Record<string, unknown>)[k] ?? 0)
+  const W = 640, H = 200, L = 44, B = 24, T = 10
+  const max = niceMax(Math.max(1, ...data.flatMap((d) => series.map((s) => val(d, s.key)))))
+  const plotW = W - L, plotH = H - B - T
+  const step = plotW / Math.max(1, data.length)
+  const bar = Math.max(3, Math.min(28, (step - 8) / series.length))
+  const y = (v: number) => T + plotH - (v / max) * plotH
+  const ticks = [0, max / 2, max]
+  const labelEvery = Math.ceil(data.length / 8)
+  const h = hover !== null ? data[hover] : null
+
+  return (
+    <div className="chart" onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={series.map((s) => s.label).join(', ')}>
+        {ticks.map((v) => (
+          <g key={v}>
+            <line x1={L} x2={W} y1={y(v)} y2={y(v)} className={v === 0 ? 'axis' : 'gl'} />
+            <text x={L - 8} y={y(v) + 4} className="tick" textAnchor="end">{axis(v)}</text>
+          </g>
+        ))}
+        {data.map((d, i) => {
+          const cx = L + i * step + step / 2
+          const x0 = cx - (bar * series.length + (series.length - 1) * 2) / 2
+          return (
+            <g key={d.date} onMouseEnter={() => setHover(i)} onClick={() => setHover(i)}>
+              <rect x={L + i * step} y={T} width={step} height={plotH} fill={hover === i ? 'rgb(0 0 0 / 0.03)' : 'transparent'} />
+              {series.map((s, j) => <Bar key={s.key} x={x0 + j * (bar + 2)} w={bar} top={y(val(d, s.key))} base={y(0)} fill={s.color} />)}
+              {i % labelEvery === 0 && <text x={cx} y={H - 6} className="tick" textAnchor="middle">{shortDate(d.date)}</text>}
+            </g>
+          )
+        })}
+      </svg>
+      {h && hover !== null && (
+        <div className="tip" style={{ left: `${((L + hover * step + step / 2) / W) * 100}%`, top: `${(Math.min(...series.map((s) => y(val(h, s.key)))) / H) * 100}%` }}>
+          <b>{shortDate(h.date)}</b>{series.map((s) => `${s.label} ${rupees(val(h, s.key))}`).join(' · ')}
+        </div>
+      )}
+      {series.length > 1 && (
+        <div className="legend" style={{ marginTop: 6 }}>
+          {series.map((s) => <span key={s.key}><span className="dot" style={{ background: s.color }} />{s.label}</span>)}
+        </div>
+      )}
+    </div>
+  )
+}

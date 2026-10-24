@@ -373,6 +373,20 @@ describe('angoor on the website', () => {
     const third = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
     expect(third.body.changes.filter((x: any) => x.table === 'trucks' && x.row.id === g.truckId).at(-1).row).toMatchObject({ number: 'HR55AB4455', location: 'Pillar 320, Shed 11' });
     expect(third.body.changes.filter((x: any) => x.table === 'truck_grades' && x.row.truck_id === g.truckId).map((x: any) => x.row.box_grams).sort()).toEqual([10000, 8000].sort());
+
+    // The grapes desk: 5 of the udhaar slip's 20 boxes handed over at the gaadi.
+    await http().post('/v1/sync/push').set(auth(res.accessToken)).send({ items: [
+      { table: 'pickups', row: { id: uuidv7(), created_at: new Date().toISOString(), bill_id: b.billId, qty: 5 } },
+    ] }).expect(200);
+    const today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    const desk = (await http().get(`${base}/angoor?from=${today}&to=${today}&commissionBps=500`).set(web).expect(200)).body;
+    expect(desk.totals).toMatchObject({ slips: 4, boxes: 30, picked: 5, pendingSlips: 4, doneSlips: 0, openGaadis: 3, apmcPaise: 10200 + 20000 + 2000, labourPaise: 24000 });
+    expect(desk.slips.find((x: any) => x.billId === b.billId)).toMatchObject({ boxes: 20, picked: 5, left: 15, gaadis: [expect.objectContaining({ number: '3289', location: 'Pillar 320', qty: 20 })] });
+    expect(desk.gaadis.find((x: any) => x.truckId === sai)).toMatchObject({ location: 'Pillar 320', received: 10, sold: 25, left: -15, waiting: 4 + 15 + 1 });
+    expect(desk.suppliers.find((x: any) => x.name === 'Sai')).toMatchObject({ key: 'sai', boxes: 25, salesPaise: 2700000, commissionPaise: 135000, netPaise: 2565000 });
+    expect(desk.suppliers.find((x: any) => x.name === 'Manat')).toMatchObject({ boxes: 5, salesPaise: 620000 });
+    expect(desk.days).toEqual([expect.objectContaining({ date: today, slips: 4, apmcPaise: 32200, labourPaise: 24000, labourPaidPaise: 0 })]);
+    await http().get(`${base}/angoor?from=${today}&to=2020-01-01`).set(web).expect(400);
   });
 });
 

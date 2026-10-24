@@ -9,6 +9,8 @@ import { EntryTable } from './DayBook'
 import * as I from '../icons'
 import { openEntry, type EntryKind } from '../entries/kinds'
 import { t } from '../i18n'
+import { useSession } from '../App'
+import { AngoorStrip } from './Angoor'
 
 const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
   { kind: 'parchi', key: 'F8', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
@@ -20,6 +22,8 @@ const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: s
 /** The shop at a glance, like the first page of Tally: four figures, the trend, and what happened last. */
 export function Dashboard({ shopId }: { shopId: string }) {
   const [period, setPeriod] = usePeriod()
+  const angoor = useSession().shops?.find((s) => s.id === shopId)?.commodity === 'angoor'
+  const unit = (n: number) => t(angoor ? '{n} box' : '{n} nag', { n: count(n) })
   const { data, error, loading } = useLoad(async () => {
     const [d, book] = await Promise.all([
       api<Dash>(`/v1/admin/shops/${shopId}/dashboard?from=${period.from}&to=${period.to}`),
@@ -53,6 +57,8 @@ export function Dashboard({ shopId }: { shopId: string }) {
               sub={t('{n} supplier', { n: count(data.d.payables.count) })} />
           </div>
 
+          {angoor && <AngoorStrip shopId={shopId} from={period.from} to={period.to} />}
+
           <div className="grid g2-1">
             <div className="card">
               <div className="hd"><h3>{t('Bikri aur Kharid')}</h3></div>
@@ -64,7 +70,7 @@ export function Dashboard({ shopId }: { shopId: string }) {
                 {data.d.items.map((it, i) => (
                   <div key={it.brand}>
                     <span className="rank">{i + 1}</span>
-                    <span className="grow"><b>{it.brand}</b><small>{t('{n} nag', { n: count(it.nags) })}</small></span>
+                    <span className="grow"><b>{it.brand}</b><small>{unit(it.nags)}</small></span>
                     <span className="money b">{rupees(it.amountPaise)}</span>
                   </div>
                 ))}
@@ -111,7 +117,7 @@ export function Dashboard({ shopId }: { shopId: string }) {
                 <Ages b={data.d.payables} />
               </div>
             </a>
-            <StockCard shopId={shopId} />
+            <StockCard shopId={shopId} unit={unit} />
           </div>
         </div>
       )}
@@ -141,7 +147,7 @@ function YaadCard({ shopId }: { shopId: string }) {
   )
 }
 
-function StockCard({ shopId }: { shopId: string }) {
+function StockCard({ shopId, unit }: { shopId: string; unit: (n: number) => string }) {
   const { data } = useLoad(() => api<{ totals: { left: number; valuePaise: number; gaadis: number; stale: number } }>(`/v1/admin/shops/${shopId}/stock`), [shopId])
   return (
     <a className="card" href={href({ page: 'report', shopId, report: 'stock' })}>
@@ -149,7 +155,7 @@ function StockCard({ shopId }: { shopId: string }) {
       <div className="bd">
         {!data ? <div className="sk" /> : (
           <>
-            <span className="money b" style={{ fontSize: 18 }}>{t('{n} nag', { n: count(data.totals.left) })}</span>
+            <span className="money b" style={{ fontSize: 18 }}>{unit(data.totals.left)}</span>
             <div className="ages" style={{ marginTop: 10 }}>
               <div><span /><span>{t('Kharid bhav par')}</span><span className="money">{rupees(data.totals.valuePaise)}</span></div>
               <div><span /><span>{t('Khuli gaadi')}</span><span className="money">{count(data.totals.gaadis)}</span></div>
