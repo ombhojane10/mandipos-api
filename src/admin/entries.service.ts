@@ -61,6 +61,12 @@ export type GaadiInput = {
 };
 export type SupplierPaymentInput = { supplier: string; mode: 'cash' | 'office' | 'upi' | 'bank'; amountPaise: number; note?: string; date?: string };
 
+/** Angoor: once boxes have left the gaadi against a slip (scanned), it is what they left on — as the app has it. */
+async function notPickedUp(tx: Tx, billId: string) {
+  const r = await tx.query<{ n: string }>(`SELECT COALESCE(SUM(qty), 0) AS n FROM pickups WHERE bill_id = $1`, [billId]);
+  if (n(r.rows[0].n) > 0) throw new UnprocessableEntityException('Maal uth chuka hai — yeh parchi ab nahi badlegi');
+}
+
 @Injectable()
 export class EntriesService {
   constructor(
@@ -153,6 +159,7 @@ export class EntriesService {
     const old = await this.db.withShop(shopId, async (tx) => {
       const b = await liveBill(tx, billId);
       if ((await collectedOn(tx, billId)).rows.length) throw new UnprocessableEntityException('Is parchi par vasooli ho chuki hai — badal nahi sakte, sirf hata sakte hain');
+      await notPickedUp(tx, billId);
       return b;
     });
     return this.writeParchi(p, shopId, input, old);
@@ -396,6 +403,7 @@ export class EntriesService {
     const p = await this.device(phone, shopId);
     const { b, later, receiptNo } = await this.db.withShop(shopId, async (tx) => {
       const b = await liveBill(tx, billId);
+      await notPickedUp(tx, billId);
       return { b, later: await collectedOn(tx, billId), receiptNo: await nextNumber(tx, 'collections', 'receipt_no', 'collection_voids') };
     });
     const [cash, upi] = billMoney(b);

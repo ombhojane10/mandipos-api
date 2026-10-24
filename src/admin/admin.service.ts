@@ -409,6 +409,8 @@ export class AdminService {
         packing: b.packing, panniName: b.panni_name, packs: b.packs, staff: b.staff_name, upiBank: b.upi_bank, truckId: b.truck_id, truck: b.truck,
         // Vasooli still standing on the slip: an edit is refused, a delete hands it back or keeps it.
         collected: { cashPaise: live.reduce((s, c) => s + n(c.cash), 0), upiPaise: live.reduce((s, c) => s + n(c.upi), 0) },
+        // Angoor: boxes already handed over at the gaadi — the slip is locked.
+        pickedQty: n((await tx.query<{ n: string }>(`SELECT COALESCE(SUM(qty), 0) AS n FROM pickups WHERE bill_id = $1`, [billId])).rows[0].n),
         machine: [b.device, b.device_label].filter(Boolean).join(' · '),
         // truckId/brandId: a party slip's lines each come off their own gaadi (angoor's Alter needs them).
         lines: lines.map((l) => ({ brand: l.brand ?? 'Maal', grade: l.grade, qty: l.qty, ratePaise: n(l.rate), leak: l.leak, truckId: l.truck_id, brandId: l.brand_id })),

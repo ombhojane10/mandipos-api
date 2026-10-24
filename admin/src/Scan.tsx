@@ -21,22 +21,38 @@ export const openScan = (shopId: string) => dispatchEvent(new CustomEvent<string
 // ---------------------------------------------------------------- sound
 
 let audio: AudioContext | null = null
+let out: AudioNode | null = null
 /** Made on the click that opens the scanner: browsers only let a page play sound after a tap. */
 export function wakeSound() {
-  try { audio ??= new AudioContext(); void audio.resume() } catch { /* no sound on this browser */ }
+  try {
+    if (!audio) {
+      audio = new AudioContext()
+      // A compressor in front of the speaker lets the tones run near full scale without clipping:
+      // a mandi floor is loud, and a laptop speaker is small.
+      const c = audio.createDynamicsCompressor()
+      c.threshold.value = -6; c.ratio.value = 12
+      c.connect(audio.destination)
+      out = c
+    }
+    void audio.resume()
+  } catch { /* no sound on this browser */ }
 }
 export function sound(kind: 'read' | 'ok' | 'error') {
-  if (!audio) return
+  if (!audio || !out) return
+  // Square and sawtooth carry far further than a sine at the same level: a scanner's beep, not a chime.
   const notes: [number, number, OscillatorType][] =
-    kind === 'read' ? [[1320, 0.08, 'sine']] : kind === 'ok' ? [[660, 0.12, 'sine'], [990, 0.2, 'sine']] : [[200, 0.18, 'square'], [150, 0.25, 'square']]
+    kind === 'read' ? [[2000, 0.15, 'square']]
+      : kind === 'ok' ? [[1050, 0.14, 'square'], [1400, 0.14, 'square'], [2100, 0.3, 'square']]
+        : [[260, 0.22, 'sawtooth'], [180, 0.35, 'sawtooth']]
   let at = audio.currentTime
   for (const [hz, len, type] of notes) {
     const o = audio.createOscillator(), g = audio.createGain()
     o.type = type; o.frequency.value = hz
     g.gain.setValueAtTime(0.0001, at)
-    g.gain.exponentialRampToValueAtTime(type === 'square' ? 0.12 : 0.3, at + 0.01)
+    g.gain.exponentialRampToValueAtTime(0.9, at + 0.005)
+    g.gain.setValueAtTime(0.9, at + len * 0.7)
     g.gain.exponentialRampToValueAtTime(0.0001, at + len)
-    o.connect(g).connect(audio.destination)
+    o.connect(g).connect(out)
     o.start(at); o.stop(at + len + 0.02)
     at += len
   }

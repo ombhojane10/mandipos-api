@@ -11,7 +11,7 @@ import { useLoad } from '../useLoad'
 import { Kpi, PeriodBar, Skeleton } from '../ui'
 import * as I from '../icons'
 import { dayRange, fileName, openExport, rs, useExport } from '../export/doc'
-import { editEntry, openBolo, openDraft, openEntry, type EditBill } from '../entries/kinds'
+import { editEntry, openBolo, openDraft, openEntry } from '../entries/kinds'
 import { MicIcon } from '../voice/MicIcon'
 
 // ================================================================ the grapes desk
@@ -42,15 +42,6 @@ export const loadDesk = (shopId: string, from: string, to: string, bps = 600) =>
 
 const slipName = (s: { slipNo: number | null }) => (s.slipNo ? `#${s.slipNo}` : t('Parchi'))
 const box = (n: number) => t('{n} box', { n: count(n) })
-
-/** A slip straight into its own form to change — or its voucher, when it can only be deleted now. */
-async function alterSlip(shopId: string, billId: string) {
-  try {
-    const b = await api<EditBill & { voided: unknown; collected: { cashPaise: number; upiPaise: number } }>(`/v1/admin/shops/${shopId}/bills/${billId}`)
-    if (b.voided || b.collected.cashPaise + b.collected.upiPaise > 0) return openVoucher(shopId, billId)
-    editEntry({ kind: 'parchi', bill: b })
-  } catch { openVoucher(shopId, billId) }
-}
 
 /** The make-things row every grapes page opens with. */
 function Actions({ shopId, children }: { shopId: string; children?: React.ReactNode }) {
@@ -103,7 +94,7 @@ export function Dispatch({ shopId }: { shopId: string }) {
           </div>
           <div className="card wrap-x">
             <table className="tbl fold">
-              <thead><tr><th>{t('Parchi')}</th><th>{t('Gaadi')}</th><th className="num">{t('Box')}</th><th className="num">{t('Diye')}</th><th className="num">{t('Baaki')}</th><th /></tr></thead>
+              <thead><tr><th>{t('Parchi')}</th><th>{t('Gaadi')}</th><th className="num">{t('Box')}</th><th className="num">{t('Diye')}</th><th className="num">{t('Baaki')}</th></tr></thead>
               <tbody>
                 {rows.map((s) => (
                   <tr key={s.billId} data-row tabIndex={0} onClick={() => openVoucher(shopId, s.billId)} onKeyDown={(e) => { if (e.key === 'Enter') openVoucher(shopId, s.billId) }}>
@@ -114,9 +105,6 @@ export function Dispatch({ shopId }: { shopId: string }) {
                     <td className="num opt-col money">{count(s.boxes)}</td>
                     <td className="num opt-col money">{s.picked ? count(s.picked) : ''}</td>
                     <td className="num amt-col">{s.left === 0 ? <span className="chip green">{t('Ho gaya')}</span> : <span className="chip amber">{box(s.left)}</span>}</td>
-                    <td className="row-act" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="btn line sm" onClick={() => void alterSlip(shopId, s.billId)}>{t('Badlein')}</button>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -464,7 +452,6 @@ export function Mazdoori({ shopId }: { shopId: string }) {
                     <tr key={s.billId} data-row tabIndex={0} onClick={() => openVoucher(shopId, s.billId)} onKeyDown={(e) => { if (e.key === 'Enter') openVoucher(shopId, s.billId) }}>
                       <td className="main-col"><b>{slipName(s)} · {s.buyer}</b><small>{[multi ? shortDate(s.date) : '', box(s.boxes)].filter(Boolean).join(' · ')}</small></td>
                       <td className="num money">{rupees(s.labourPaise)}</td>
-                      <td className="row-act" onClick={(e) => e.stopPropagation()}><button type="button" className="btn line sm" onClick={() => void alterSlip(shopId, s.billId)}>{t('Badlein')}</button></td>
                     </tr>
                   ))}
                 </tbody>

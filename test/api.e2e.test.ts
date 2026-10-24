@@ -396,6 +396,10 @@ describe('angoor on the website', () => {
     expect((await http().post(`${base}/pickup`).set(web).send({ billId: b.billId, qty: 15 }).expect(201)).body).toMatchObject({ picked: 20, left: 0 });
     await http().post(`${base}/pickup`).set(web).send({ billId: b.billId, qty: 1 }).expect(400);
     await http().post(`${base}/pickup`).set(web).send({ billId: a.billId, qty: 1 }).expect(400);
+    // A slip whose boxes have left the gaadi stays as it went: no edit, no delete (as in the app).
+    expect((await http().get(`${base}/bills/${b.billId}`).set(web).expect(200)).body.pickedQty).toBe(20);
+    expect((await http().post(`${base}/bills/${b.billId}/edit`).set(web).send({ buyerName: 'Web Angoor Grahak', lots: [{ truckId: sai, brandId: royal, qty: 1, ratePaise: 1 }], pay: 'credit' }).expect(422)).body.message).toMatch(/Maal uth chuka/);
+    await http().post(`${base}/bills/${b.billId}/void`).set(web).send({ reason: 'deleted' }).expect(422);
     const after = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(res.accessToken)).expect(200);
     expect(after.body.changes.filter((x: any) => x.table === 'pickups' && x.row.bill_id === b.billId).map((x: any) => x.row.qty).sort()).toEqual([15, 5]);
 

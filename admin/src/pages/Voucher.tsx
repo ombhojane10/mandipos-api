@@ -14,6 +14,7 @@ type Bill = {
   lines: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
   payments: { id: string; at: string; amountPaise: number; receiptNo: number | null; voided: boolean }[]
   collected: { cashPaise: number; upiPaise: number }
+  pickedQty?: number
   voided: { reason: string; at: string; by: string } | null
   delivery: { address: string; stand: string } | null
 }
@@ -63,25 +64,28 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
   const [blocked, setBlocked] = useState('')
   const qty = b?.lines.reduce((s, l) => s + l.qty, 0) ?? 0
   const live = !!b && !b.voided
+  // Angoor: boxes handed over at the gaadi against it — the slip stays as it went, as in the app.
+  const picked = !!b?.pickedQty
   const paidLater = !!b && b.collected.cashPaise + b.collected.upiPaise > 0
   // As ParchiDoneScreen: once vasooli is taken on a slip it stays as written — it can only be deleted.
   const alter = () => {
-    if (!b || !live) return
+    if (!b || !live || picked) return
     if (paidLater) return setBlocked(t('Is parchi par vasooli ho chuki hai — badal nahi sakte, sirf hata sakte hain'))
     if (b.lines.some((l) => l.leak)) return setBlocked(t('Leak wali parchi app se badlein'))
     onClose()
     editEntry({ kind: 'parchi', bill: b })
   }
-  const remove = () => { if (live) setDeleting(true) }
+  const remove = () => { if (live && !picked) setDeleting(true) }
   return (
     <Scrim label={t('Parchi')} onClose={onClose} onKey={(k) => (k === 'alter' ? alter() : remove())}
       title={<>{t('Parchi')} {b ? `#${b.slipNo ?? b.number}` : ''}</>}
-      chip={b?.voided && <span className="chip red">{VOIDED[b.voided.reason] ?? b.voided.reason}</span>}
+      chip={b?.voided ? <span className="chip red">{VOIDED[b.voided.reason] ?? b.voided.reason}</span> : picked ? <span className="chip green">{t('Dispatch: {n} box diye', { n: String(b?.pickedQty) })}</span> : null}
       footer={b && (
         <>
           {b.buyerId && <a className="btn ghost" href={href({ page: 'grahak', shopId, buyerId: b.buyerId })} onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', marginRight: 'auto' }}>{t('{name} ka khata', { name: b.buyerName })} ›</a>}
-          {live && <button type="button" className="btn ghost" onClick={alter}><kbd>A: </kbd>{t('Alter')}</button>}
-          {live && <button type="button" className="btn ghost" onClick={remove}><kbd>D: </kbd>{t('Delete')}</button>}
+          {live && picked && <span className="muted">{t('Maal uth chuka hai — yeh parchi ab nahi badlegi')}</span>}
+          {live && !picked && <button type="button" className="btn ghost" onClick={alter}><kbd>A: </kbd>{t('Alter')}</button>}
+          {live && !picked && <button type="button" className="btn ghost" onClick={remove}><kbd>D: </kbd>{t('Delete')}</button>}
         </>
       )}>
       {error && <p className="error">{error}</p>}
