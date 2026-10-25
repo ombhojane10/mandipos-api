@@ -7,7 +7,7 @@ import { useLoad } from '../useLoad'
 import { Ages, Change, Kpi, PeriodBar, Skeleton } from '../ui'
 import { EntryTable } from './DayBook'
 import * as I from '../icons'
-import { openBolo, openEntry, type EntryKind } from '../entries/kinds'
+import { openEntry, type EntryKind } from '../entries/kinds'
 import { MicIcon } from '../voice/MicIcon'
 import { t } from '../i18n'
 import { useSession } from '../App'
@@ -38,14 +38,12 @@ export function Dashboard({ shopId }: { shopId: string }) {
   return (
     <>
       <div className="quick" style={{ marginBottom: 10 }}>
+        <a className="quick-bolo" href={href({ page: 'report', shopId, report: 'bolo' })}>
+          <span className="ic t-blue"><MicIcon /></span><span><b>{t('Bolo')}</b> · {angoor ? t('Parchi bolein, kuch bhi poochhein') : t('Kuch bhi poochhein')}</span>
+        </a>
         {angoor && (
           <button type="button" onClick={() => openScan(shopId)}>
             <span className="ic t-green"><I.IScan /></span><span><b>{t('Scan')}</b> · {t('Maal dein')}</span>
-          </button>
-        )}
-        {angoor && (
-          <button type="button" onClick={openBolo}>
-            <span className="ic t-blue"><MicIcon /></span><span><b>{t('Bolo')}</b> · {t('Parchi bolein')}</span>
           </button>
         )}
         {QUICK.map((q) => (

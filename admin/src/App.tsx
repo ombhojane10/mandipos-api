@@ -29,6 +29,8 @@ import { VoucherHost } from './pages/Voucher'
 import { ExportHost } from './export/Preview'
 import { WhatsAppHost } from './WhatsApp'
 import { ScanHost, openScan } from './Scan'
+import { BoloChat } from './bolo/BoloChat'
+import { BoloDock } from './bolo/Dock'
 import { exportBuilder, openExport, useCanExport } from './export/doc'
 import { t } from './i18n'
 
@@ -40,7 +42,7 @@ export const useSession = () => useContext(SessionContext)
 /** The reports, in Tally's order; each one's letter (keys.ts) opens it from anywhere. */
 // eslint-disable-next-line react-refresh/only-export-components
 export const REPORTS: { group: string; items: { report: Report; label: string; key: string; icon: () => ReactNode }[] }[] = [
-  { group: '', items: [{ report: 'dashboard', label: t('Dashboard'), key: 'H', icon: I.IHome }] },
+  { group: '', items: [{ report: 'dashboard', label: t('Dashboard'), key: 'H', icon: I.IHome }, { report: 'bolo', label: t('Bolo'), key: '', icon: I.IMic }] },
   { group: t('Hisab-Kitab'), items: [
     { report: 'daybook', label: t('Day Book'), key: 'D', icon: I.IBook },
     { report: 'cashbook', label: t('Cash / Bank Book'), key: 'C', icon: I.ICash },
@@ -286,7 +288,7 @@ export default function App() {
 
         {shopId && <KeyPanel canExport={canExport} onGoto={() => setGoto(true)} onSettings={() => { location.hash = href({ page: 'report', shopId, report: 'settings' }) }} />}
 
-        <main className="main">
+        <main className={`main${current === 'bolo' ? ' main-bolo' : ''}`}>
           {route.page === 'report' && <ReportPage shopId={route.shopId} report={route.report} />}
           {route.page === 'grahak' && <GrahakKhata key={route.buyerId} shopId={route.shopId} buyerId={route.buyerId} />}
           {route.page === 'supplier' && <SupplierKhata key={route.key} shopId={route.shopId} supplierKey={route.key} />}
@@ -311,6 +313,7 @@ export default function App() {
         <VoucherHost />
         <WhatsAppHost />
         <ScanHost />
+        {shopId && <BoloDock key={shopId} shopId={shopId} screen={title} onBoloPage={current === 'bolo'} />}
         <ExportHost shopId={shopId} fallback={shop ?? null} />
         <Help />
       </div>
@@ -340,6 +343,7 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'commission': return <Commission key={shopId} shopId={shopId} />
     case 'apmc': return <Apmc key={shopId} shopId={shopId} />
     case 'mazdoori': return <Mazdoori key={shopId} shopId={shopId} />
+    case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }
 }
