@@ -405,9 +405,7 @@ describe('angoor on the website', () => {
 
     // The party's beejak for gaadi 3289: Royal 25 boxes, ₹27,000 gross.
     const bj = (await http().get(`${base}/beejak/${sai}`).set(web).expect(200)).body;
-    expect(bj).toMatchObject({ number: '3289', party: 'Sai', received: 10, sold: 25, grossPaise: 2700000, groups: [
-      { quality: 'Royal', ratePaise: 150000, qty: 4, amountPaise: 600000 }, { quality: 'Royal', ratePaise: 100000, qty: 21, amountPaise: 2100000 },
-    ] });
+    expect(bj).toMatchObject({ number: '3289', party: 'Sai', received: 10, sold: 25, grossPaise: 2700000, groups: [{ quality: 'Royal', qty: 25, amountPaise: 2700000 }] });
 
     // Gaadi edited on the website: moved, bhada, Royal up to 30 boxes, then down to 28 (a correction).
     const royalLot = (q: number) => ({ number: '3289', supplier: 'Sai', location: 'Pillar 321', freightPaise: 500000, lots: [{ brandId: royal, grade: '1', qty: q, ratePaise: 0 }] });

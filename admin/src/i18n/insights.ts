@@ -157,4 +157,7 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'Abhi koi box nahi bika': ['Nothing sold yet', 'अभी कोई बॉक्स नहीं बिका'],
   'Beejak chhapein': ['Print beejak', 'बीजक छापें'],
   'Aaya': ['Came', 'आया'],
+  'Bhav ₹': ['Rate ₹', 'भाव ₹'],
+  'Bhav': ['Rate', 'भाव'],
+  'Har quality ka bhav likhein': ['Enter a rate for every quality', 'हर क्वालिटी का भाव लिखें'],
 }

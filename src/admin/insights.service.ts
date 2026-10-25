@@ -262,13 +262,14 @@ export class InsightsService {
         `SELECT id, number, TRIM(supplier) AS supplier, location, ${IST_DAY('arrived_at')}::text AS arrived, closed_at IS NOT NULL AS closed, freight_paise AS freight
          FROM trucks WHERE id = $1`, [truckId])).rows[0];
       if (!t) throw new NotFoundException('Gaadi nahi mili');
-      // A line per quality and rate, as the app's beejak prints it ("Rocket · 100 × 50").
-      const groups = (await tx.query<{ quality: string | null; rate: string; qty: string; amount: string; first: string; last: string }>(
-        `SELECT br.name AS quality, l.rate_paise AS rate, SUM(l.qty) AS qty, SUM(l.qty::bigint * l.rate_paise) AS amount,
+      // A line per quality with the boxes sold. The bhav on a beejak is the shop's to write — the
+      // party is not shown what each box actually went for — so it is typed on the page.
+      const groups = (await tx.query<{ quality: string | null; qty: string; amount: string; first: string; last: string }>(
+        `SELECT br.name AS quality, SUM(l.qty) AS qty, SUM(l.qty::bigint * l.rate_paise) AS amount,
                 MIN(lb.business_date)::text AS first, MAX(lb.business_date)::text AS last
          FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id LEFT JOIN brands br ON br.id = l.brand_id
-         WHERE l.truck_id = $1 GROUP BY br.name, l.rate_paise ORDER BY MIN(br.name), l.rate_paise DESC`, [truckId])).rows
-        .map((r) => ({ quality: r.quality ?? '', ratePaise: n(r.rate), qty: n(r.qty), amountPaise: n(r.amount), first: r.first, last: r.last }));
+         WHERE l.truck_id = $1 GROUP BY br.name ORDER BY MIN(lb.created_at)`, [truckId])).rows
+        .map((r) => ({ quality: r.quality ?? '', qty: n(r.qty), amountPaise: n(r.amount), first: r.first, last: r.last }));
       const came = (await tx.query<{ received: string; corrected: string; off: string }>(
         `SELECT (SELECT COALESCE(SUM(received_qty), 0) FROM truck_grades WHERE truck_id = $1) AS received,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage WHERE truck_id = $1 AND kind = 'correction') AS corrected,

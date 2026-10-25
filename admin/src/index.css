@@ -921,3 +921,4 @@ button.chip { border: 0; cursor: pointer; }
 .beejak-exp .unit { width: 44px; color: var(--muted); font-size: 12px; flex: none; }
 .total-line.net { background: var(--accent-ink, #1f4f55); color: #fff; border-color: transparent; }
 .total-line.net span:first-child { color: #fff; opacity: 0.85; }
+.bhav-in { width: 96px; padding: 6px 8px; text-align: right; font-weight: 700; }
