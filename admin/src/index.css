@@ -882,7 +882,8 @@ a.vc-row:hover { background: var(--accent-soft); }
 .gaadi-q-tbl th, .gaadi-q-tbl td { padding-left: 0; }
 .gaadi-ft { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .gaadi-q-tbl small.kg { display: block; }
-.quick:has(> button:nth-child(5)) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* Grapes adds Scan: five buttons in a row on a wide screen (counted as buttons: the Bolo link above spans the row). */
+@media (min-width: 1181px) { .quick:has(> button:nth-of-type(5)) { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .btn.primary svg { width: 16px; height: 16px; vertical-align: -3px; }
 .scan-cam { position: relative; border-radius: 12px; overflow: hidden; background: #111; aspect-ratio: 4 / 3; }
 .scan-cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -890,7 +891,6 @@ a.vc-row:hover { background: var(--accent-soft); }
 .scan-gaadi { display: grid; gap: 4px; font-size: 15px; }
 .scan-lines > * { padding: 7px 0; }
 .scan-qty { font-size: 22px; font-weight: 700; }
-.quick:has(> button:nth-child(6)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 760px) { .g2 { grid-template-columns: minmax(0, 1fr); } }
 .desk-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
