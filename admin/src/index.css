@@ -1115,3 +1115,16 @@ button.chip { border: 0; cursor: pointer; }
 .quick .quick-bolo .ic { width: 38px; height: 38px; display: grid; place-items: center; flex: none; }
 .quick .quick-bolo svg { width: 20px; height: 20px; }
 .bc-composer textarea { scrollbar-width: none; } .bc-composer textarea::-webkit-scrollbar { display: none; }
+/* Bolo on a phone: a slim header with the past chats and a new one; the rail slides in as a sheet. */
+.bc-mhead { display: none; }
+@media (max-width: 899px) {
+  .bc-mhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 6px; border-bottom: 1px solid var(--bc-line); background: #fff; }
+  .bc-mhead b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
+  .bc .bc-mnew { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--bc-line); background: var(--bc-surface); border-radius: 999px !important; font-size: 13.5px; font-weight: 600; color: var(--bc-accent-ink); cursor: pointer; white-space: nowrap; }
+  .bc .bc-mnew svg { width: 16px; height: 16px; }
+  .bc .bc-mnew:disabled { color: var(--bc-muted); opacity: 0.6; }
+  .bc-rail.open { display: flex; position: fixed; top: 0; left: 0; bottom: 0; width: min(320px, 86vw); z-index: 70; padding: 16px 12px; box-shadow: 16px 0 48px rgb(20 28 27 / 0.2) !important; animation: bc-drawer 0.2s ease-out; }
+  .bc-rail-scrim { position: fixed; inset: 0; z-index: 65; background: rgb(17 24 39 / 0.35); }
+  .bc .bc-hist-x { opacity: 1; }
+}
+@keyframes bc-drawer { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }

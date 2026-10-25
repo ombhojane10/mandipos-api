@@ -86,6 +86,9 @@ export function BoloChat({ shopId, mode, screen, onClose }: { shopId: string; mo
   const { hints, top } = useHints(shopId, commodity)
   const list = useMemo(() => topics(commodity, top), [commodity, top])
   const [topic, setTopic] = useState<string | null>(null)
+  // On a phone the past chats live behind the header's clock, not down the side.
+  const [hist, setHist] = useState(false)
+  const fresh = () => { chatStore.fresh(shopId); setHist(false) }
   const empty = !chat?.msgs.length
 
   // The newest message in view as it lands.
@@ -166,14 +169,15 @@ export function BoloChat({ shopId, mode, screen, onClose }: { shopId: string; mo
 
   return (
     <div className="bc bc-page">
-      <aside className="bc-rail" aria-label={t('Purani baatein')}>
-        <button type="button" className="bc-new" onClick={() => chatStore.fresh(shopId)}>
+      {hist && <div className="bc-rail-scrim" onClick={() => setHist(false)} />}
+      <aside className={`bc-rail${hist ? ' open' : ''}`} aria-label={t('Purani baatein')}>
+        <button type="button" className="bc-new" onClick={fresh}>
           <svg viewBox="0 0 24 24" aria-hidden><path d="M12 5v14M5 12h14" /></svg>{t('Nayi baat')}
         </button>
         <div className="bc-history">
           {state.chats.filter((c) => c.msgs.length).map((c) => (
             <div key={c.id} className={`bc-hist${c.id === state.current ? ' on' : ''}`}>
-              <button type="button" onClick={() => chatStore.open(shopId, c.id)}>
+              <button type="button" onClick={() => { chatStore.open(shopId, c.id); setHist(false) }}>
                 <span>{c.title || t('Baat')}</span><small>{ago(new Date(c.at).toISOString())}</small>
               </button>
               <button type="button" className="bc-hist-x" aria-label={t('Hatayein')} onClick={() => chatStore.remove(shopId, c.id)}>
@@ -184,6 +188,15 @@ export function BoloChat({ shopId, mode, screen, onClose }: { shopId: string; mo
         </div>
       </aside>
       <section className="bc-main">
+        <div className="bc-mhead">
+          <button type="button" className="bc-icon" aria-label={t('Purani baatein')} onClick={() => setHist(true)}>
+            <svg viewBox="0 0 24 24" aria-hidden><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></svg>
+          </button>
+          <b>{chat?.title || t('Bolo')}</b>
+          <button type="button" className="bc-mnew" aria-label={t('Nayi baat')} onClick={fresh} disabled={empty}>
+            <svg viewBox="0 0 24 24" aria-hidden><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>{t('Nayi baat')}
+          </button>
+        </div>
         <div ref={scroller} className="bc-scroll">
           {empty ? welcome : <Thread shopId={shopId} chatId={chat!.id} msgs={chat!.msgs} send={(i) => void send(i)} busy={busy} />}
         </div>
