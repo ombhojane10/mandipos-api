@@ -112,12 +112,14 @@ jobs:
           Get-Content "$d\dashboard.log"
           Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' } | Stop-Process -Force
           Start-Sleep 2
-          # Uninstall as Apps & features would; its closing message box is killed.
+          # Uninstall as Apps & features would, then OK on its message box.
           $u = Start-Process "$d\MandiPlus Dashboard.exe" -ArgumentList '--uninstall' -PassThru
           Start-Sleep 5
           .\shot.ps1 out\uninstall.png
-          $u | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep 6
+          $w = New-Object -ComObject WScript.Shell
+          $w.AppActivate($u.Id) | Out-Null; Start-Sleep 1; $w.SendKeys('~')
+          "uninstall exited: $($u.WaitForExit(10000))"
+          Start-Sleep 12
           "after uninstall: desktop lnk $(Test-Path "$([Environment]::GetFolderPath('Desktop'))\MandiPlus Dashboard.lnk"), start lnk $(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\MandiPlus Dashboard.lnk"), reg $(Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MandiPlusDashboard'), folder $(Test-Path $d)"
 
       - name: Old exe from an earlier run

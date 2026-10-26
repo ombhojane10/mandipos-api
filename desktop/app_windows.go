@@ -288,9 +288,12 @@ func (a *app) open(runtimeVersion string) error {
 		_ = s.PutIsStatusBarEnabled(false)
 		_ = s.PutIsZoomControlEnabled(true)
 		if s2 := s.GetICoreWebView2Settings2(); s2 != nil {
-			// The portal hides its "app download" links when it sees this.
-			if ua, err := s2.GetUserAgent(); err == nil && !strings.Contains(ua, "MandiPlusDesktop") {
-				_ = s2.PutUserAgent(ua + " MandiPlusDesktop/" + version)
+			// The portal hides its "app download" links when it sees this. (wails' GetUserAgent
+			// passes the pointer's value, not its address, so it always fails.)
+			p := uintptr(unsafe.Pointer(s2))
+			if ua := comString(p, settings2GetUserAgent); ua != "" && !strings.Contains(ua, "MandiPlusDesktop") {
+				u, _ := windows.UTF16PtrFromString(ua + " MandiPlusDesktop/" + version)
+				com(p, settings2PutUserAgent, uintptr(unsafe.Pointer(u)))
 			}
 		}
 	}

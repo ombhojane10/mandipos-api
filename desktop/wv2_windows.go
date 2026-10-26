@@ -28,6 +28,12 @@ const (
 	wvAddNewWindowRequested  = 44
 )
 
+// ICoreWebView2Settings2 slots.
+const (
+	settings2GetUserAgent = 21
+	settings2PutUserAgent = 22
+)
+
 // Event args slots.
 const (
 	navStartingGetUri    = 3

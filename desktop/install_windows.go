@@ -96,11 +96,14 @@ func uninstall(dir string) int {
 		_ = os.Remove(filepath.Join(f, appName+".lnk"))
 	}
 	_ = registry.DeleteKey(registry.CURRENT_USER, uninstallKey)
-	// The folder holds this exe, so cmd removes it once this process is gone.
-	cmd := exec.Command("cmd.exe", "/c", "ping -n 3 127.0.0.1 >nul & rmdir /s /q \""+dir+"\"")
+	messageBox(appName+" hata diya gaya.", mbIconInfo)
+	// The folder holds this exe, so cmd removes it once this process is gone (and tries again
+	// while WebView2's helpers let go of their files).
+	q := `"` + dir + `"`
+	cmd := exec.Command("cmd.exe", "/c", "ping -n 3 127.0.0.1 >nul & rmdir /s /q "+q+" & if exist "+q+" (ping -n 6 127.0.0.1 >nul & rmdir /s /q "+q+")")
+	cmd.Dir = os.TempDir()
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	_ = cmd.Start()
-	messageBox(appName+" hata diya gaya.", mbIconInfo)
 	return 0
 }
 
