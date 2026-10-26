@@ -30,16 +30,21 @@ const TTL_SECONDS = 12 * 60 * 60;
  * sees only the approved shops they own. Read on every request, so taking someone off a shop or
  * off the admin list locks them out at once — the token only says which phone signed in.
  */
-export type Viewer = { phone: string; admin: boolean; shopIds: string[] };
+export type Viewer = { phone: string; admin: boolean; shopIds: string[]; labourShopIds: string[] };
 type PortalRequest = Request & { viewer?: Viewer };
 
 async function viewerFor(db: Db, phoneNo: string): Promise<Viewer | null> {
-  if (adminPhones().includes(phoneNo)) return { phone: phoneNo, admin: true, shopIds: [] };
-  const rows = await db.query<{ id: string }>(
-    `SELECT s.id FROM shop_members m JOIN users u ON u.id = m.user_id JOIN shops s ON s.id = m.shop_id
-     WHERE u.phone = $1 AND m.role = 'owner' AND s.approved_at IS NOT NULL ORDER BY s.created_at`, [phoneNo]);
-  return rows.length ? { phone: phoneNo, admin: false, shopIds: rows.map((r) => r.id) } : null;
+  if (adminPhones().includes(phoneNo)) return { phone: phoneNo, admin: true, shopIds: [], labourShopIds: [] };
+  const rows = await db.query<{ id: string; role: string }>(
+    `SELECT s.id, m.role FROM shop_members m JOIN users u ON u.id = m.user_id JOIN shops s ON s.id = m.shop_id
+     WHERE u.phone = $1 AND m.role IN ('owner', 'labour') AND s.approved_at IS NOT NULL ORDER BY s.created_at`, [phoneNo]);
+  return rows.length
+    ? { phone: phoneNo, admin: false, shopIds: rows.map((r) => r.id), labourShopIds: rows.filter((r) => r.role === 'labour').map((r) => r.id) }
+    : null;
 }
+
+/** All a labour login may do on the website, as in the app: scan slips, hand boxes over, report broken ones. */
+const LABOUR_HANDLERS = new Set(['me', 'shops', 'pickupSlip', 'pickup', 'reportBreakage', 'labourHome']);
 
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -57,6 +62,10 @@ export class AdminGuard implements CanActivate {
     }
     const viewer = await viewerFor(this.db, phoneNo);
     if (!viewer) throw new UnauthorizedException('Is number ki koi dukaan nahi');
+    // A labour login, on its labour shop (or anywhere, when that is all it has), gets the scanner alone.
+    const shopId = (req.params as Record<string, string> | undefined)?.id;
+    const labour = !viewer.admin && (shopId ? viewer.labourShopIds.includes(shopId) : viewer.labourShopIds.length === viewer.shopIds.length);
+    if (labour && !LABOUR_HANDLERS.has(ctx.getHandler().name)) throw new ForbiddenException('Labour login sirf scan kar sakta hai');
     req.viewer = viewer;
     return true;
   }
@@ -217,7 +226,7 @@ export class AdminController {
   /** Who is signed in, and which shops they may open. */
   @Get('me')
   me(@See() v: Viewer) {
-    return { phone: v.phone, admin: v.admin, shopIds: v.admin ? null : v.shopIds };
+    return { phone: v.phone, admin: v.admin, shopIds: v.admin ? null : v.shopIds, labourShopIds: v.labourShopIds };
   }
 
   /** Admin: every shop, requests first. Owner: their own shops. */
@@ -434,6 +443,18 @@ export class AdminController {
   @Get('shops/:id/pickup')
   pickupSlip(@See() v: Viewer, @Param('id') id: string, @Query('code') code?: string) {
     return this.entries.pickupSlip(mine(v, id), parse(z.string().trim().min(1).max(40), code ?? ''));
+  }
+
+  @Post('shops/:id/breakages')
+  reportBreakage(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.reportBreakage(v.phone, mine(v, id), parse(z.object({
+      billId: z.uuid(), brandId: z.uuid().nullable(), truckId: z.uuid().nullable(), qty: z.number().int().min(1).max(100000), note: z.string().trim().max(200).optional(),
+    }), body));
+  }
+
+  @Get('shops/:id/labour')
+  labourHome(@See() v: Viewer, @Param('id') id: string) {
+    return this.entries.labourHome(v.phone, mine(v, id));
   }
 
   @Post('shops/:id/pickup')

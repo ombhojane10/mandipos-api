@@ -540,6 +540,26 @@ describe('angoor broken boxes', () => {
     await http().post(`${base}/breakages/${b3}/reject`).set(web).expect(201);
     expect((await http().get(`${base}/breakages`).set(web).expect(200)).body.breakages).toEqual([]);
     expect((await http().get(`${base}/breakages?status=all`).set(web).expect(200)).body.breakages.map((x: any) => x.status).sort()).toEqual(['done', 'done', 'rejected']);
+
+    // The labour login on the website: the scanner alone.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829200042' }).expect(204);
+    const lw = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829200042', code: OtpService.issuedForTests.get('9829200042') }).expect(200)).body.token);
+    expect((await http().get('/v1/admin/me').set(lw).expect(200)).body).toMatchObject({ shopIds: [id], labourShopIds: [id] });
+    await http().get(`${base}/dashboard`).set(lw).expect(403);
+    await http().get(`${base}/breakages`).set(lw).expect(403);
+    await http().post(`${base}/entries/parchi`).set(lw).send({ buyerName: 'X', lots: [{ truckId: gaadi, brandId: royal, qty: 1, ratePaise: 1 }], pay: 'cash' }).expect(403);
+    // The udhaar slip was rewritten above; its number scans to the live one.
+    const live = (await http().get(`${base}/pickup?code=${credit.slipNo}`).set(lw).expect(200)).body;
+    expect(live.lines[0]).toMatchObject({ brandId: royal, truckId: gaadi, qty: 20 });
+    await http().post(`${base}/breakages`).set(lw).send({ billId: live.billId, brandId: royal, truckId: gaadi, qty: 1 }).expect(400); // nothing handed over yet
+    await http().post(`${base}/pickup`).set(lw).send({ billId: live.billId, qty: 20 }).expect(201);
+    await http().post(`${base}/breakages`).set(lw).send({ billId: live.billId, brandId: royal, truckId: gaadi, qty: 21 }).expect(400);
+    await http().post(`${base}/breakages`).set(lw).send({ billId: live.billId, brandId: royal, truckId: gaadi, qty: 3, note: 'gire' }).expect(201);
+    const home = (await http().get(`${base}/labour`).set(lw).expect(200)).body;
+    // 60 on the rewritten cash slip (counted once, not on the voided one) + 20 now.
+    expect(home.today).toBe(80);
+    expect(home.reports[0]).toMatchObject({ slipNo: credit.slipNo, qty: 3, status: 'pending', quality: 'Royal' });
+    expect((await http().get(`${base}/breakages`).set(web).expect(200)).body.breakages[0]).toMatchObject({ qty: 3, reportedBy: 'Ramu', note: 'gire' });
   });
 });
 

@@ -924,13 +924,13 @@ export class EntriesService {
       const head = (await tx.query<{ id: string; slip_no: number | null; buyer_name: string; business_date: string; picked: string }>(
         `SELECT id, slip_no, buyer_name, business_date::text, (SELECT COALESCE(SUM(qty), 0) FROM pickups p WHERE p.bill_id = b.id) AS picked
          FROM bills b WHERE id = $1`, [live.id])).rows[0];
-      const lines = (await tx.query<{ quality: string | null; number: string | null; location: string | null; qty: string }>(
-        `SELECT br.name AS quality, t.number, t.location, SUM(l.qty) AS qty FROM bill_lines l
+      const lines = (await tx.query<{ brand_id: string | null; truck_id: string | null; quality: string | null; number: string | null; location: string | null; qty: string }>(
+        `SELECT l.brand_id, l.truck_id, br.name AS quality, t.number, t.location, SUM(l.qty) AS qty FROM bill_lines l
          LEFT JOIN brands br ON br.id = l.brand_id LEFT JOIN trucks t ON t.id = l.truck_id
-         WHERE l.bill_id = $1 GROUP BY br.name, t.number, t.location ORDER BY t.number, br.name`, [live.id])).rows;
+         WHERE l.bill_id = $1 GROUP BY l.brand_id, l.truck_id, br.name, t.number, t.location ORDER BY t.number, br.name`, [live.id])).rows;
       const boxes = lines.reduce((s, l) => s + Number(l.qty), 0), picked = Math.min(Number(head.picked), boxes);
       return { billId: head.id, slipNo: head.slip_no, buyer: head.buyer_name, date: head.business_date, boxes, picked, left: boxes - picked,
-        lines: lines.map((l) => ({ quality: l.quality ?? '', gaadi: l.number ?? '', location: l.location ?? '', qty: Number(l.qty) })) };
+        lines: lines.map((l) => ({ brandId: l.brand_id, truckId: l.truck_id, quality: l.quality ?? '', gaadi: l.number ?? '', location: l.location ?? '', qty: Number(l.qty) })) };
     });
   }
 
@@ -942,6 +942,38 @@ export class EntriesService {
     const p = await this.device(phone, shopId);
     await this.push(p, shopId, [{ table: 'pickups', txn: uuidv7(), row: { id: uuidv7(), created_at: new Date().toISOString(), bill_id: slip.billId, qty: input.qty } }]);
     return { ...slip, picked: slip.picked + input.qty, left: slip.left - input.qty };
+  }
+
+  /** Broken boxes on a slip already handed over, for the accountant to write at a new bhav — as the app's scanner raises it. */
+  async reportBreakage(phone: string, shopId: string, input: { billId: string; brandId: string | null; truckId: string | null; qty: number; note?: string }) {
+    const slip = await this.pickupSlip(shopId, input.billId);
+    if (slip.billId !== input.billId) throw new BadRequestException('Parchi badal gayi hai, dobara scan karein');
+    if (slip.picked <= 0) throw new BadRequestException('Is parchi ka maal abhi diya nahi gaya');
+    const line = slip.lines.find((l) => l.brandId === input.brandId && l.truckId === input.truckId);
+    if (!line) throw new BadRequestException('Yeh quality is parchi par nahi hai');
+    if (input.qty > line.qty) throw new BadRequestException(`${line.quality} sirf ${line.qty} box hai`);
+    const p = await this.device(phone, shopId);
+    const name = (await this.db.query<{ name: string | null }>(`SELECT name FROM users WHERE phone = $1`, [phone]))[0]?.name?.trim() || phone;
+    const at = new Date().toISOString();
+    await this.push(p, shopId, [{ table: 'breakages', txn: uuidv7(), row: {
+      id: uuidv7(), created_at: at, updated_at: at, bill_id: slip.billId, slip_no: slip.slipNo, brand_id: input.brandId, truck_id: input.truckId,
+      qty: input.qty, note: input.note ?? '', reported_by: name, status: 'pending', rate_paise: 0, resolved_bill_id: null, resolved_by: '' } }]);
+    return { ok: true };
+  }
+
+  /** A labour login's page: boxes handed over today on live slips, and the broken boxes they reported. */
+  async labourHome(phone: string, shopId: string) {
+    return this.db.withShop(shopId, async (tx) => {
+      const today = (await tx.query<{ n: string }>(
+        `SELECT COALESCE(SUM(p.qty), 0) AS n FROM pickups p
+         WHERE p.created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'
+           AND NOT EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = p.bill_id)`)).rows[0].n;
+      const reports = (await tx.query<{ id: string; slip_no: number | null; qty: number; status: string; quality: string | null; created_at: Date }>(
+        `SELECT k.id, k.slip_no, k.qty, k.status, br.name AS quality, k.created_at FROM breakages k
+         LEFT JOIN brands br ON br.id = k.brand_id
+         WHERE k.created_by = (SELECT id FROM users WHERE phone = $1) ORDER BY k.created_at DESC LIMIT 30`, [phone])).rows;
+      return { today: Number(today), reports: reports.map((r) => ({ id: r.id, slipNo: r.slip_no, qty: r.qty, status: r.status, quality: r.quality ?? '', at: r.created_at.toISOString() })) };
+    });
   }
 
   private async device(phone: string, shopId: string): Promise<Principal> {

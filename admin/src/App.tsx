@@ -29,6 +29,7 @@ import { VoucherHost } from './pages/Voucher'
 import { ExportHost } from './export/Preview'
 import { WhatsAppHost } from './WhatsApp'
 import { ScanHost, openScan } from './Scan'
+import { LabourHome } from './pages/Labour'
 import { BoloChat } from './bolo/BoloChat'
 import { BoloDock } from './bolo/Dock'
 import { exportBuilder, openExport, useCanExport } from './export/doc'
@@ -217,6 +218,9 @@ export default function App() {
   const shop = open.find((s) => s.id === shopId)
   const current = route.page === 'report' ? route.report : null
   const title = titleOf(route)
+
+  // A labour login gets the scanner alone, as in the app.
+  if (me && !me.admin && shop && me.labourShopIds?.includes(shop.id)) return <LabourHome shop={shop} onSignOut={signOut} />
 
   return (
     <SessionContext.Provider value={{ me, shops, reload }}>

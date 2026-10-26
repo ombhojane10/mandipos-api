@@ -13,7 +13,7 @@ import { booksChanged } from './useLoad'
  * when something is wrong. After a save it is back on the camera for the next slip.
  */
 type Slip = { billId: string; slipNo: number | null; buyer: string; date: string; boxes: number; picked: number; left: number
-  lines: { quality: string; gaadi: string; location: string; qty: number }[] }
+  lines: { brandId: string | null; truckId: string | null; quality: string; gaadi: string; location: string; qty: number }[] }
 
 const SCAN_EVENT = 'mp:scan'
 export const openScan = (shopId: string) => dispatchEvent(new CustomEvent<string>(SCAN_EVENT, { detail: shopId }))
@@ -85,6 +85,7 @@ function ScanSheet({ shopId, onClose, onSaved }: { shopId: string; onClose: () =
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [camera, setCamera] = useState<'on' | 'off' | 'none'>('on')
+  const [broken, setBroken] = useState<{ line: number; qty: string; note: string } | null>(null)
   const video = useRef<HTMLVideoElement>(null)
   const looking = useRef(false)
 
@@ -158,6 +159,44 @@ function ScanSheet({ shopId, onClose, onSaved }: { shopId: string; onClose: () =
     } finally { setBusy(false) }
   }
 
+  // Boxes found broken after they left: a request to the accountant, who writes them at a new bhav.
+  const report = async () => {
+    if (!slip || !broken) return
+    const l = slip.lines[broken.line], n = Number(broken.qty)
+    if (!Number.isInteger(n) || n <= 0) { sound('error'); setError(t('Kitne box toote, woh likhein')); return }
+    if (n > l.qty) { sound('error'); setError(t('{q} sirf {n} box hai', { q: l.quality, n: count(l.qty) })); return }
+    setBusy(true); setError('')
+    try {
+      await api(`/v1/admin/shops/${shopId}/breakages`, { method: 'POST', body: { billId: slip.billId, brandId: l.brandId, truckId: l.truckId, qty: n, note: broken.note || undefined } })
+      sound('ok')
+      onSaved(t('{slip} · {n} toote box accountant ko bheje', { slip: slip.slipNo ? `#${slip.slipNo}` : t('Parchi'), n: count(n) }))
+      setBroken(null); setSlip(null)
+    } catch (e) {
+      sound('error'); setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  if (slip && broken) {
+    return (
+      <Sheet title={`${t('Toote box')} · ${slip.slipNo ? `#${slip.slipNo}` : t('Parchi')}`} onClose={() => { setBroken(null); setError('') }}
+        onSave={() => void report()} saving={busy} error={error} saveLabel={t('Accountant ko bhejein')}>
+        {slip.lines.length > 1 && (
+          <Field label={t('Quality')}>
+            <select className="field" value={broken.line} onChange={(e) => setBroken({ ...broken, line: Number(e.target.value) })}>
+              {slip.lines.map((l, i) => <option key={i} value={i}>{l.quality}{l.gaadi && ` · ${l.gaadi}`} · {t('{n} box', { n: count(l.qty) })}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label={t('Kitne box toote')}>
+          <input className="field scan-qty" inputMode="numeric" autoFocus value={broken.qty} onChange={(e) => setBroken({ ...broken, qty: e.target.value.replace(/\D/g, '') })} />
+        </Field>
+        <Field label={t('Note (optional)')}>
+          <input className="field" maxLength={200} value={broken.note} onChange={(e) => setBroken({ ...broken, note: e.target.value })} />
+        </Field>
+      </Sheet>
+    )
+  }
+
   if (slip) {
     const gaadis = [...new Map(slip.lines.filter((l) => l.gaadi).map((l) => [l.gaadi, l.location])).entries()]
     return (
@@ -172,6 +211,11 @@ function ScanSheet({ shopId, onClose, onSaved }: { shopId: string; onClose: () =
         {slip.left > 0
           ? <Field label={t('Abhi kitne box')}><input className="field scan-qty" inputMode="numeric" autoFocus value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ''))} /></Field>
           : <p className="error">{t('Is parchi ka saara maal ja chuka hai')}</p>}
+        {slip.picked > 0 && slip.lines.length > 0 && (
+          <button type="button" className="link-row" onClick={() => { setError(''); setBroken({ line: 0, qty: '', note: '' }) }}>
+            {t('Toote box batayein')} ›
+          </button>
+        )}
       </Sheet>
     )
   }

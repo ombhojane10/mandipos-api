@@ -134,7 +134,7 @@ export type DayEntry = {
   payMode: string; staff: string; voided: string | null; note?: string; mode?: string
 }
 
-export type Me = { phone: string; admin: boolean; shopIds: string[] | null }
+export type Me = { phone: string; admin: boolean; shopIds: string[] | null; labourShopIds?: string[] }
 export type Buckets = { d0_7: number; d8_30: number; d31: number }
 export type Dashboard = {
   from: string; to: string
