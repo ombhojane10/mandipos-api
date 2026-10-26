@@ -80,10 +80,11 @@ const schema = z
     GEMINI_VERTEX_LOCATION: z.string().default('global'),
     VOICE_MODEL: z.string().default('gemini-3.6-flash'),
     /**
-     * Asked only when the main model fails twice. The same model by default: on the eval the lite
-     * models took 20 s+ on the strict schema and, on the loose one, made up a grahak from noise.
+     * Asked when the main model fails twice, or at once on a 429. A different model, so a full
+     * quota on the main one does not fail the turn; not a lite one — on the eval those took 20 s+
+     * on the strict schema and, on the loose one, made up a grahak from noise.
      */
-    VOICE_FALLBACK_MODEL: z.string().default('gemini-3.6-flash'),
+    VOICE_FALLBACK_MODEL: z.string().default('gemini-3.5-flash'),
     // A second identical call goes out when the first has not answered by then.
     VOICE_HEDGE_MS: z.coerce.number().int().min(500).default(3000),
     // How hard the model thinks before answering: minimal is fastest; low reads fields more carefully.

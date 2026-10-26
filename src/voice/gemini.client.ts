@@ -21,6 +21,10 @@ class GeminiError extends Error {
  * then a call hangs for 10 s or more. So the request is hedged — if the first has not answered by
  * VOICE_HEDGE_MS a second identical one goes out and whichever answers first wins (the other is
  * aborted) — and only when both fail does the fallback model get the rest of the time.
+ *
+ * A 429 means the model's shared Vertex quota is full for a moment: asking the same model again
+ * is asking the same full pool, so it goes straight to the fallback — a different model, with
+ * its own pool (2026-10-26: "hitesh balance" failed three times over on 3.6-flash's 429s).
  */
 @Injectable()
 export class GeminiClient {
@@ -44,13 +48,21 @@ export class GeminiClient {
       // The hedged pair gets at most 8 s, so a call that hangs still leaves the retry time to answer.
       return await this.hedged(c.VOICE_MODEL, payload, opts.hedgeMs ?? c.VOICE_HEDGE_MS, Math.min(deadline, Date.now() + (opts.firstMs ?? 8_000)));
     } catch (e) {
-      const left = deadline - Date.now();
-      if (left < 1_500) throw this.unavailable(e);
-      this.log.warn(`${c.VOICE_MODEL} failed (${(e as Error).message}); trying ${c.VOICE_FALLBACK_MODEL}`);
-      try {
-        return await this.once(c.VOICE_FALLBACK_MODEL, fallbackPayload, AbortSignal.timeout(left));
-      } catch (e2) {
-        throw this.unavailable(e2);
+      // Then the fallback model, and while time is left the two in turn: a 429 is a busy moment
+      // on one model's pool, and the other's — or the same one a second later — often has room.
+      let last = e;
+      for (let i = 0; ; i++) {
+        if (i > 0 && (last as GeminiError).status === 429) await sleep(Math.min(300 * i, 1_000));
+        const left = deadline - Date.now();
+        if (left < 1_500) throw this.unavailable(last);
+        const fallback = i % 2 === 0;
+        const model = fallback ? c.VOICE_FALLBACK_MODEL : c.VOICE_MODEL;
+        this.log.warn(`${(last as Error).message}; trying ${model}`);
+        try {
+          return await this.once(model, fallback ? fallbackPayload : payload, AbortSignal.timeout(left));
+        } catch (e2) {
+          last = e2;
+        }
       }
     }
   }
@@ -116,12 +128,10 @@ export class GeminiClient {
             if (done) return;
             failures++;
             this.log.warn(`attempt failed: ${(e as Error).message}`);
-            // A quick failure retries instead of waiting out the timer — a 5xx at once, a 429 (the
-            // quota is full) after a short pause, so a busy minute is not made busier.
-            if (started < 2) {
-              if ((e as GeminiError).status === 429) setTimeout(() => fire('retry'), 700 + Math.random() * 500);
-              else fire('retry');
-            }
+            // The quota is full: the fallback model, with its own quota, answers instead.
+            if ((e as GeminiError).status === 429) { finish(); reject(e); }
+            // Any other quick failure retries instead of waiting out the timer.
+            else if (started < 2) fire('retry');
             else if (failures >= started) { finish(); reject(e); }
           },
         );
@@ -168,3 +178,5 @@ export class GeminiClient {
 function parses(text: string): boolean {
   try { JSON.parse(text); return true; } catch { return false; }
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
