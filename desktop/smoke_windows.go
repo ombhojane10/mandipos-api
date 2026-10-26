@@ -23,7 +23,7 @@ const smokeName = "mandiplus-smoke.csv"
 const smokeScript = `(async () => {
   const r = { href: location.href, title: document.title, ua: navigator.userAgent,
     inputs: document.querySelectorAll('input').length, text: document.body.innerText.slice(0, 200),
-    barcodeDetector: 'BarcodeDetector' in window, serviceWorker: !!navigator.serviceWorker?.controller }
+    barcodeDetector: 'BarcodeDetector' in window, dpr: devicePixelRatio, width: innerWidth, serviceWorker: !!navigator.serviceWorker?.controller }
   try { localStorage.setItem('mp.smoke', '1'); r.localStorage = localStorage.getItem('mp.smoke') === '1' } catch (e) { r.localStorage = String(e) }
   const gum = async (c) => {
     try {

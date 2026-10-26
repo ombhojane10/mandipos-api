@@ -41,11 +41,6 @@ var (
 	pLoadCursorW         = user32.NewProc("LoadCursorW")
 	pMessageBoxW         = user32.NewProc("MessageBoxW")
 	pSetWindowPos        = user32.NewProc("SetWindowPos")
-	pGetDpiForWindow     = user32.NewProc("GetDpiForWindow") // Windows 10 1607+
-	pGetDC               = user32.NewProc("GetDC")
-	pReleaseDC           = user32.NewProc("ReleaseDC")
-	gdi32                = windows.NewLazySystemDLL("gdi32.dll")
-	pGetDeviceCaps       = gdi32.NewProc("GetDeviceCaps")
 	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
 	pGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	pCreateMutexW        = kernel32.NewProc("CreateMutexW")
@@ -74,7 +69,6 @@ const (
 	mbIconError   = 0x10
 	mbIconInfo    = 0x40
 	idOK          = 1
-	logPixelsX    = 88
 	swpNoZOrder   = 0x0004
 	swpNoActivate = 0x0010
 )
@@ -258,6 +252,10 @@ func (a *app) open(runtimeVersion string) error {
 	c := edge.NewChromium()
 	a.c = c
 	c.DataPath = filepath.Join(a.dir, "WebView2")
+	if a.o.smoke != "" {
+		// A runner has no camera or mic; fake ones make getUserMedia reach the permission step.
+		c.AdditionalBrowserArgs = []string{"--use-fake-device-for-media-stream"}
+	}
 	// The portal's Scan (camera) and Bolo (mic) ask once per page load; the shell answers yes.
 	c.SetPermission(edge.CoreWebView2PermissionKindCamera, edge.CoreWebView2PermissionStateAllow)
 	c.SetPermission(edge.CoreWebView2PermissionKindMicrophone, edge.CoreWebView2PermissionStateAllow)
@@ -310,7 +308,7 @@ func (a *app) open(runtimeVersion string) error {
 	}
 
 	a.ready = true
-	a.fitDpi()
+	a.followDpi()
 	c.Resize()
 	c.Focus()
 	c.Navigate(a.o.url)
@@ -344,9 +342,6 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 	case wmDpiChanged:
 		r := (*[4]int32)(unsafe.Pointer(lp))
 		pSetWindowPos.Call(hwnd, 0, uintptr(r[0]), uintptr(r[1]), uintptr(r[2]-r[0]), uintptr(r[3]-r[1]), swpNoZOrder|swpNoActivate)
-		if a != nil && a.ready {
-			a.fitDpi()
-		}
 		return 0
 	case wmApp:
 		if a != nil {
@@ -378,22 +373,12 @@ func (a *app) dispatch(f func()) {
 	pPostMessageW.Call(a.hwnd, wmApp, 0, 0)
 }
 
-// fitDpi: the controller works in raw pixels, so the page is scaled to the monitor by hand.
-func (a *app) fitDpi() {
-	dpi := uintptr(0)
-	if pGetDpiForWindow.Find() == nil {
-		dpi, _, _ = pGetDpiForWindow.Call(a.hwnd)
-	}
-	if dpi == 0 {
-		dc, _, _ := pGetDC.Call(a.hwnd)
-		dpi, _, _ = pGetDeviceCaps.Call(dc, logPixelsX)
-		pReleaseDC.Call(a.hwnd, dc)
-	}
-	if dpi == 0 {
-		return
-	}
+// followDpi: wails turns off WebView2's own tracking of the monitor's scale; it is turned back on
+// here. (Setting RasterizationScale by hand isn't possible from Go: the double has to travel in an
+// XMM register, and wails' call passes a pointer, which halved the page on the first test.)
+func (a *app) followDpi() {
 	if c3 := a.c.GetController().GetICoreWebView2Controller3(); c3 != nil {
-		_ = c3.PutRasterizationScale(float64(dpi) / 96)
+		_ = c3.PutShouldDetectMonitorScaleChanges(true)
 	}
 }
 
