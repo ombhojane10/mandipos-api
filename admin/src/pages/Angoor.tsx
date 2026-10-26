@@ -7,7 +7,7 @@ import { t } from '../i18n'
 import { openVoucher } from '../keys'
 import { openScan } from '../Scan'
 import { hashQuery, href, setHashQuery } from '../routes'
-import { useLoad } from '../useLoad'
+import { booksChanged, useLoad } from '../useLoad'
 import { Kpi, PeriodBar, Skeleton } from '../ui'
 import * as I from '../icons'
 import { dayRange, fileName, openExport, rs, useExport } from '../export/doc'
@@ -76,6 +76,7 @@ export function Dispatch({ shopId }: { shopId: string }) {
   return (
     <>
       <Actions shopId={shopId} />
+      <BrokenRequests shopId={shopId} />
       <div className="toolbar">
         <PeriodBar value={period} onChange={setPeriod} />
         <div className="seg" role="group">
@@ -116,6 +117,92 @@ export function Dispatch({ shopId }: { shopId: string }) {
         </div>
       )}
     </>
+  )
+}
+
+// ================================================================ Toote box (broken after dispatch)
+
+type Broken = { id: string; status: string; qty: number; note: string; reportedBy: string; at: string; quality: string; gaadi: string
+  bill: { id: string; slipNo: number | null; buyer: string; buyerId: string | null; payMode: string; totalPaise: number; paidPaise: number; apmcPaise: number; lineQty: number; lineRatePaise: number } | null }
+
+/** Boxes the labour reported broken after they left: each settled here (re-priced) or turned down. */
+function BrokenRequests({ shopId }: { shopId: string }) {
+  const { data, reload } = useLoad(() => api<{ breakages: Broken[] }>(`/v1/admin/shops/${shopId}/breakages`), [shopId])
+  const [open, setOpen] = useState<Broken | null>(null)
+  if (!data?.breakages.length) return null
+  return (
+    <>
+      <div className="card broken-card">
+        <div className="hd"><h3>{t('Toote box · {n} request', { n: String(data.breakages.length) })}</h3></div>
+        <table className="tbl">
+          <tbody>
+            {data.breakages.map((b) => (
+              <tr key={b.id} data-row tabIndex={0} onClick={() => setOpen(b)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(b) }}>
+                <td className="main-col"><b>{b.bill ? `#${b.bill.slipNo} · ${b.bill.buyer}` : t('Parchi nahi mili')}</b>
+                  <small>{[b.quality, b.gaadi, b.reportedBy, time(b.at), b.note].filter(Boolean).join(' · ')}</small></td>
+                <td className="num amt-col"><span className="chip red">{t('{n} box toote', { n: count(b.qty) })}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {open && <SettleBroken shopId={shopId} b={open} onClose={() => setOpen(null)} onDone={() => { setOpen(null); reload(); booksChanged() }} />}
+    </>
+  )
+}
+
+/**
+ * The accountant writes the broken boxes at a new bhav: the slip is rewritten under its own number
+ * and printed again; money paid beyond the new total goes back in cash or stays as jama.
+ */
+function SettleBroken({ shopId, b, onClose, onDone }: { shopId: string; b: Broken; onClose: () => void; onDone: () => void }) {
+  const [bhav, setBhav] = useState('')
+  const [back, setBack] = useState<'cash' | 'advance'>('cash')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const bill = b.bill
+  const r = Math.round(Number(bhav) * 100)
+  const typed = bhav.trim() !== '' && Number.isFinite(r) && r >= 0
+  // The new total, as the server will work it: the broken boxes off their line at the new bhav (APMC with it).
+  const diff = typed && bill ? b.qty * (bill.lineRatePaise - r) : 0
+  const apmcOn = !!bill && bill.apmcPaise > 0
+  const newTotal = bill ? Math.max(0, bill.totalPaise - diff - (apmcOn ? Math.round(diff * 0.01) : 0)) : 0
+  const over = bill ? Math.max(0, bill.paidPaise - newTotal) : 0
+  const go = async (path: 'resolve' | 'reject') => {
+    if (path === 'resolve' && !typed) return setError(t('Toote box ka bhav likhein'))
+    setBusy(true); setError('')
+    try {
+      await api(`/v1/admin/shops/${shopId}/breakages/${b.id}/${path}`, { method: 'POST', body: path === 'resolve' ? { ratePaise: r, giveBack: over > 0 ? back : undefined } : {} })
+      onDone()
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="scrim sheet-scrim" onClick={onClose}>
+      <div className="sheet" role="dialog" aria-label={t('Toote box')} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-hd"><h3>{bill ? `#${bill.slipNo} · ${bill.buyer}` : t('Toote box')}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
+        <div className="sheet-bd">
+          <div className="broken-what"><b>{t('{what}: {n} box toote', { what: [b.quality, b.gaadi].filter(Boolean).join(' · '), n: count(b.qty) })}</b>
+            <small>{[b.reportedBy, time(b.at), b.note].filter(Boolean).join(' · ')}</small></div>
+          {bill && <div className="total-line"><span>{t('Abhi ka bhav')}</span><b className="money">{rate(bill.lineRatePaise)}</b></div>}
+          <label className="fld"><span className="fld-lb">{t('Toote box ka bhav ₹')}</span>
+            <input className="field" inputMode="decimal" autoFocus value={bhav} onChange={(e) => setBhav(e.target.value.replace(/[^\d.]/g, ''))} /></label>
+          {typed && bill && <div className="total-line"><span>{t('Nayi parchi')}</span><b className="money">{rupees(newTotal)}</b><span className="muted">{t('pehle {x}', { x: rupees(bill.totalPaise) })}</span></div>}
+          {over > 0 && (
+            <div className="fld"><span className="fld-lb">{t('{x} bache — kya karein?', { x: rupees(over) })}</span>
+              <div className="seg" role="group">
+                <button type="button" aria-pressed={back === 'cash'} onClick={() => setBack('cash')}>{t('Cash wapas')}</button>
+                {bill?.buyerId && <button type="button" aria-pressed={back === 'advance'} onClick={() => setBack('advance')}>{t('Khate mein jama')}</button>}
+              </div>
+            </div>
+          )}
+        </div>
+        {error && <p className="error" role="alert" style={{ padding: '0 20px' }}>{error}</p>}
+        <div className="sheet-ft">
+          <button type="button" className="btn ghost" disabled={busy} onClick={() => void go('reject')} style={{ marginRight: 'auto', color: 'var(--due)' }}>{t('Mana karein')}</button>
+          <button type="button" className="btn primary" disabled={busy || !bill} onClick={() => void go('resolve')}>{busy ? '…' : t('Nayi parchi banayein')}</button>
+        </div>
+      </div>
+    </div>
   )
 }
 

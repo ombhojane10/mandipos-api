@@ -477,6 +477,72 @@ describe('angoor on the website', () => {
   });
 });
 
+describe('angoor broken boxes', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('labour reports broken boxes by scanning; the accountant re-prices them and the slip is rewritten', async () => {
+    const s = await login('9829200041');
+    const res = await createApproved(s.accessToken, { name: 'Toota Angoor', mandi: 'Azadpur', shopNo: 'C-41', role: 'owner', commodity: 'angoor' });
+    const id = res.me.shop.id as string, owner = res.accessToken;
+    const t = new Date().toISOString();
+    const royal = uuidv7(), gaadi = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: royal, created_at: t, updated_at: t, name: 'Royal' } },
+      { table: 'trucks', row: { id: gaadi, created_at: t, updated_at: t, number: '3289', supplier: 'Sai', arrived_at: t, location: 'Shed 1' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: gaadi, brand_id: royal, grade: '1', billed_qty: 100, received_qty: 100, rate_paise: 0 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829200041' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829200041', code: OtpService.issuedForTests.get('9829200041') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+
+    // A cash slip of 60 Royal at ₹1,000 (+1% APMC), all handed over at the gaadi.
+    const cashSlip = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerName: 'Toota Grahak', lots: [{ truckId: gaadi, brandId: royal, qty: 60, ratePaise: 100000 }], pay: 'cash' }).expect(201)).body;
+    await http().post(`${base}/pickup`).set(web).send({ billId: cashSlip.billId, qty: 60 }).expect(201);
+
+    // The labour login: may record pickups and breakages, nothing else.
+    await http().post('/v1/shops/members').set(auth(owner)).send({ phone: '9829200042', name: 'Ramu', role: 'labour' }).expect(204);
+    const labour = await login('9829200042');
+    expect((await http().get('/v1/me').set(auth(labour.accessToken)).expect(200)).body.shop.role).toBe('labour');
+    const brk = uuidv7();
+    const pushed = (await http().post('/v1/sync/push').set(auth(labour.accessToken)).send({ items: [
+      { table: 'breakages', row: { id: brk, created_at: t, updated_at: t, bill_id: cashSlip.billId, slip_no: cashSlip.slipNo, brand_id: royal, truck_id: gaadi, qty: 10, reported_by: 'Ramu' } },
+      { table: 'bills', row: { id: uuidv7(), created_at: t, number: 'X/1', kind: 'kachchi', buyer_name: 'Cash', business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 1, paid_paise: 1, cash_paise: 1 } },
+    ] }).expect(200)).body;
+    expect(pushed.results.map((r: any) => r.status)).toEqual(['applied', 'rejected']);
+
+    const list = (await http().get(`${base}/breakages`).set(web).expect(200)).body.breakages;
+    expect(list[0]).toMatchObject({ id: brk, qty: 10, quality: 'Royal', gaadi: '3289', reportedBy: 'Ramu', status: 'pending', bill: { slipNo: cashSlip.slipNo, lineQty: 60, lineRatePaise: 100000, totalPaise: 6060000 } });
+
+    // Money already paid beyond the new total needs a choice.
+    await http().post(`${base}/breakages/${brk}/resolve`).set(web).send({ ratePaise: 50000 }).expect(400);
+    // 50 × ₹1,000 + 10 × ₹500 = ₹55,000 + APMC ₹550; ₹5,050 cash goes back.
+    const done = (await http().post(`${base}/breakages/${brk}/resolve`).set(web).send({ ratePaise: 50000, giveBack: 'cash' }).expect(201)).body;
+    expect(done).toMatchObject({ slipNo: cashSlip.slipNo, totalPaise: 5555000, backPaise: 505000 });
+    await http().post(`${base}/breakages/${brk}/resolve`).set(web).send({ ratePaise: 1, giveBack: 'cash' }).expect(409);
+
+    const pulled = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body.changes;
+    const bill = pulled.find((x: any) => x.table === 'bills' && x.row.id === done.billId).row;
+    expect(bill).toMatchObject({ slip_no: cashSlip.slipNo, total_paise: 5555000, cash_paise: 5555000, apmc_paise: 55000 });
+    expect(pulled.filter((x: any) => x.table === 'bill_lines' && x.row.bill_id === done.billId).map((x: any) => [x.row.qty, x.row.rate_paise]).sort()).toEqual([[10, 50000], [50, 100000]].sort());
+    expect(pulled.some((x: any) => x.table === 'bill_voids' && x.row.bill_id === cashSlip.billId)).toBe(true);
+    // The dispatch scans follow the slip; the request is done with the new slip and bhav.
+    expect(pulled.filter((x: any) => x.table === 'pickups' && x.row.bill_id === done.billId).map((x: any) => x.row.qty)).toEqual([60]);
+    expect(pulled.filter((x: any) => x.table === 'breakages').at(-1).row).toMatchObject({ status: 'done', rate_paise: 50000, resolved_bill_id: done.billId });
+
+    // An udhaar slip: the lower total just lowers what is owed; a rejection leaves the slip alone.
+    const credit = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerName: 'Udhaar Grahak', lots: [{ truckId: gaadi, brandId: royal, qty: 20, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+    const b2 = uuidv7(), b3 = uuidv7();
+    await http().post('/v1/sync/push').set(auth(labour.accessToken)).send({ items: [
+      { table: 'breakages', row: { id: b2, created_at: t, updated_at: t, bill_id: credit.billId, slip_no: credit.slipNo, brand_id: royal, truck_id: gaadi, qty: 5, reported_by: 'Ramu' } },
+      { table: 'breakages', row: { id: b3, created_at: t, updated_at: t, bill_id: credit.billId, slip_no: credit.slipNo, brand_id: royal, truck_id: gaadi, qty: 2, reported_by: 'Ramu' } },
+    ] }).expect(200);
+    expect((await http().post(`${base}/breakages/${b2}/resolve`).set(web).send({ ratePaise: 0 }).expect(201)).body).toMatchObject({ totalPaise: 1515000, backPaise: 0 });
+    await http().post(`${base}/breakages/${b3}/reject`).set(web).expect(201);
+    expect((await http().get(`${base}/breakages`).set(web).expect(200)).body.breakages).toEqual([]);
+    expect((await http().get(`${base}/breakages?status=all`).set(web).expect(200)).body.breakages.map((x: any) => x.status).sort()).toEqual(['done', 'done', 'rejected']);
+  });
+});
+
 describe('slip limit', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 

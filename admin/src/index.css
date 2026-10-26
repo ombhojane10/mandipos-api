@@ -1219,3 +1219,9 @@ button.chip { border: 0; cursor: pointer; }
 .overbook b { font-size: 13.5px; }
 .overbook small { color: #8a5a00; margin-top: 2px; }
 .bc .bc-over { display: grid; gap: 2px; padding: 10px 12px; margin-top: 4px; background: #fdf3df; border: 1px solid #efcf8f; border-radius: 12px !important; color: #7a4a00; font-size: 13.5px; }
+
+/* Toote box: requests from the gaadi, settled by the accountant. */
+.broken-card { border-color: #e3b25c; margin-bottom: 12px; }
+.broken-card > .hd { background: #fdf3df; }
+.broken-what { display: grid; gap: 2px; }
+.broken-what small { color: var(--muted); }

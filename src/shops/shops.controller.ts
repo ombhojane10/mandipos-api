@@ -20,7 +20,7 @@ const CreateShopBody = z.object({
 });
 
 const JoinBody = z.object({ code: z.string().regex(/^\d{6}$/, 'must be the 6-digit shop code') });
-const role = z.enum(['admin', 'accountant']);
+const role = z.enum(['admin', 'accountant', 'labour']);
 const AddMemberBody = z.object({ phone, name: z.string().trim().max(80).default(''), role: role.default('accountant') });
 const RoleBody = z.object({ role });
 const UserId = z.uuid();

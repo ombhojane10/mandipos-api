@@ -646,6 +646,122 @@ export class EntriesService {
     return { truckId, results };
   }
 
+  // ---------------------------------------------------------------- broken boxes (angoor)
+
+  /** Broken-box requests, newest first, each with its slip as it stands now (a slip changed since is followed by its number). */
+  async breakages(shopId: string, status: 'pending' | 'all') {
+    return this.db.withShop(shopId, async (tx) => {
+      const rows = (await tx.query<{ id: string; bill_id: string; slip_no: number | null; brand_id: string | null; truck_id: string | null; qty: number; note: string; reported_by: string; status: string; rate_paise: string; resolved_by: string; created_at: Date; updated_at: Date; quality: string | null; gaadi: string | null; reporter: string | null }>(
+        `SELECT k.*, br.name AS quality, t.number AS gaadi, u.name AS reporter FROM breakages k
+         LEFT JOIN brands br ON br.id = k.brand_id LEFT JOIN trucks t ON t.id = k.truck_id LEFT JOIN users u ON u.id = k.created_by
+         WHERE ${status === 'pending' ? `k.status = 'pending'` : 'true'} ORDER BY k.created_at DESC LIMIT 200`)).rows;
+      const out = [];
+      for (const r of rows) {
+        const bill = await this.currentBill(tx, r.bill_id, r.slip_no);
+        const line = bill ? (await tx.query<{ qty: string; rate: string }>(
+          `SELECT SUM(qty) AS qty, MAX(rate_paise) AS rate FROM bill_lines WHERE bill_id = $1 AND brand_id IS NOT DISTINCT FROM $2 AND ($3::uuid IS NULL OR truck_id = $3)`,
+          [bill.id, r.brand_id, r.truck_id])).rows[0] : null;
+        out.push({
+          id: r.id, status: r.status, qty: r.qty, note: r.note, reportedBy: /^\d{10}$/.test(r.reported_by) && r.reporter ? r.reporter : r.reported_by, at: r.created_at.toISOString(),
+          quality: r.quality ?? '', gaadi: r.gaadi ?? '', ratePaise: n(r.rate_paise), resolvedBy: r.resolved_by, resolvedAt: r.status === 'pending' ? null : r.updated_at.toISOString(),
+          bill: bill ? {
+            id: bill.id, slipNo: bill.slip_no, buyer: bill.buyer_name, buyerId: bill.buyer_id, payMode: bill.pay_mode,
+            totalPaise: n(bill.total_paise), paidPaise: n(bill.paid_paise), apmcPaise: n(bill.apmc_paise), lineQty: n(line?.qty), lineRatePaise: n(line?.rate),
+          } : null,
+        });
+      }
+      return { breakages: out };
+    });
+  }
+
+  /** The slip a request was raised on, or the one that replaced it under the same number. */
+  private async currentBill(tx: Tx, billId: string, slipNo: number | null) {
+    const live = `SELECT b.id, b.slip_no, b.buyer_id, b.buyer_name, b.pay_mode, b.total_paise, b.paid_paise, b.cash_paise, b.upi_paise, b.labour_paise, b.apmc_paise,
+                         b.upi_bank, b.staff_name, b.truck_id, b.business_date::text AS day, b.created_at
+                  FROM bills b WHERE NOT EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id)`;
+    type Row = LiveBill & { total_paise: string; labour_paise: string; apmc_paise: string; upi_bank: string; staff_name: string };
+    return (await tx.query<Row>(`${live} AND b.id = $1`, [billId])).rows[0]
+      ?? (slipNo ? (await tx.query<Row>(`${live} AND b.slip_no = $1 ORDER BY b.created_at DESC LIMIT 1`, [slipNo])).rows[0] : undefined);
+  }
+
+  /**
+   * The accountant settles a broken-box request: those boxes are written at [ratePaise] (a line
+   * of their own, the rest of the slip as it was), the slip is rewritten under its own number
+   * (the old one voided 'edited', its dispatch scans carried over), and money already paid
+   * beyond the new total goes back — cash from the galla (UPI as cash, as a refund is done) — or
+   * stays as the grahak's jama. The request is marked done, and the new slip printed.
+   */
+  async resolveBreakage(phone: string, shopId: string, id: string, input: { ratePaise: number; giveBack?: 'cash' | 'advance' }) {
+    const p = await this.device(phone, shopId);
+    const pre = await this.db.withShop(shopId, async (tx) => {
+      const brk = (await tx.query<{ id: string; bill_id: string; slip_no: number | null; brand_id: string | null; truck_id: string | null; qty: number; note: string; reported_by: string; status: string; created_at: Date }>(
+        `SELECT * FROM breakages WHERE id = $1`, [id])).rows[0];
+      if (!brk) throw new NotFoundException('Request nahi mili');
+      if (brk.status !== 'pending') throw new ConflictException('Yeh request pehle hi nipat chuki hai');
+      const bill = await this.currentBill(tx, brk.bill_id, brk.slip_no);
+      if (!bill) throw new ConflictException('Yeh parchi ab nahi hai');
+      const lines = (await tx.query<{ truck_id: string; brand_id: string; qty: number; rate_paise: string }>(
+        `SELECT truck_id, brand_id, qty, rate_paise FROM bill_lines WHERE bill_id = $1 ORDER BY created_at`, [bill.id])).rows;
+      const pickups = (await tx.query<{ qty: number; note: string; created_at: Date }>(`SELECT qty, note, created_at FROM pickups WHERE bill_id = $1`, [bill.id])).rows;
+      return { brk, bill, lines, pickups };
+    });
+    const { brk, bill, lines, pickups } = pre;
+    // The broken boxes become a line of their own at the new bhav.
+    let left = brk.qty;
+    const lots: { truckId: string; brandId: string; qty: number; ratePaise: number }[] = [];
+    for (const l of lines) {
+      const hit = left > 0 && l.brand_id === brk.brand_id && (!brk.truck_id || l.truck_id === brk.truck_id);
+      const k = hit ? Math.min(l.qty, left) : 0;
+      if (l.qty - k > 0) lots.push({ truckId: l.truck_id, brandId: l.brand_id, qty: l.qty - k, ratePaise: n(l.rate_paise) });
+      if (k > 0) { lots.push({ truckId: l.truck_id, brandId: l.brand_id, qty: k, ratePaise: input.ratePaise }); left -= k; }
+    }
+    if (left > 0) throw new BadRequestException(`Parchi par ${brk.qty} box is quality ke nahi hain`);
+    const goods = lots.reduce((s, l) => s + l.qty * l.ratePaise, 0);
+    const apmc = n(bill.apmc_paise) > 0 ? Math.round(goods * 0.01) : 0;
+    const labour = n(bill.labour_paise);
+    const boxes = lots.reduce((s, l) => s + l.qty, 0);
+    const total = bill.pay_mode === 'free' ? 0 : goods + apmc + labour;
+    const [cash, upi] = billMoney(bill);
+    const excess = Math.max(0, cash + upi - total);
+    const cashBack = Math.min(cash, excess), upiBack = excess - cashBack;
+    if (excess > 0 && input.giveBack === 'advance' && !bill.buyer_id) throw new BadRequestException('Cash grahak ka khata nahi — paisa wapas chunein');
+    if (excess > 0 && !input.giveBack) throw new BadRequestException('Bache paise: wapas dein ya khate mein jama — chunein');
+    const pay: ParchiInput['pay'] = bill.pay_mode === 'free' ? 'free' : cash + upi - excess > 0 ? 'split' : bill.pay_mode === 'after' ? 'after' : 'credit';
+    const r = await this.writeAngoorParchi(p, shopId, {
+      buyerId: bill.buyer_id ?? undefined, buyerName: bill.buyer_id ? undefined : bill.buyer_name, lots, pay,
+      cashPaise: cash - cashBack, upiPaise: upi - upiBack, upiBank: bill.upi_bank || undefined, packing: 'loose',
+      labour: labour > 0, labourRatePaise: labour > 0 && boxes ? Math.round(labour / boxes) : undefined, staff: bill.staff_name,
+    }, bill);
+    const now = new Date().toISOString();
+    const items: PushItem[] = pickups.map((k) => ({ table: 'pickups', txn: uuidv7(), row: { id: uuidv7(), created_at: k.created_at.toISOString(), bill_id: r.billId, qty: k.qty, note: k.note } }));
+    items.push({ table: 'breakages', txn: uuidv7(), row: {
+      id: brk.id, created_at: brk.created_at.toISOString(), updated_at: now, bill_id: brk.bill_id, slip_no: brk.slip_no, brand_id: brk.brand_id, truck_id: brk.truck_id,
+      qty: brk.qty, note: brk.note, reported_by: brk.reported_by, status: 'done', rate_paise: input.ratePaise, resolved_bill_id: r.billId, resolved_by: 'Website',
+    } });
+    await this.push(p, shopId, items);
+    if (excess > 0 && input.giveBack === 'advance') await this.vasooli(phone, shopId, { buyerId: bill.buyer_id!, cashPaise: cashBack, upiPaise: upiBack });
+    if (excess > 0 && input.giveBack === 'cash' && upiBack > 0) {
+      const slip = `Parchi #${r.slipNo}`, party = bill.buyer_id ? bill.buyer_name : '';
+      await this.dayRow(p, shopId, { direction: 'in', category: 'aur_aaya', mode: 'upi', amountPaise: upiBack, party, note: `${slip} toote box · UPI aaya tha` });
+      await this.dayRow(p, shopId, { direction: 'out', category: 'aur_gaya', mode: 'cash', amountPaise: upiBack, party, note: `${slip} toote box · cash wapas` });
+    }
+    const printing = await this.print.queueBill(p, r.billId, `Badli Parchi #${r.slipNo}`).then(() => true, () => false);
+    return { billId: r.billId, slipNo: r.slipNo, totalPaise: total, backPaise: excess, printing };
+  }
+
+  /** The accountant turns a broken-box request down: it stays on the books as rejected. */
+  async rejectBreakage(phone: string, shopId: string, id: string) {
+    const p = await this.device(phone, shopId);
+    const brk = await this.db.withShop(shopId, async (tx) => (await tx.query<Record<string, unknown> & { status: string; created_at: Date }>(`SELECT * FROM breakages WHERE id = $1`, [id])).rows[0]);
+    if (!brk) throw new NotFoundException('Request nahi mili');
+    if (brk.status !== 'pending') throw new ConflictException('Yeh request pehle hi nipat chuki hai');
+    await this.push(p, shopId, [{ table: 'breakages', txn: uuidv7(), row: {
+      id: brk.id, created_at: brk.created_at.toISOString(), updated_at: new Date().toISOString(), bill_id: brk.bill_id, slip_no: brk.slip_no, brand_id: brk.brand_id, truck_id: brk.truck_id,
+      qty: brk.qty, note: brk.note, reported_by: brk.reported_by, status: 'rejected', rate_paise: 0, resolved_bill_id: null, resolved_by: 'Website',
+    } }]);
+    return { ok: true };
+  }
+
   /** Where a gaadi stands, changed (Bolo's "9098 ki location C12 shed karo"): the truck row, with its new place. */
   async setGaadiLocation(phone: string, shopId: string, truckId: string, location: string) {
     const p = await this.device(phone, shopId);

@@ -202,6 +202,18 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       name: z.string().trim().min(1).max(120), phone: z.string().trim().regex(/^([6-9][0-9]{9})?$/).default(''),
     }),
   },
+  // Angoor: boxes reported broken after they left (the labour scans the slip again); the
+  // accountant writes them at a lower bhav (status done, the new bill) or turns it down.
+  breakages: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at, bill_id: id, slip_no: z.number().int().positive().nullable().default(null),
+      brand_id: id.nullable().default(null), truck_id: id.nullable().default(null),
+      qty, note: text(200), reported_by: text(60),
+      status: z.enum(['pending', 'done', 'rejected']).default('pending'),
+      rate_paise: paise.default(0), resolved_bill_id: id.nullable().default(null), resolved_by: text(60),
+    }),
+  },
   // Accountants with their own passcode (angoor). The passcode is checked on the terminal.
   staff: {
     kind: 'master',

@@ -22,9 +22,9 @@ const APPROVED_MEMBERSHIP = `SELECT m.shop_id FROM shop_members m JOIN shops s O
   WHERE m.user_id = $1 AND s.approved_at IS NOT NULL ORDER BY m.created_at LIMIT 1`;
 
 /** How the app names a role; the table keeps the older words. */
-export type TeamRole = 'admin' | 'accountant';
-const toDb = (r: TeamRole) => (r === 'admin' ? 'owner' : 'munim');
-const fromDb = (r: string): TeamRole => (r === 'owner' ? 'admin' : 'accountant');
+export type TeamRole = 'admin' | 'accountant' | 'labour';
+const toDb = (r: TeamRole) => (r === 'admin' ? 'owner' : r === 'labour' ? 'labour' : 'munim');
+const fromDb = (r: string): TeamRole => (r === 'owner' ? 'admin' : r === 'labour' ? 'labour' : 'accountant');
 
 /** One account a customer can pay into, printed at the head of their ledger. */
 export type BankAccount = { holder: string; bank: string; ifsc: string; account: string };
@@ -227,7 +227,7 @@ export class AccountsService {
       await this.requireAdmin(tx, p);
       const member = (await tx.query<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [p.shopId, userId])).rows[0];
       if (!member) throw new NotFoundException('Yeh team mein nahi hai');
-      if (role === 'accountant' && member.role === 'owner') await this.keepOneAdmin(tx, p.shopId!);
+      if (role !== 'admin' && member.role === 'owner') await this.keepOneAdmin(tx, p.shopId!);
       await tx.query(`UPDATE shop_members SET role = $3 WHERE shop_id = $1 AND user_id = $2`, [p.shopId, userId, toDb(role)]);
     });
   }

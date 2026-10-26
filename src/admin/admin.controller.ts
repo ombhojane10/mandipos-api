@@ -447,6 +447,23 @@ export class AdminController {
     return this.entries.editGaadi(v.phone, mine(v, id), parse(z.uuid(), truckId), parse(GaadiBody, body));
   }
 
+  /** Angoor: broken-box requests from the gaadi, and the accountant settling one (re-priced) or turning it down. */
+  @Get('shops/:id/breakages')
+  breakages(@See() v: Viewer, @Param('id') id: string, @Query('status') status?: string) {
+    return this.entries.breakages(mine(v, id), status === 'all' ? 'all' : 'pending');
+  }
+
+  @Post('shops/:id/breakages/:bid/resolve')
+  resolveBreakage(@See() v: Viewer, @Param('id') id: string, @Param('bid') bid: string, @Body() body: unknown) {
+    return this.entries.resolveBreakage(v.phone, mine(v, id), parse(z.uuid(), bid),
+      parse(z.object({ ratePaise: paise, giveBack: z.enum(['cash', 'advance']).optional() }), body));
+  }
+
+  @Post('shops/:id/breakages/:bid/reject')
+  rejectBreakage(@See() v: Viewer, @Param('id') id: string, @Param('bid') bid: string) {
+    return this.entries.rejectBreakage(v.phone, mine(v, id), parse(z.uuid(), bid));
+  }
+
   @Post('shops/:id/entries/parchi')
   parchi(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
     return this.entries.parchi(v.phone, mine(v, id), parse(ParchiBody, body));

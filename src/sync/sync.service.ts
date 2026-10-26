@@ -5,6 +5,8 @@ import { Principal } from '../auth/tokens.service';
 import { Db, Tx } from '../db/db.service';
 import { IMMUTABLE_ON_UPDATE, SYNC_TABLES } from './tables';
 
+const LABOUR_TABLES = new Set(['pickups', 'breakages']);
+
 /** txn: the terminal's local transaction the row was written in; rows sharing one apply together or not at all. */
 export type PushItem = { table: string; row: Record<string, unknown>; txn?: string };
 /** applied: stored now · skipped: already had it (or a newer version) · rejected: invalid, will never apply */
@@ -126,6 +128,8 @@ export class SyncService {
     const rawId = typeof item?.row?.id === 'string' ? item.row.id : null;
     const def = SYNC_TABLES[item?.table];
     if (!def) return { id: rawId, status: 'rejected', error: `unknown table ${item?.table}` };
+    // A labour login only hands boxes over and reports broken ones.
+    if (!LABOUR_TABLES.has(item.table) && (await roleOf()) === 'labour') return { id: rawId, status: 'rejected', error: 'labour can only record pickups and breakages' };
     const parsed = def.row.safeParse(item.row);
     if (!parsed.success) {
       const i = parsed.error.issues[0];
