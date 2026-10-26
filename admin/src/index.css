@@ -1128,3 +1128,88 @@ button.chip { border: 0; cursor: pointer; }
   .bc .bc-hist-x { opacity: 1; }
 }
 @keyframes bc-drawer { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ================================================================ Bolo, the quick voice (Nayi entry → Bolo)
+   Full screen, everything in the middle: the orb breathes and swells with the voice, a waveform
+   while it thinks, then the answer. Restates the corners and depth the Tally look flattens. */
+.vb { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; color: #141c1b;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Devanagari', sans-serif; -webkit-font-smoothing: antialiased;
+  background: radial-gradient(60% 45% at 50% 38%, #dcefe9 0%, rgb(220 239 233 / 0) 70%), radial-gradient(45% 35% at 85% 8%, #eef6d6 0%, rgb(238 246 214 / 0) 70%), #f7f8f2;
+  animation: vb-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes vb-in { from { opacity: 0; transform: scale(1.015); } to { opacity: 1; transform: none; } }
+.vb svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.vb button { font: inherit; }
+.vb-top { display: flex; align-items: center; justify-content: space-between; padding: max(14px, env(safe-area-inset-top)) 18px 0; }
+.vb-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; color: #1c4f56; font-size: 15px; }
+.vb-brand svg { width: 18px; height: 18px; }
+.vb .vb-x { width: 44px; height: 44px; display: grid; place-items: center; border: 0; background: rgb(20 28 27 / 0.06); color: #3a4644; border-radius: 50% !important; cursor: pointer; transition: background 0.15s; }
+.vb .vb-x:hover { background: rgb(20 28 27 / 0.12); }
+.vb-stage { flex: 1; min-height: 0; overflow-y: auto; display: flex; padding: 12px 20px; }
+.vb-center { margin: auto; width: 100%; max-width: 440px; display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; animation: vb-rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.vb-center.wide { max-width: 560px; }
+@keyframes vb-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.vb-title { margin: 0; font-size: clamp(22px, 4.6vw, 30px); line-height: 1.25; font-weight: 650; letter-spacing: -0.015em; text-decoration: none !important; color: #141c1b; }
+.vb-title.soft { color: #3a4644; font-weight: 550; font-size: clamp(18px, 3.6vw, 22px); }
+.vb-hint { margin: -6px 0 0; color: #6b7673; font-size: 15px; }
+.vb-heard { margin: 0; color: #5d6866; font-size: 15px; font-style: italic; max-width: 100%; }
+
+/* The orb: a solid core and three rings that swell with the voice level (--lv, set every frame). */
+.vb-orb { --lv: 0; position: relative; width: 220px; height: 220px; display: grid; place-items: center; margin: 4px 0 6px; }
+.vb-orb.small { width: 120px; height: 120px; margin: 0; }
+.vb .vb-core { position: relative; z-index: 2; width: 46%; height: 46%; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(140deg, #2f7a83 0%, #1c4f56 100%); border-radius: 50% !important;
+  box-shadow: 0 14px 36px rgb(28 79 86 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.25) !important;
+  transform: scale(calc(1 + var(--lv) * 0.12)); transition: transform 0.09s linear; }
+.vb-core svg { width: 38%; height: 38%; stroke-width: 2.2; }
+.vb .vb-ring { position: absolute; inset: 0; border-radius: 50% !important; background: #2a6b73; transition: transform 0.12s linear; }
+.vb-ring.r1 { opacity: 0.16; transform: scale(calc(0.62 + var(--lv) * 0.3)); animation: vb-breathe 2.6s ease-in-out infinite; }
+.vb-ring.r2 { opacity: 0.09; transform: scale(calc(0.78 + var(--lv) * 0.42)); animation: vb-breathe 2.6s ease-in-out 0.35s infinite; }
+.vb-ring.r3 { opacity: 0.05; transform: scale(calc(0.94 + var(--lv) * 0.5)); animation: vb-breathe 2.6s ease-in-out 0.7s infinite; }
+@keyframes vb-breathe { 0%, 100% { filter: none; } 50% { filter: brightness(1.25) saturate(1.1); } }
+.vb-loader { height: 120px; display: grid; place-items: center; }
+.vb .vb-badge { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 50% !important; }
+.vb .vb-badge svg { width: 30px; height: 30px; stroke-width: 2.4; }
+.vb .vb-badge.ok { background: #e3f2e5; color: #146326; animation: vb-pop 0.4s cubic-bezier(0.2, 1.4, 0.4, 1); }
+.vb .vb-badge.warn { background: #fbf0d9; color: #9a5b00; }
+@keyframes vb-pop { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Choices, a typed answer, and the answer's cards. */
+.vb-opts { width: 100%; display: grid; gap: 10px; }
+.vb .vb-opt { min-height: 52px; padding: 12px 18px; border: 1px solid #cfd8d2; background: #fff; border-radius: 16px !important; font-size: 16px; color: #141c1b; text-align: left; cursor: pointer;
+  box-shadow: 0 1px 2px rgb(20 28 27 / 0.04) !important; transition: border-color 0.15s, background 0.15s, transform 0.1s; }
+.vb .vb-opt:hover { border-color: #2a6b73; background: #f1f8f7; }
+.vb .vb-opt:active { transform: scale(0.99); }
+.vb .vb-opt.primary { background: #2a6b73; border-color: #2a6b73; color: #fff; font-weight: 650; text-align: center; }
+.vb .vb-opt.quiet { background: none; border-style: dashed; color: #6b7673; text-align: center; }
+.vb .vb-detail { width: 100%; text-align: left; background: #fff; border: 1px solid #e2e6db; border-radius: 16px !important; padding: 12px 16px; font-size: 15px; line-height: 1.7; }
+.vb-detail > div:first-child { font-weight: 650; }
+.vb .vb-type { width: 100%; display: flex; gap: 8px; background: #fff; border: 1px solid #cfd8d2; border-radius: 18px !important; padding: 6px 6px 6px 18px; }
+.vb .vb-type:focus-within { border-color: #2a6b73; box-shadow: 0 0 0 4px rgb(42 107 115 / 0.12) !important; }
+.vb-type input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 20px; letter-spacing: 0.03em; color: #141c1b; }
+.vb .vb-go { width: 46px; height: 46px; display: grid; place-items: center; border: 0; background: #2a6b73; color: #fff; border-radius: 14px !important; cursor: pointer; }
+.vb-cards { width: 100%; display: grid; gap: 10px; text-align: left; }
+.vb .vb-cards .vc { background: #fff; border: 1px solid #e2e6db !important; border-radius: 18px !important; padding: 4px 0; overflow: hidden; font-family: inherit; }
+.vb .vc-head { padding: 12px 18px; }
+.vb .vc-head small { font-size: 13px; font-weight: 550; color: #6b7673; }
+.vb .vc-head strong { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+.vb .vc-row { padding: 11px 18px; font-size: 15px; border-top-color: #eef0ea; }
+.vb .vc-row b { font-weight: 600; }
+.vb .vc-link { padding: 12px 18px; font-size: 15px; color: #2a6b73; border-top-color: #eef0ea; }
+.vb .vc-table { font-size: 15px; }
+.vb .vc-table th, .vb .vc-table td { padding: 10px 16px; border-top-color: #eef0ea; }
+.vb .vb-main:focus-visible { outline: 2px solid rgb(42 107 115 / 0.16); outline-offset: 5px; }
+.vb .vb-opt:focus-visible, .vb .vb-x:focus-visible { outline: 3px solid rgb(42 107 115 / 0.3); outline-offset: 3px; }
+.vb .vb-main:focus:not(:focus-visible) { outline: none; }
+
+/* The one big button at the bottom, thumb-reach on a phone. */
+.vb-foot { display: grid; justify-items: center; gap: 10px; padding: 12px 20px max(22px, env(safe-area-inset-bottom)); }
+.vb .vb-main { min-width: 220px; height: 58px; padding: 0 28px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 0; cursor: pointer;
+  background: #141c1b; color: #fff; font-size: 17px; font-weight: 650; border-radius: 999px !important; box-shadow: 0 12px 30px rgb(20 28 27 / 0.22) !important; transition: transform 0.12s, background 0.15s; }
+.vb .vb-main.done { background: #2a6b73; box-shadow: 0 12px 30px rgb(42 107 115 / 0.35) !important; }
+.vb .vb-main:hover { transform: translateY(-1px); }
+.vb .vb-main:active { transform: scale(0.98); }
+.vb-main svg { width: 22px; height: 22px; }
+.vb-keys { color: #8a948f; font-size: 12.5px; }
+@media (hover: none), (max-width: 899px) { .vb-keys { display: none; } }
+@media (max-width: 899px) { .vb-orb { width: 190px; height: 190px; } .vb .vb-main { width: 100%; max-width: 420px; } }
+@media (prefers-reduced-motion: reduce) { .vb, .vb-center, .vb-ring { animation: none !important; } }

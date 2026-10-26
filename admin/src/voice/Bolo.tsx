@@ -8,6 +8,8 @@ import { editEntry, openEntry, type EditBill, type EntryKind, type VoiceDraft } 
 import { exportWhenReady } from '../export/doc'
 import { AnswerTable, VoiceCard, type Answer, type Card } from './Cards'
 import { MicIcon } from './MicIcon'
+import { Waveform } from 'ldrs/react'
+import 'ldrs/react/Waveform.css'
 import { sayCard, speakLocal } from './speak'
 import { hush, speakText, unlock } from './player'
 import { toBase64, useRecorder } from './useRecorder'
@@ -172,49 +174,92 @@ export default function Bolo({ shopId, onDraft, onClose }: { shopId: string; onD
 
   const close = () => { inFlight.current?.abort(); rec.close(); hush(); onClose() }
 
+  const heard = turn?.reply?.transcript
+  const done = !!(turn?.sent || turn?.saved)
+  const orbEl = (size: 'big' | 'small') => (
+    <div ref={orb} className={`vb-orb ${size}`} aria-hidden>
+      <span className="vb-ring r3" /><span className="vb-ring r2" /><span className="vb-ring r1" />
+      <span className="vb-core"><MicIcon /></span>
+    </div>
+  )
   return (
-    <div className="scrim sheet-scrim" onClick={close} onKeyDown={(e) => {
+    <div className="vb" role="dialog" aria-label={t('Bolo')} onKeyDown={(e) => {
       if (e.key === 'Escape') { e.stopPropagation(); close() }
       if ((e.key === 'Enter' || e.key === ' ') && phase === 'listening') { e.preventDefault(); send.current() }
     }}>
-      <div className="sheet bolo" role="dialog" aria-label={t('Bolo')} onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-hd">
-          <h3>{title || (phase === 'thinking' ? t('Samajh rahe hain…') : t('Boliye…'))}</h3>
-          <button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={close}>✕</button>
-        </div>
-        <div className="bolo-body">
-          {phase === 'listening' && <div ref={orb} className="bolo-orb" aria-hidden><MicIcon /></div>}
-          {phase === 'thinking' && <div className="bolo-spin" aria-hidden />}
-          {phase === 'ask' && asked && (
-            <div className="bolo-ask">
-              {!asked.tap && <div ref={orb} className="bolo-orb small" aria-hidden><MicIcon /></div>}
-              {asked.detail?.length ? <div className="bolo-detail">{asked.detail.map((l, i) => <div key={i}>{l}</div>)}</div> : null}
-              {asked.options.length > 0 && (
-                <div className="bolo-opts">
-                  {asked.options.map((o) => <button key={o.value} type="button" className={`btn ${asked.tap && o.value === 'yes' ? 'primary' : 'line'}`} onClick={() => void answer({ pick: o.value })}>{o.label}</button>)}
-                </div>
-              )}
-              {(asked.expect === 'phone' || asked.expect === 'text' || asked.expect === 'number') && (
-                <form className="bolo-type" onSubmit={(e) => { e.preventDefault(); if (typed.trim()) void answer({ text: typed.trim() }) }}>
-                  <input className="field" autoFocus inputMode={asked.expect === 'text' ? 'text' : 'numeric'} maxLength={asked.expect === 'phone' ? 14 : 80}
-                    placeholder={asked.expect === 'phone' ? '98765 43210' : ''} value={typed} onChange={(e) => setTyped(e.target.value)} />
-                  <button type="submit" className="btn primary">{t('Theek hai')}</button>
-                </form>
-              )}
+      <div className="vb-top">
+        <span className="vb-brand"><MicIcon />{t('Bolo')}</span>
+        <button type="button" className="vb-x" aria-label={t('Band karein')} onClick={close}>
+          <svg viewBox="0 0 24 24" aria-hidden><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+
+      <div className={`vb-stage ${phase}`}>
+        {phase === 'listening' && (
+          <div className="vb-center" key="listen">
+            {orbEl('big')}
+            <h2 className="vb-title">{title || t('Boliye…')}</h2>
+            <p className="vb-hint">{t('Jaise: Ramesh ko 10 box 900 ke udhaar mein')}</p>
+          </div>
+        )}
+        {phase === 'thinking' && (
+          <div className="vb-center" key="think">
+            <div className="vb-loader"><Waveform size="64" stroke="4.5" speed="1" color="#2a6b73" /></div>
+            <h2 className="vb-title soft">{t('Samajh rahe hain…')}</h2>
+          </div>
+        )}
+        {phase === 'error' && (
+          <div className="vb-center" key="err">
+            <span className="vb-badge warn"><svg viewBox="0 0 24 24" aria-hidden><path d="M12 8v5M12 16.5v.01" /><circle cx="12" cy="12" r="9" /></svg></span>
+            <h2 className="vb-title">{title}</h2>
+          </div>
+        )}
+        {phase === 'ask' && asked && (
+          <div className="vb-center wide" key="ask">
+            {heard && <p className="vb-heard">“{heard}”</p>}
+            {!asked.tap && orbEl('small')}
+            <h2 className="vb-title">{asked.question}</h2>
+            {asked.detail?.length ? <div className="vb-detail">{asked.detail.map((l, i) => <div key={i}>{l}</div>)}</div> : null}
+            {asked.options.length > 0 && (
+              <div className="vb-opts">
+                {asked.options.map((o) => (
+                  <button key={o.value} type="button" className={`vb-opt${asked.tap && o.value === 'yes' ? ' primary' : ''}${o.value === 'cancel' ? ' quiet' : ''}`}
+                    onClick={() => void answer({ pick: o.value })}>{o.label}</button>
+                ))}
+              </div>
+            )}
+            {(asked.expect === 'phone' || asked.expect === 'text' || asked.expect === 'number') && (
+              <form className="vb-type" onSubmit={(e) => { e.preventDefault(); if (typed.trim()) void answer({ text: typed.trim() }) }}>
+                <input autoFocus inputMode={asked.expect === 'text' ? 'text' : 'numeric'} maxLength={asked.expect === 'phone' ? 14 : 80}
+                  placeholder={asked.expect === 'phone' ? '98765 43210' : ''} value={typed} onChange={(e) => setTyped(e.target.value)} />
+                <button type="submit" className="vb-go" aria-label={t('Theek hai')}><svg viewBox="0 0 24 24" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg></button>
+              </form>
+            )}
+          </div>
+        )}
+        {phase === 'answer' && (
+          <div className="vb-center wide" key="answer">
+            {heard && <p className="vb-heard">“{heard}”</p>}
+            {done && <span className="vb-badge ok"><svg viewBox="0 0 24 24" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>}
+            <h2 className="vb-title">{turn?.answer ? turn.answer.say : turn?.say || (turn?.reply?.kind === 'answer' && !turn?.cards?.length ? turn.reply.say : title)}</h2>
+            <div className="vb-cards">
+              {turn?.answer && <AnswerTable a={turn.answer} shopId={shopId} />}
+              {turn?.cards?.map((c, i) => <VoiceCard key={i} c={c} shopId={shopId} />)}
             </div>
-          )}
-          {phase === 'answer' && turn?.answer && <p className="bolo-say">{turn.answer.say}</p>}
-          {phase === 'answer' && turn?.answer && <AnswerTable a={turn.answer} shopId={shopId} />}
-          {phase === 'answer' && turn?.cards?.map((c, i) => <VoiceCard key={i} c={c} shopId={shopId} />)}
-          {phase === 'answer' && !turn?.cards?.length && turn?.reply?.kind === 'answer' && <p className="bolo-say">{turn.reply.say}</p>}
-        </div>
-        <div className="bolo-ft">
-          {phase === 'ask' && asked?.tap ? null : phase === 'listening' || phase === 'ask'
-            ? <button type="button" className="btn primary" autoFocus={phase === 'listening'} onClick={() => { unlock(); send.current() }}>{t('Ho gaya')}</button>
-            : phase !== 'thinking' && <button type="button" className="btn primary" autoFocus onClick={() => { unlock(); void listen() }}>{turn?.say || turn?.answer || turn?.cards?.length ? t('Aur boliye') : t('Phir boliye')}</button>}
-        </div>
+          </div>
+        )}
+      </div>
+
+      <div className="vb-foot">
+        {phase === 'ask' && asked?.tap ? null : phase === 'listening' || phase === 'ask'
+          ? <button type="button" className="vb-main done" autoFocus={phase === 'listening'} onClick={() => { unlock(); send.current() }}>
+              <svg viewBox="0 0 24 24" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>{t('Ho gaya')}
+            </button>
+          : phase !== 'thinking' && <button type="button" className="vb-main" autoFocus onClick={() => { unlock(); void listen() }}>
+              <MicIcon />{turn?.say || turn?.answer || turn?.cards?.length ? t('Aur boliye') : t('Phir boliye')}
+            </button>}
+        {phase === 'listening' && <small className="vb-keys">{t('Enter — ho gaya · Esc — band')}</small>}
       </div>
     </div>
   )
 }
-

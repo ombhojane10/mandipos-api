@@ -209,4 +209,10 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'Sabse zyada udhaar': ['Highest credit', 'सबसे ज़्यादा उधार'],
   'Parchi bolein, kuch bhi poochhein': ['Speak a slip, ask anything', 'पर्ची बोलें, कुछ भी पूछें'],
   'Kuch bhi poochhein': ['Ask anything', 'कुछ भी पूछें'],
+  'Jaise: Ramesh ko 10 box 900 ke udhaar mein': ['Like: Ramesh, 10 boxes at 900 on credit', 'जैसे: रमेश को 10 बॉक्स 900 के उधार में'],
+  'Enter — ho gaya · Esc — band': ['Enter — done · Esc — close', 'Enter — हो गया · Esc — बंद'],
+  'Aur boliye': ['Say more', 'और बोलिए'],
+  'Phir boliye': ['Say again', 'फिर बोलिए'],
+  'Samajh rahe hain…': ['Working it out…', 'समझ रहे हैं…'],
+  'Boliye…': ['Speak…', 'बोलिए…'],
 }
