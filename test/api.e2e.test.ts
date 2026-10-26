@@ -432,6 +432,7 @@ describe('angoor on the website', () => {
       const text = String(payload.contents?.[0]?.parts?.[0]?.text ?? '');
       const said = (text.match(/# They typed\n([\s\S]*)$/)?.[1] ?? '').trim().toLowerCase();
       const lot = text.match(/\nLOT (l\d+) \| gaadi 3289 \| party Sai \| mark Royal/)?.[1];
+      if (said === 'web angoor grahak cash 5000 baaki udhaar') return { text: JSON.stringify({ transcript: said, kind: 'slip', say: 'Grahak', heard: 'Web Angoor Grahak', buyer_name: 'Web Angoor Grahak', slip: {}, pay: { mode: 'mixed', cash: 5000 } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'gaadi kahan') return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Gaadi', query: { sql: "SELECT gaadi_no, jagah, bika_dana AS bika_box FROM gaadi WHERE band IS NULL AND gaadi_no LIKE '%3289%'", title: 'Gaadi 3289' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'dispatch') return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Dispatch', query: { sql: `SELECT parchi_no, box, diye, baaki_box, haal, gaadi_no, jagah FROM dispatch WHERE parchi_no = ${b.slipNo}`, title: 'Dispatch' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       const reply = said.startsWith('cash')
@@ -447,6 +448,11 @@ describe('angoor on the website', () => {
       const manatOpt = v2.ask.options.find((o: any) => /HR26X1111/.test(o.label));
       const v3 = (await http().post(`${base}/voice`).set(web).send({ pick: manatOpt.value, session: 'ang2' }).expect(200)).body;
       expect(v3.draft).toMatchObject({ kind: 'parchi', pay: 'credit', buyer: { name: 'Web Angoor Grahak' }, lots: [{ truckId: manat, brandId: royal, qty: 3, ratePaise: 140000 }] });
+      // No boxes said at all: asked which quality (it used to fall over), then the form opens on it, boxes to fill.
+      const n1 = (await http().post(`${base}/voice`).set(web).send({ text: 'web angoor grahak cash 5000 baaki udhaar', session: 'ang5' }).expect(200)).body;
+      expect(n1.ask.question).toBe('Kaun si quality, kaun si gaadi?');
+      const n2 = (await http().post(`${base}/voice`).set(web).send({ pick: n1.ask.options.find((o: any) => /HR26X1111/.test(o.label)).value, session: 'ang5' }).expect(200)).body;
+      expect(n2.draft).toMatchObject({ kind: 'parchi', buyer: { name: 'Web Angoor Grahak' }, cashPaise: 500000, lots: [{ truckId: manat, brandId: royal, qty: 0 }] });
       // The floor, asked: where gaadi 3289 stands, and a slip's dispatch — said in boxes.
       const q1 = (await http().post(`${base}/voice`).set(web).send({ text: 'gaadi kahan', session: 'ang3' }).expect(200)).body;
       expect(q1.answer.rows[0]).toMatchObject({ gaadi_no: '3289', jagah: 'Pillar 321', bika_box: 25 });

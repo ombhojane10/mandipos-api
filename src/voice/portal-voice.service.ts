@@ -584,7 +584,9 @@ export class PortalVoiceService {
     const all = [...books.lots.values()];
     const pickedRef = d.lotRef && books.lots.has(d.lotRef) ? d.lotRef : undefined;
     const fallback = pickedRef ? books.lots.get(pickedRef) : all.length === 1 ? all[0] : undefined;
-    if (!fallback && lines.some((l) => !l.lot || !books.lots.has(l.lot))) {
+    // No line names its lot — or no boxes were said at all ("Manat, cash 5000, udhaar") — and more
+    // than one is open: asked once which, so the form opens on it.
+    if (!fallback && (!lines.length || lines.some((l) => !l.lot || !books.lots.has(l.lot)))) {
       if (!all.length) return { answer: 'Koi khuli gaadi nahi — pehle Nayi Gaadi jodein' };
       return this.ask(s, q, d, 'lot', 'choice', 'Kaun si quality, kaun si gaadi?',
         [...all.slice(0, 8).map((l, i) => ({ label: `${l.quality} · ${l.number} · ${l.supplier || '-'} · ${l.left.toLocaleString('en-IN')} baaki`, value: [...books.lots.keys()][i] })), CANCEL]);
@@ -592,10 +594,11 @@ export class PortalVoiceService {
     const base = this.draft({ ...r, slip: { ...(r.slip as object), lines: [] } } as Reply, books) as Record<string, unknown> & { notes: string[] };
     const buyer = d.buyerId ? [...books.buyers.values()].find((x) => x.id === d.buyerId) ?? null : null;
     const newName = titleCase(d.heard || String(r.buyer_name ?? ''));
-    const lots = (lines.length ? lines : [{ qty: 0 }]).map((l: { qty?: number; rate?: number; amount?: number; lot?: string }) => {
-      const lot = (l.lot && books.lots.get(l.lot)) || fallback!;
+    const lots = (lines.length ? lines : [{ qty: 0 }]).flatMap((l: { qty?: number; rate?: number; amount?: number; lot?: string }) => {
+      const lot = (l.lot && books.lots.get(l.lot)) || fallback;
+      if (!lot) return [];
       const qty = Math.round(l.qty ?? 0);
-      return { truckId: lot.truckId, brandId: lot.brandId, qty, ratePaise: paise(l.rate) || (l.amount && qty ? Math.round(paise(l.amount) / qty) : 0) };
+      return [{ truckId: lot.truckId, brandId: lot.brandId, qty, ratePaise: paise(l.rate) || (l.amount && qty ? Math.round(paise(l.amount) / qty) : 0) }];
     });
     const draft = {
       ...base, kind: 'parchi', truckId: null, lines: [], lots,
