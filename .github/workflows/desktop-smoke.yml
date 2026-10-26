@@ -37,8 +37,8 @@ jobs:
         run: |
           go install github.com/tc-hib/go-winres@v0.3.3
           go-winres make --in winres/winres.json --arch amd64 --product-version 0.0.0.1 --file-version 0.0.0.1
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=0.0.1" -o ..\app.exe .
-          go build -trimpath -ldflags "-X main.version=0.0.1" -o ..\app-console.exe .
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=dev" -o ..\app.exe .
+          go build -trimpath -ldflags "-X main.version=dev" -o ..\app-console.exe .
           ..\app-console.exe --version
 
       - name: Screenshot helper

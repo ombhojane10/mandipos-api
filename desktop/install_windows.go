@@ -99,10 +99,12 @@ func uninstall(dir string) int {
 	messageBox(appName+" hata diya gaya.", mbIconInfo)
 	// The folder holds this exe, so cmd removes it once this process is gone (and tries again
 	// while WebView2's helpers let go of their files).
+	// The line is handed to cmd as is: Go's own quoting (\") means nothing to cmd.
 	q := `"` + dir + `"`
-	cmd := exec.Command("cmd.exe", "/c", "ping -n 3 127.0.0.1 >nul & rmdir /s /q "+q+" & if exist "+q+" (ping -n 6 127.0.0.1 >nul & rmdir /s /q "+q+")")
+	cmd := exec.Command("cmd.exe")
 	cmd.Dir = os.TempDir()
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000,
+		CmdLine: "cmd.exe /c ping -n 3 127.0.0.1 >nul & rmdir /s /q " + q + " & if exist " + q + " (ping -n 6 127.0.0.1 >nul & rmdir /s /q " + q + ")"}
 	_ = cmd.Start()
 	return 0
 }
