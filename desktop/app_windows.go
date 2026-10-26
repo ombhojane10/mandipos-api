@@ -15,7 +15,6 @@ import (
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
-	"github.com/wailsapp/go-webview2/pkg/webview2"
 	"github.com/wailsapp/go-webview2/webviewloader"
 	"golang.org/x/sys/windows"
 )
@@ -107,7 +106,7 @@ type app struct {
 	exe    string
 	hwnd   uintptr
 	c      *edge.Chromium
-	wv     *webview2.ICoreWebView2
+	wv     uintptr // ICoreWebView2
 	ready  bool
 	origin string // scheme://host of the portal
 
@@ -274,7 +273,7 @@ func (a *app) open(runtimeVersion string) error {
 	c.MessageCallback = a.message
 	c.ProcessFailedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2ProcessFailedEventArgs) {
 		logf("webview process failed, reloading")
-		a.dispatch(func() { _ = a.wv.Reload() })
+		a.dispatch(func() { com(a.wv, wvReload) })
 	}
 	if !c.Embed(a.hwnd) {
 		return fmt.Errorf("WebView2 embed failed")
@@ -284,7 +283,7 @@ func (a *app) open(runtimeVersion string) error {
 	if err != nil {
 		return err
 	}
-	a.wv = (*webview2.ICoreWebView2)(unsafe.Pointer(ew))
+	a.wv = uintptr(unsafe.Pointer(ew))
 
 	if s, err := c.GetSettings(); err == nil {
 		_ = s.PutAreDevToolsEnabled(a.o.debug)
@@ -300,26 +299,14 @@ func (a *app) open(runtimeVersion string) error {
 	_ = c.PutIsSwipeNavigationEnabled(false)
 	c.SetBackgroundColour(0xf5, 0xf7, 0xea, 255)
 
-	h := &events{a: a}
-	keep = append(keep, h)
-	navStarting := webview2.NewICoreWebView2NavigationStartingEventHandler(h)
-	newWindow := webview2.NewICoreWebView2NewWindowRequestedEventHandler(h)
-	navCompleted := webview2.NewICoreWebView2NavigationCompletedEventHandler(h)
-	keep = append(keep, navStarting, newWindow, navCompleted)
-	if _, err := a.wv.AddNavigationStarting(navStarting); err != nil {
+	if err := on(a.wv, wvAddNavigationStarting, a.navigationStarting); err != nil {
 		return err
 	}
-	if _, err := a.wv.AddNewWindowRequested(newWindow); err != nil {
+	if err := on(a.wv, wvAddNewWindowRequested, a.newWindowRequested); err != nil {
 		return err
 	}
-	if _, err := a.wv.AddNavigationCompleted(navCompleted); err != nil {
+	if err := on(a.wv, wvAddNavigationCompleted, a.navigationCompleted); err != nil {
 		return err
-	}
-	// Newer runtimes ask before handing tel: etc. to Windows; the shell does it without the prompt.
-	if wv18 := a.wv.GetICoreWebView2_18(); wv18 != nil {
-		launching := webview2.NewICoreWebView2LaunchingExternalUriSchemeEventHandler(h)
-		keep = append(keep, launching)
-		_, _ = wv18.AddLaunchingExternalUriScheme(launching)
 	}
 
 	a.ready = true
@@ -446,59 +433,40 @@ func (a *app) external(uri string) {
 	}()
 }
 
-type events struct{ a *app }
-
-func (h *events) QueryInterface(_, _ uintptr) uintptr { return 0 }
-func (h *events) AddRef() uintptr                     { return 1 }
-func (h *events) Release() uintptr                    { return 1 }
-
-func (h *events) NavigationStarting(_ *webview2.ICoreWebView2, args *webview2.ICoreWebView2NavigationStartingEventArgs) uintptr {
-	uri, err := args.GetUri()
-	if err != nil || h.a.inside(uri) {
-		return 0
+func (a *app) navigationStarting(_, args uintptr) {
+	uri := comString(args, navStartingGetUri)
+	if a.inside(uri) {
+		return
 	}
-	_ = args.PutCancel(true)
-	h.a.external(uri)
-	return 0
+	com(args, navStartingPutCancel, boolArg(true))
+	a.external(uri)
 }
 
-func (h *events) NewWindowRequested(_ *webview2.ICoreWebView2, args *webview2.ICoreWebView2NewWindowRequestedEventArgs) uintptr {
-	uri, err := args.GetUri()
-	if err != nil || h.a.inside(uri) {
-		return 0 // a PDF opened from a blob: gets WebView2's own window, with print and save
+func (a *app) newWindowRequested(_, args uintptr) {
+	uri := comString(args, newWindowGetUri)
+	if a.inside(uri) {
+		return // a PDF opened from a blob: gets WebView2's own window, with print and save
 	}
-	_ = args.PutHandled(true)
-	h.a.external(uri)
-	return 0
+	com(args, newWindowPutHandled, boolArg(true))
+	a.external(uri)
 }
 
-func (h *events) LaunchingExternalUriScheme(_ *webview2.ICoreWebView2, args *webview2.ICoreWebView2LaunchingExternalUriSchemeEventArgs) uintptr {
-	uri, err := args.GetUri()
-	if err != nil {
-		return 0
-	}
-	_ = args.PutCancel(true)
-	h.a.external(uri)
-	return 0
-}
-
-func (h *events) NavigationCompleted(_ *webview2.ICoreWebView2, args *webview2.ICoreWebView2NavigationCompletedEventArgs) uintptr {
-	a := h.a
-	ok, _ := args.GetIsSuccess()
-	status, _ := args.GetWebErrorStatus()
-	src, _ := a.wv.GetSource()
+func (a *app) navigationCompleted(_, args uintptr) {
+	ok := comBool(args, navDoneGetIsSuccess)
+	status := comUint(args, navDoneGetWebError)
+	src := comString(a.wv, wvGetSource)
 	logf("loaded ok=%v status=%d %s", ok, status, src)
 	if !ok {
-		if status == webview2.COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
-			return 0
+		if status == webErrorCanceled {
+			return
 		}
 		if a.o.smoke != "" {
 			writeSmoke(a.o.smoke, map[string]interface{}{"error": fmt.Sprintf("load failed, status %d", status)})
 			os.Exit(3)
 		}
 		a.offline = true
-		_ = a.wv.NavigateToString(offlinePage(a.o.url, status))
-		return 0
+		navigateToString(a.wv, offlinePage(a.o.url, status))
+		return
 	}
 	if !a.shown {
 		a.shown = true
@@ -514,10 +482,9 @@ func (h *events) NavigationCompleted(_ *webview2.ICoreWebView2, args *webview2.I
 			}()
 		}
 	}
-	return 0
 }
 
-func offlinePage(target string, status webview2.COREWEBVIEW2_WEB_ERROR_STATUS) string {
+func offlinePage(target string, status uint32) string {
 	title := "Internet nahi hai"
 	switch status {
 	case 6, 7, 9, 10, 11, 12, 13: // unreachable, timeout, aborted, reset, disconnected, cannot connect, DNS
