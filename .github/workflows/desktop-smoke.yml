@@ -1,6 +1,8 @@
-# Runs the published MandiPlus Dashboard (Windows app, flavor 'desktop') on a Windows runner:
+# Runs MandiPlus Dashboard (desktop/, the Windows app, flavor 'desktop') on a Windows runner:
 # smoke test from inside the page, a real install with screenshots, and optionally a self-update
-# from the exe an earlier run kept. Started by hand: Actions → desktop-smoke → Run workflow.
+# from the exe an earlier run kept. Tests the published exe, or with build=true one built here
+# from this commit (plus a console copy, whose crashes show in the log).
+# Started by hand: Actions → desktop-smoke → Run workflow.
 name: desktop-smoke
 on:
   workflow_dispatch:
@@ -8,6 +10,10 @@ on:
       from_run:
         description: Run id whose app.exe to update from (blank skips the update test)
         required: false
+      build:
+        description: Build desktop/ at this commit instead of downloading the published exe
+        type: boolean
+        default: false
 permissions:
   actions: read
   contents: read
@@ -42,10 +48,31 @@ jobs:
           Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application\*\EBWebView' | Select-Object FullName
           [Environment]::OSVersion.VersionString
 
+      - uses: actions/checkout@v4
+        if: inputs.build
+      - uses: actions/setup-go@v5
+        if: inputs.build
+        with:
+          go-version: '1.20.14'
+          cache: false
+      - name: Build from source
+        if: inputs.build
+        working-directory: desktop
+        run: |
+          go install github.com/tc-hib/go-winres@v0.3.3
+          go-winres make --in winres/winres.json --arch amd64 --product-version 0.0.0.1 --file-version 0.0.0.1
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=0.0.1" -o ..\app.exe .
+          go build -trimpath -ldflags "-X main.version=0.0.1" -o ..\app-console.exe .
+          ..\app-console.exe --version
+
       - name: Download the published exe
+        if: ${{ !inputs.build }}
         run: |
           $r = Invoke-WebRequest 'https://mandipos-api.onrender.com/v1/public/app/download?flavor=desktop' -OutFile app.exe -PassThru
           "version: $($r.Headers['X-App-Version'])"
+
+      - name: About the exe
+        run: |
           (Get-FileHash app.exe).Hash
           (Get-Item app.exe).VersionInfo | Format-List ProductName, FileDescription, ProductVersion
           Copy-Item app.exe out\app.exe
@@ -53,12 +80,20 @@ jobs:
       - name: Smoke test
         run: |
           $p = Start-Process .\app.exe -ArgumentList '--smoke', "$PWD\out\smoke.json" -PassThru
-          for ($i = 0; $i -lt 150 -and -not (Test-Path out\smoke.json); $i++) { Start-Sleep 1 }
+          for ($i = 0; $i -lt 150 -and -not (Test-Path out\smoke.json) -and -not $p.HasExited; $i++) { Start-Sleep 1 }
+          "exited: $($p.HasExited) code: $(if ($p.HasExited) { $p.ExitCode })"
           Start-Sleep 4
           .\shot.ps1 out\print-preview.png
+          Get-Content "$env:LOCALAPPDATA\MandiPlus Dashboard\dashboard.log" -ErrorAction SilentlyContinue
           Get-Content out\smoke.json
           $p.WaitForExit(30000) | Out-Null
-          Get-Content "$env:LOCALAPPDATA\MandiPlus Dashboard\dashboard.log" -ErrorAction SilentlyContinue
+
+      - name: Console copy (crash output)
+        if: failure() && inputs.build
+        run: |
+          $p = Start-Process .\app-console.exe -ArgumentList '--smoke', "$PWD\out\smoke-console.json", '--home', "$PWD\out\console-home" -PassThru -RedirectStandardOutput out\console-stdout.txt -RedirectStandardError out\console-stderr.txt
+          $p.WaitForExit(150000) | Out-Null
+          Get-Content out\console-stdout.txt, out\console-stderr.txt, out\console-home\dashboard.log -ErrorAction SilentlyContinue
 
       - name: Install like a shop owner
         run: |
