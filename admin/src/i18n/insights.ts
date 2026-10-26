@@ -215,4 +215,8 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'Phir boliye': ['Say again', 'फिर बोलिए'],
   'Samajh rahe hain…': ['Working it out…', 'समझ रहे हैं…'],
   'Boliye…': ['Speak…', 'बोलिए…'],
+  'Gaadi mein itne box nahi': ['Not that many boxes on the gaadi', 'गाड़ी में इतने बॉक्स नहीं'],
+  '{what}: {left} box baaki, {q} likhe ({n} zyada)': ['{what}: {left} boxes left, {q} written ({n} over)', '{what}: {left} बॉक्स बाकी, {q} लिखे ({n} ज़्यादा)'],
+  'Phir bhi save': ['Save anyway', 'फिर भी सेव'],
+  'Phir bhi save karna hai to dobara Save dabaiye': ['To save anyway, press Save again', 'फिर भी सेव करना है तो दोबारा Save दबाइए'],
 }

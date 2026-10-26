@@ -103,10 +103,28 @@ export function AngoorParchiForm({ shopId, o, editing, draft, onClose, onDone }:
     if (b?.id) { setAddress(b.address ?? ''); setStand(b.destination ?? '') }
   }
 
+  // Overbooking: more boxes than a gaadi shows. Taken (orders run ahead of the count), but warned
+  // first — each quality with what is left (a slip being changed gets its own boxes back).
+  const over = (() => {
+    const want = new Map<string, number>()
+    for (const l of lines) if (l.qty > 0 && lot(l.key)) want.set(l.key, (want.get(l.key) ?? 0) + l.qty)
+    return [...want].flatMap(([key, q]) => {
+      const c = lot(key)!
+      const own = (editing?.lines ?? []).filter((x) => x.truckId && x.brandId && keyOf(x.truckId, x.brandId) === key).reduce((s, x) => s + x.qty, 0)
+      const left = c.left + own
+      return q > left && (c.number || own === 0) ? [{ what: [c.quality, c.number].filter(Boolean).join(' · '), left: Math.max(0, left), q }] : []
+    })
+  })()
+  const overSig = over.map((x) => `${x.what}:${x.q}`).join('|')
+  const [warned, setWarned] = useState('')
+  const warning = !!overSig && warned === overSig
+
   const title = editing ? t('Parchi #{n} badlein', { n: String(editing.slipNo ?? '') }) : t('Nayi Parchi')
   return (
-    <Sheet title={title} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
+    <Sheet title={title} onClose={onClose} saving={saving} error={error}
+      saveLabel={warning ? `${t('Phir bhi save')} · ${rupees(total)}` : total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
       onSave={() => {
+        if (overSig && warned !== overSig) { setError(''); setWarned(overSig); return }
         const filled = lines.filter((l) => l.qty > 0 && lot(l.key))
         if (!filled.length) return setError(t('Quality aur box daalein'))
         if (!free && walkIn && (credit || (pay === 'split' && cash + upi < total))) return setError(t('Udhaar ke liye grahak chunein'))
@@ -185,6 +203,13 @@ export function AngoorParchiForm({ shopId, o, editing, draft, onClose, onDone }:
         <Field label={t('Accountant')}><input className="field" value={staff} maxLength={60} placeholder="Website" onChange={(e) => setStaff(e.target.value)} /></Field>
         <Field label={t('Parchi no.')}><input className="field" inputMode="numeric" value={slipNo} placeholder={t('Agla')} disabled={!!editing} onChange={(e) => setSlipNo(e.target.value.replace(/\D/g, '').slice(0, 7))} /></Field>
       </div>
+      {warning && (
+        <div className="overbook" role="alert">
+          <b>{t('Gaadi mein itne box nahi')}</b>
+          {over.map((x) => <div key={x.what}>{t('{what}: {left} box baaki, {q} likhe ({n} zyada)', { what: x.what, left: count(x.left), q: count(x.q), n: count(x.q - x.left) })}</div>)}
+          <small>{t('Phir bhi save karna hai to dobara Save dabaiye')}</small>
+        </div>
+      )}
       {apmc > 0 && <div className="total-line"><span>APMC 1%</span><b className="money">{rupees(apmc)}</b></div>}
       <div className="total-line"><span>{t('{n} box', { n: count(boxes) })}</span><b className="money">{free ? t('Free') : rupees(total)}</b>
         {pay === 'split' && total > cash + upi && <span className="due">{t('Udhaar')} {rupees(total - cash - upi)}</span>}</div>

@@ -181,6 +181,7 @@ function DraftCard({ d, shopId, savedAs, onSaved }: { d: VoiceDraft; shopId: str
       {plan?.rows.map((x, i) => <div key={i} className="bc-line"><span>{x[0]}</span><b>{x[1]}</b></div>)}
       {plan && plan.total !== null && <div className="bc-line total"><span>{t('Kul')}</span><b>{rupees(plan.total)}</b></div>}
       {d.notes.length > 0 && !savedAs && <p className="bc-note">{d.notes.join(' · ')}</p>}
+      {!savedAs && plan?.over?.length ? <div className="bc-over"><b>{t('Gaadi mein itne box nahi')}</b>{plan.over.map((x) => <div key={x}>{x}</div>)}</div> : null}
       {error && <p className="bc-error">{error}</p>}
       {savedAs
         ? <div className="bc-saved"><Tick />{t('{what} {no} save hui', { what: plan?.noun ?? t('Entry'), no: savedAs === '✓' ? '' : savedAs })}</div>
@@ -188,7 +189,7 @@ function DraftCard({ d, shopId, savedAs, onSaved }: { d: VoiceDraft; shopId: str
           <div className="bc-card-ft">
             <button type="button" className="bc-btn" onClick={() => openDraft(d)}>{t('Badlein')}</button>
             <button type="button" className="bc-btn primary" disabled={!plan?.ready || saving} title={plan && !plan.ready ? plan.missing : undefined} onClick={() => void save()}>
-              {saving ? '…' : plan && !plan.ready ? plan.missing : t('Save')}
+              {saving ? '…' : plan && !plan.ready ? plan.missing : plan?.over?.length ? t('Phir bhi save') : t('Save')}
             </button>
           </div>
         )}
@@ -196,7 +197,7 @@ function DraftCard({ d, shopId, savedAs, onSaved }: { d: VoiceDraft; shopId: str
   )
 }
 
-type Plan = { title: string; noun: string; tag: string; tagTone: string; rows: [string, string][]; total: number | null; ready: boolean; missing: string; path: string; body: unknown }
+type Plan = { title: string; noun: string; tag: string; tagTone: string; rows: [string, string][]; total: number | null; ready: boolean; missing: string; path: string; body: unknown; over?: string[] }
 
 const PAY: Record<string, [string, string]> = { cash: ['Cash', 'green'], upi: ['UPI', 'blue'], credit: ['Udhaar', 'amber'], after: ['Baad mein', 'amber'], split: ['Kuch', 'amber'], free: ['Free', 'grey'] }
 
@@ -258,9 +259,14 @@ function planOf(d: VoiceDraft, o: Options): Plan {
       packing: d.packing === 'katta' ? (d.size ?? 'katta10') : d.packing === 'panni' ? 'panni' : 'loose',
       panniName: d.panni || undefined, kattaName: d.kattaName || undefined, parchune: d.parchune || undefined, labour: d.labour || undefined,
     }
+  // Grapes overbooking: more boxes than the gaadi shows — warned on the card, still savable.
+  const over = angoor ? d.lots!.flatMap((l) => {
+    const lot = o.lots?.find((x) => x.truckId === l.truckId && x.brandId === l.brandId)
+    return lot && l.qty > lot.left ? [t('{what}: {left} box baaki, {q} likhe ({n} zyada)', { what: `${lot.quality} · ${lot.number}`, left: count(Math.max(0, lot.left)), q: count(l.qty), n: count(l.qty - Math.max(0, lot.left)) })] : []
+  }) : []
   return {
     title: buyer?.name ?? t('Cash grahak'), noun: t('Parchi'), tag, tagTone: tone, rows, total: goods + apmc + labour,
-    ready: !missing, missing, path: '/entries/parchi', body,
+    ready: !missing, missing, path: '/entries/parchi', body, over,
   }
 }
 

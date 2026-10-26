@@ -1213,3 +1213,9 @@ button.chip { border: 0; cursor: pointer; }
 @media (hover: none), (max-width: 899px) { .vb-keys { display: none; } }
 @media (max-width: 899px) { .vb-orb { width: 190px; height: 190px; } .vb .vb-main { width: 100%; max-width: 420px; } }
 @media (prefers-reduced-motion: reduce) { .vb, .vb-center, .vb-ring { animation: none !important; } }
+
+/* Grapes overbooking: more boxes than the gaadi shows — taken, but said plainly first. */
+.overbook { border: 1px solid #e3b25c; background: #fdf3df; color: #7a4a00; padding: 10px 12px; display: grid; gap: 3px; font-size: 13px; }
+.overbook b { font-size: 13.5px; }
+.overbook small { color: #8a5a00; margin-top: 2px; }
+.bc .bc-over { display: grid; gap: 2px; padding: 10px 12px; margin-top: 4px; background: #fdf3df; border: 1px solid #efcf8f; border-radius: 12px !important; color: #7a4a00; font-size: 13.5px; }
