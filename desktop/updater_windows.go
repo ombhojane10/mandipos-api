@@ -202,7 +202,8 @@ func (a *app) onUpdateMessage(m string) bool {
 		a.mu.Unlock()
 		if ready {
 			logf("update: applying %s (button)", a.updVersion)
-			a.restart(false)
+			// After this callback returns: wails still answers the message on this webview.
+			a.dispatch(func() { a.restart(false) })
 		}
 	default:
 		return false
