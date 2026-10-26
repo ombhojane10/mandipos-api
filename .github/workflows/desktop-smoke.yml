@@ -149,7 +149,8 @@ jobs:
 
           mkdir btn | Out-Null; Copy-Item v090.exe btn\app.exe
           $p = Start-Process btn\app.exe -ArgumentList '--update-ui', "$PWD\out\update-ui.json", '--home', "$PWD\btn\home", '--api', 'http://127.0.0.1:8765' -PassThru
-          Start-Sleep 9
+          for ($i = 0; $i -lt 90 -and -not (Test-Path out\update-ui.json.before.json); $i++) { Start-Sleep 1 }
+          Start-Sleep 2
           .\shot.ps1 out\update-button.png
           for ($i = 0; $i -lt 90 -and -not (Test-Path out\update-ui.json); $i++) { Start-Sleep 1 }
           "--- by the button"

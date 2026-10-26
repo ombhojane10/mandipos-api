@@ -125,7 +125,7 @@ const updateUIScript = `(async () => {
     if (t !== seen[seen.length - 1]) seen.push(t)
   }
   chrome.webview.postMessage('uitest:' + JSON.stringify({ seen, state: btn().dataset.state }))
-  await wait(1000)
+  await wait(6000) // for the screenshot
   btn().click()
 })()`
 

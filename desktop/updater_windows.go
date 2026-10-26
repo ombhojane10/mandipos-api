@@ -173,6 +173,9 @@ func (a *app) restart(quiet bool) {
 		args = append(args, "--quiet")
 	}
 	a.restartArgs = args
+	// The closing window must not call into WebView2: wails exits the process on any error.
+	a.ready = false
+	a.c.ShuttingDown()
 	pDestroyWindow.Call(a.hwnd)
 }
 

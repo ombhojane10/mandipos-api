@@ -350,7 +350,9 @@ func (a *app) open(runtimeVersion string) error {
 	a.ready = true
 	a.followDpi()
 	c.Resize()
-	a.focus()
+	if !a.o.quiet {
+		a.focus()
+	}
 	c.Navigate(a.o.url)
 	logf("opening %s", a.o.url)
 	return nil
@@ -399,6 +401,12 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		}
 		return 0
 	case wmClose:
+		if a != nil {
+			a.ready = false
+			if a.c != nil {
+				a.c.ShuttingDown()
+			}
+		}
 		pDestroyWindow.Call(hwnd)
 		return 0
 	case wmDestroy:
