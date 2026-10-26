@@ -111,6 +111,12 @@ type app struct {
 	mu    sync.Mutex
 	queue []func()
 
+	// self-update (updater_windows.go)
+	upd         string
+	updVersion  string
+	checking    bool
+	restartArgs []string
+
 	// --smoke
 	smokeStarted bool
 	externals    []string
@@ -144,6 +150,7 @@ func run(o options) int {
 			return 0
 		}
 	}
+	restarting = o.restarted
 	if !o.test() && !singleInstance() {
 		return 0
 	}
@@ -182,8 +189,8 @@ func run(o options) int {
 		logf("window: %v", err)
 		return 1
 	}
-	if !o.test() && version != "dev" {
-		go updateLoop(dir, exe)
+	if version != "dev" && (!o.test() || o.updateUI != "") {
+		go a.updateLoop()
 	}
 	var m msg
 	for {
@@ -205,12 +212,37 @@ func crashesTo(f *os.File) {
 	_ = windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd()))
 }
 
+var (
+	instance   uintptr // the single-instance mutex
+	restarting bool    // --restarted
+)
+
+func releaseInstance() {
+	if instance != 0 {
+		windows.CloseHandle(windows.Handle(instance))
+		instance = 0
+	}
+}
+
 // singleInstance: a second start brings the open window forward instead.
 func singleInstance() bool {
 	name, _ := windows.UTF16PtrFromString("Local\\" + className)
-	_, _, err := pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	h, _, err := pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
 	if err != windows.ERROR_ALREADY_EXISTS {
+		instance = h
 		return true
+	}
+	// Just restarted for an update: the previous window may still be closing.
+	if the == nil && restarting {
+		for i := 0; i < 20; i++ {
+			time.Sleep(250 * time.Millisecond)
+			windows.CloseHandle(windows.Handle(h))
+			h, _, err = pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
+			if err != windows.ERROR_ALREADY_EXISTS {
+				instance = h
+				return true
+			}
+		}
 	}
 	cls, _ := windows.UTF16PtrFromString(className)
 	if h, _, _ := pFindWindowW.Call(uintptr(unsafe.Pointer(cls)), 0); h != 0 {
@@ -246,7 +278,11 @@ func (a *app) open(runtimeVersion string) error {
 	if a.hwnd == 0 {
 		return fmt.Errorf("CreateWindowEx failed")
 	}
-	pShowWindow.Call(a.hwnd, swShowMaximized)
+	if a.o.quiet {
+		showQuietly(a.hwnd)
+	} else {
+		pShowWindow.Call(a.hwnd, swShowMaximized)
+	}
 	pUpdateWindow.Call(a.hwnd)
 	logf("window up, starting WebView2")
 
@@ -366,6 +402,10 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		pDestroyWindow.Call(hwnd)
 		return 0
 	case wmDestroy:
+		if a != nil && a.restartArgs != nil {
+			releaseInstance()
+			start(a.exe, a.restartArgs...)
+		}
 		pPostQuitMessage.Call(0)
 		return 0
 	}
@@ -480,6 +520,10 @@ func (a *app) navigationCompleted(_, args uintptr) {
 				time.Sleep(4 * time.Second)
 				a.dispatch(func() { a.c.Eval(smokeScript) })
 			}()
+		}
+		if a.o.updateUI != "" && !a.smokeStarted {
+			a.smokeStarted = true
+			a.updateUITest(src)
 		}
 		if a.o.typing != "" && !a.smokeStarted {
 			a.smokeStarted = true

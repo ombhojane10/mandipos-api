@@ -29,7 +29,7 @@ type release struct {
 var client = &http.Client{Timeout: 10 * time.Minute}
 
 func latest(ctx context.Context) (*release, error) {
-	req, _ := http.NewRequestWithContext(ctx, "GET", apiBase+"/v1/public/app", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", apiBase()+"/v1/public/app", nil)
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -96,45 +96,63 @@ func writePending(dir string, p *pending) {
 	_ = os.WriteFile(pendingPath(dir), b, 0o644)
 }
 
-// checkUpdate puts a newer published build in place of exe. It returns the version put in place,
-// or "" when there is nothing newer.
-func checkUpdate(ctx context.Context, dir, exe string, force bool) (string, error) {
+// findUpdate returns the newer published build, or nil when this one is the newest (or the newer
+// one is already in place, or failed here before and force is off).
+func findUpdate(ctx context.Context, dir string, force bool) (*release, error) {
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
 	rel, err := latest(c)
 	cancel()
 	if err != nil || rel == nil || !newer(rel.VersionName, version) {
-		return "", err
+		return nil, err
 	}
 	if skip, _ := os.ReadFile(skipPath(dir)); !force && strings.TrimSpace(string(skip)) == rel.VersionName {
-		return "", nil
+		return nil, nil
 	}
+	return rel, nil
+}
+
+// stage downloads rel and puts it in place of exe; the next start runs it.
+func stage(ctx context.Context, dir, exe string, rel *release) error {
 	if p := readPending(dir); p != nil && p.To == rel.VersionName {
-		return "", nil // already in place, waiting for a restart
+		return nil // already in place
 	}
 	logf("update: %s → %s, downloading", version, rel.VersionName)
 	part := exe + ".part"
 	if err := download(ctx, part, rel); err != nil {
 		_ = os.Remove(part)
-		return "", err
+		return err
 	}
 	old := exe + ".old"
 	_ = os.Remove(old)
 	// Windows lets a running exe be renamed, not overwritten.
 	if err := os.Rename(exe, old); err != nil {
 		_ = os.Remove(part)
-		return "", err
+		return err
 	}
 	if err := os.Rename(part, exe); err != nil {
 		_ = os.Rename(old, exe)
-		return "", err
+		return err
 	}
 	writePending(dir, &pending{From: version, To: rel.VersionName})
-	logf("update: %s in place, runs from the next start", rel.VersionName)
+	logf("update: %s in place", rel.VersionName)
+	return nil
+}
+
+// checkUpdate puts a newer published build in place of exe. It returns the version put in place,
+// or "" when there is nothing newer.
+func checkUpdate(ctx context.Context, dir, exe string, force bool) (string, error) {
+	rel, err := findUpdate(ctx, dir, force)
+	if err != nil || rel == nil {
+		return "", err
+	}
+	if err := stage(ctx, dir, exe, rel); err != nil {
+		return "", err
+	}
 	return rel.VersionName, nil
 }
 
 func download(ctx context.Context, path string, rel *release) error {
-	req, _ := http.NewRequestWithContext(ctx, "GET", apiBase+"/v1/public/app/download?flavor=desktop", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", apiBase()+"/v1/public/app/download?flavor=desktop", nil)
 	res, err := client.Do(req)
 	if err != nil {
 		return err
@@ -204,17 +222,4 @@ func confirmUpdate(dir, exe string) {
 	}
 	_ = os.Remove(exe + ".old")
 	_ = os.Remove(exe + ".bad")
-}
-
-// updateLoop checks shortly after start and then every six hours.
-func updateLoop(dir, exe string) {
-	time.Sleep(20 * time.Second)
-	for {
-		if v, err := checkUpdate(context.Background(), dir, exe, false); err != nil {
-			logf("update check: %v", err)
-		} else if v != "" {
-			return
-		}
-		time.Sleep(6 * time.Hour)
-	}
 }

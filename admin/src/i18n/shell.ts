@@ -25,6 +25,13 @@ export const SHELL: Record<string, readonly [string, string]> = {
   'Shortcuts': ['Shortcuts', 'शॉर्टकट'],
   'Settings': ['Settings', 'सेटिंग्स'],
   'Logout': ['Logout', 'लॉगआउट'],
+  // The Windows app's update button
+  'Update check karein': ['Check for update', 'अपडेट देखें'],
+  'Check ho raha hai…': ['Checking…', 'देख रहे हैं…'],
+  'Sabse naya version hai': ['Up to date', 'सबसे नया वर्ज़न है'],
+  'Download ho raha hai…': ['Downloading…', 'डाउनलोड हो रहा है…'],
+  'Update karein': ['Update now', 'अपडेट करें'],
+  'Update nahi hua, phir try karein': ['Update failed, try again', 'अपडेट नहीं हुआ, फिर कोशिश करें'],
   'Home': ['Home', 'होम'],
   'Nayi entry': ['New entry', 'नई एंट्री'],
   'Go To': ['Go To', 'जाएँ'],

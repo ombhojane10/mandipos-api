@@ -59,6 +59,15 @@ const typingReport = `chrome.webview.postMessage('typing:' + JSON.stringify({
   values: [...document.querySelectorAll('input')].map((i) => i.value) }))`
 
 func (a *app) message(m string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
+	if a.onUpdateMessage(m) {
+		return
+	}
+	if a.o.updateUI != "" && strings.HasPrefix(m, "uitest:") {
+		var page map[string]interface{}
+		_ = json.Unmarshal([]byte(strings.TrimPrefix(m, "uitest:")), &page)
+		writeSmoke(a.o.updateUI+".before.json", map[string]interface{}{"shell": version, "page": page})
+		return
+	}
 	if a.o.typing != "" && strings.HasPrefix(m, "typing:") {
 		var page map[string]interface{}
 		_ = json.Unmarshal([]byte(strings.TrimPrefix(m, "typing:")), &page)
@@ -99,4 +108,31 @@ func writeSmoke(path string, v map[string]interface{}) {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	_ = os.WriteFile(path+".tmp", b, 0o644)
 	_ = os.Rename(path+".tmp", path)
+}
+
+// --update-ui <file>: on the login page, press the portal's update button, follow its text until
+// the update is ready, press it again. The restarted build then writes <file> and exits.
+const updateUIScript = `(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const btn = () => document.querySelector('[data-desktop-update]')
+  for (let i = 0; i < 60 && !btn(); i++) await wait(500)
+  if (!btn()) { chrome.webview.postMessage('uitest:' + JSON.stringify({ error: 'no update button' })); return }
+  const seen = [btn().textContent]
+  btn().click()
+  for (let i = 0; i < 240 && btn().dataset.state !== 'ready'; i++) {
+    await wait(250)
+    const t = btn().textContent
+    if (t !== seen[seen.length - 1]) seen.push(t)
+  }
+  chrome.webview.postMessage('uitest:' + JSON.stringify({ seen, state: btn().dataset.state }))
+  await wait(1000)
+  btn().click()
+})()`
+
+func (a *app) updateUITest(src string) {
+	if a.o.restarted {
+		writeSmoke(a.o.updateUI, map[string]interface{}{"shell": version, "url": src, "quiet": a.o.quiet})
+		os.Exit(0)
+	}
+	a.c.Eval(updateUIScript)
 }

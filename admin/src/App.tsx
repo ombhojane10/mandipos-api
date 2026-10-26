@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { api, APP_DOWNLOAD, getToken, inApp, setToken, whenSignedOut, type Me, type Shop } from './api'
+import { UpdateButton, UpdateReady } from './DesktopUpdate'
 import { Login } from './pages/Login'
 import { GoTo } from './GoTo'
 import { href, parse, periodQuery, type Report, type Route } from './routes'
@@ -270,6 +271,7 @@ export default function App() {
               </a>
             )}
             {!inApp() && <a href={APP_DOWNLOAD} className="hide-lg"><span>📱 {t('App download')}</span></a>}
+            <UpdateButton />
             <button type="button" onClick={signOut}><I.ILogout /><span>{t('Logout')}</span><small className="inline">{me ? phone(me.phone) : ''}</small></button>
           </div>
         </aside>
@@ -281,6 +283,7 @@ export default function App() {
             <h1>{title}</h1>
           </div>
           <span className="spacer" />
+          <UpdateReady />
           <span className="top-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).replace(/ (\w{3}) /, '-$1-')}</span>
           {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
           {shopId && shop?.commodity === 'angoor' && <button className="export-btn scan-btn" onClick={() => openScan(shopId)} aria-label={t('Scan')}><I.IScan /><span>{t('Scan')}</span></button>}

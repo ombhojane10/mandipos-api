@@ -10,13 +10,24 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 const (
 	appName = "MandiPlus Dashboard"
 	portal  = "https://mandipos-admin.onrender.com/"
-	apiBase = "https://mandipos-api.onrender.com"
+	liveAPI = "https://mandipos-api.onrender.com"
 )
+
+// apiOverride is --api: a stand-in update server for tests.
+var apiOverride string
+
+func apiBase() string {
+	if apiOverride != "" {
+		return trimSlash(apiOverride)
+	}
+	return liveAPI
+}
 
 // version is set at build time (-X main.version=x.y.z).
 var version = "dev"
@@ -28,12 +39,16 @@ type options struct {
 	smoke     string // load the portal, write what the page can do to this file, exit
 	updateNow string // check for a newer shell now, write the outcome to this file, exit
 	typing    string // log the keys the page gets for 40 s, write them to this file, exit
+	updateUI  string // press the portal's update button through to the restart, result to this file
+	restarted bool   // started by the previous version after an update (or by an update test)
+	quiet     bool   // start minimized without taking focus (an update applied in the background)
+	autoAfter time.Duration
 	uninstall bool
 	url       string
 }
 
 // test: a run driven by the smoke workflow, not a shop owner.
-func (o options) test() bool { return o.smoke != "" || o.typing != "" }
+func (o options) test() bool { return o.smoke != "" || o.typing != "" || o.updateUI != "" }
 
 func parseFlags() options {
 	var o options
@@ -43,6 +58,11 @@ func parseFlags() options {
 	flag.StringVar(&o.smoke, "smoke", "", "smoke test, results to this file")
 	flag.StringVar(&o.updateNow, "update-now", "", "update check, outcome to this file")
 	flag.StringVar(&o.typing, "typing", "", "keyboard test, results to this file")
+	flag.StringVar(&o.updateUI, "update-ui", "", "update button test, result to this file")
+	flag.StringVar(&apiOverride, "api", "", "update server (tests)")
+	flag.BoolVar(&o.restarted, "restarted", false, "")
+	flag.BoolVar(&o.quiet, "quiet", false, "")
+	flag.DurationVar(&o.autoAfter, "auto-apply-after", 0, "background time before a ready update is applied (tests)")
 	flag.BoolVar(&o.uninstall, "uninstall", false, "remove shortcuts and data")
 	flag.StringVar(&o.url, "url", portal, "page to open")
 	showVersion := flag.Bool("version", false, "print the version")

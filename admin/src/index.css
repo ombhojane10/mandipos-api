@@ -854,6 +854,8 @@ a.vc-row:hover { background: var(--accent-soft); }
 /* The app download, offered in a browser only. */
 .login { display: grid; place-items: center; align-content: center; gap: 14px; }
 .app-link { color: var(--accent); font-weight: 700; text-decoration: underline; }
+.update-link { background: none; border: 0; font: inherit; cursor: pointer; display: flex; gap: 8px; align-items: baseline; margin: 14px auto 0; }
+.update-link small { color: var(--muted); font-weight: 400; }
 @media (min-width: 900px) { .hide-lg { display: none !important; } }
 
 /* WhatsApp: the message as the grahak will read it. */
