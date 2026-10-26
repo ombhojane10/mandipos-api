@@ -92,12 +92,24 @@ jobs:
           Get-Content out\smoke.json
           $p.WaitForExit(30000) | Out-Null
 
+      - name: Old exe from an earlier run
+        if: inputs.from_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-smoke
+          path: old
+          run-id: ${{ inputs.from_run }}
+          github-token: ${{ github.token }}
+
       - name: Typing
         run: |
           # Real keyboard input (SendKeys), with a trip to Notepad in between: activation must
           # hand the keyboard back to the page. Never Enter: no OTP goes out.
-          $a = if ('${{ inputs.plain_typing }}' -eq 'true') { @('--no-install') } else { @('--typing', "$PWD\out\typing.json") }
-          $p = Start-Process .\app.exe -ArgumentList ($a + @('--home', "$PWD\out\typing-home")) -PassThru
+          [string[]]$a = if ('${{ inputs.plain_typing }}' -eq 'true') { '--no-install' } else { '--typing', "$PWD\out\typing.json" }
+          # A plain run types into the exe kept by from_run when there is one (the published one has moved on).
+          $exe = if ('${{ inputs.plain_typing }}' -eq 'true' -and (Test-Path old\app.exe)) { 'old\app.exe' } else { 'app.exe' }
+          "typing into $exe $((Get-Item $exe).VersionInfo.ProductVersion)"
+          $p = Start-Process $exe -ArgumentList ($a + '--home' + "$PWD\out\typing-home") -PassThru
           Start-Sleep 12
           $w = New-Object -ComObject WScript.Shell
           $w.AppActivate($p.Id) | Out-Null; Start-Sleep 1
@@ -146,15 +158,6 @@ jobs:
           "uninstall exited: $($u.WaitForExit(10000))"
           Start-Sleep 12
           "after uninstall: desktop lnk $(Test-Path "$([Environment]::GetFolderPath('Desktop'))\MandiPlus Dashboard.lnk"), start lnk $(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\MandiPlus Dashboard.lnk"), reg $(Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MandiPlusDashboard'), folder $(Test-Path $d)"
-
-      - name: Old exe from an earlier run
-        if: inputs.from_run != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-smoke
-          path: old
-          run-id: ${{ inputs.from_run }}
-          github-token: ${{ github.token }}
 
       - name: Self-update
         if: inputs.from_run != ''
