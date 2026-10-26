@@ -5,7 +5,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { parse } from '../common/validate';
 import { Db } from '../db/db.service';
 
-const FLAVORS = ['pos', 'daybook', 'tally', 'admin'] as const;
+const FLAVORS = ['pos', 'daybook', 'tally', 'admin', 'desktop'] as const;
 type Flavor = (typeof FLAVORS)[number];
 
 const LatestQuery = z.object({ flavor: z.enum(FLAVORS) });
@@ -21,6 +21,8 @@ const FILES: Record<Flavor, { name: (v: string) => string; type: string }> = {
   tally: { name: (v) => `MandiTally-${v}-windows.zip`, type: 'application/zip' },
   // The owners' app: the admin portal as an Android app.
   admin: { name: (v) => `MandiPlus-Admin-${v}.apk`, type: 'application/vnd.android.package-archive' },
+  // The owners' Windows app: one exe that installs itself and opens the admin portal.
+  desktop: { name: (v) => `MandiPlus-Dashboard-${v}.exe`, type: 'application/vnd.microsoft.portable-executable' },
 };
 
 /** Published APKs, read the same way by the terminals updating themselves and by the download page. */
@@ -99,10 +101,10 @@ export class PublicReleasesController {
   /** The newest release of every flavor, with when it went out. */
   @Get()
   async releases(@Res({ passthrough: true }) res: Response) {
-    const [pos, daybook, tally, admin] = await Promise.all(FLAVORS.map((f) => this.store.latest(f)));
+    const [pos, daybook, tally, admin, desktop] = await Promise.all(FLAVORS.map((f) => this.store.latest(f)));
     res.set('Cache-Control', 'public, max-age=60');
     const shown = (r: Release | null) => (r ? { ...describe(r), publishedAt: r.created_at.toISOString() } : null);
-    return { pos: shown(pos), daybook: shown(daybook), tally: shown(tally), admin: shown(admin) };
+    return { pos: shown(pos), daybook: shown(daybook), tally: shown(tally), admin: shown(admin), desktop: shown(desktop) };
   }
 
   /** The newest APK of the flavor, saved under a name that says what it is. */

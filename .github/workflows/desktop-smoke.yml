@@ -1,0 +1,111 @@
+# Runs the published MandiPlus Dashboard (Windows app, flavor 'desktop') on a Windows runner:
+# smoke test from inside the page, a real install with screenshots, and optionally a self-update
+# from the exe an earlier run kept. Started by hand: Actions → desktop-smoke → Run workflow.
+name: desktop-smoke
+on:
+  workflow_dispatch:
+    inputs:
+      from_run:
+        description: Run id whose app.exe to update from (blank skips the update test)
+        required: false
+permissions:
+  actions: read
+  contents: read
+jobs:
+  smoke:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Screenshot helper
+        run: |
+          @'
+          param($out)
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+          $bmp.Save($out)
+          '@ | Set-Content shot.ps1
+          mkdir out | Out-Null
+
+      - name: WebView2 runtime
+        run: |
+          $k = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          if (-not (Test-Path $k)) {
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile wv2.exe
+            Start-Process .\wv2.exe -ArgumentList '/silent', '/install' -Wait
+          }
+          "runtime: $((Get-ItemProperty $k).pv)"
+          Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application\*\EBWebView' | Select-Object FullName
+          [Environment]::OSVersion.VersionString
+
+      - name: Download the published exe
+        run: |
+          $r = Invoke-WebRequest 'https://mandipos-api.onrender.com/v1/public/app/download?flavor=desktop' -OutFile app.exe -PassThru
+          "version: $($r.Headers['X-App-Version'])"
+          (Get-FileHash app.exe).Hash
+          (Get-Item app.exe).VersionInfo | Format-List ProductName, FileDescription, ProductVersion
+          Copy-Item app.exe out\app.exe
+
+      - name: Smoke test
+        run: |
+          $p = Start-Process .\app.exe -ArgumentList '--smoke', "$PWD\out\smoke.json" -PassThru
+          for ($i = 0; $i -lt 150 -and -not (Test-Path out\smoke.json); $i++) { Start-Sleep 1 }
+          Start-Sleep 4
+          .\shot.ps1 out\print-preview.png
+          Get-Content out\smoke.json
+          $p.WaitForExit(30000) | Out-Null
+          Get-Content "$env:LOCALAPPDATA\MandiPlus Dashboard\dashboard.log" -ErrorAction SilentlyContinue
+
+      - name: Install like a shop owner
+        run: |
+          Start-Process .\app.exe
+          Start-Sleep 30
+          .\shot.ps1 out\window.png
+          $d = "$env:LOCALAPPDATA\MandiPlus Dashboard"
+          Get-ChildItem $d | Select-Object Name, Length
+          Test-Path "$([Environment]::GetFolderPath('Desktop'))\MandiPlus Dashboard.lnk"
+          Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\MandiPlus Dashboard.lnk"
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MandiPlusDashboard' | Select-Object DisplayName, DisplayVersion, UninstallString
+          Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' -or $_.Path -like '*app.exe' } | Select-Object Id, Path
+          Start-Process .\app.exe
+          Start-Sleep 5
+          "processes after a second start: $((Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' }).Count)"
+          Get-Content "$d\dashboard.log"
+          Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' } | Stop-Process -Force
+
+      - name: Old exe from an earlier run
+        if: inputs.from_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-smoke
+          path: old
+          run-id: ${{ inputs.from_run }}
+          github-token: ${{ github.token }}
+
+      - name: Self-update
+        if: inputs.from_run != ''
+        run: |
+          mkdir upd | Out-Null
+          Copy-Item old\app.exe upd\app.exe
+          "before: $((Get-Item upd\app.exe).VersionInfo.ProductVersion)"
+          Start-Process .\upd\app.exe -ArgumentList '--home', "$PWD\upd\home", '--update-now', "$PWD\out\update.txt" -Wait
+          Get-Content out\update.txt
+          Get-ChildItem upd, upd\home | Select-Object FullName, Length
+          Get-Content upd\home\update.json -ErrorAction SilentlyContinue
+          "after: $((Get-Item upd\app.exe).VersionInfo.ProductVersion)"
+          $p = Start-Process .\upd\app.exe -ArgumentList '--home', "$PWD\upd\home", '--smoke', "$PWD\out\smoke-after-update.json" -PassThru
+          for ($i = 0; $i -lt 150 -and -not (Test-Path out\smoke-after-update.json); $i++) { Start-Sleep 1 }
+          Get-Content out\smoke-after-update.json
+          $p.WaitForExit(30000) | Out-Null
+          "pending marker left: $(Test-Path upd\home\update.json); old exe left: $(Test-Path upd\app.exe.old)"
+          Get-Content upd\home\dashboard.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-smoke
+          path: out

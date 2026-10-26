@@ -6,8 +6,9 @@
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '') || '/api'
 /** The owners' Android app, newest build (mandipos-api app_releases, flavor admin). */
 export const APP_DOWNLOAD = `${BASE}/v1/public/app/download?flavor=admin`
-/** True inside the installed app (the Android app, or the site added to the home screen). */
+/** True inside the installed app (the Android app, the Windows app, or the site added to the home screen). */
 export const inApp = () => matchMedia('(display-mode: standalone)').matches || document.referrer.startsWith('android-app://')
+  || navigator.userAgent.includes('MandiPlusDesktop/')
 
 const TOKEN_KEY = 'mandipos-admin-token'
 
