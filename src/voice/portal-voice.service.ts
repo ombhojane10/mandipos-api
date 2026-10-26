@@ -174,6 +174,7 @@ export class PortalVoiceService {
       case 'gaadi': return this.advance(phone, shopId, s, { job: 'gaadi', expect: 'text', slot: 'number', question: '', data: { reply }, tries: 0 }, undefined, shops);
       case 'yaad': return this.advance(phone, shopId, s, { job: 'yaad', expect: 'text', slot: 'when', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
       case 'calc': return { answer: this.calc(reply) };
+      case 'jagah': return this.advance(phone, shopId, s, { job: 'jagah', expect: 'text', slot: 'gaadi', question: '', data: { reply }, tries: 0 }, undefined, shops);
       case 'bhav': return this.advance(phone, shopId, s, { job: 'bhav', expect: 'choice', slot: 'confirm', question: '', data: { reply }, tries: 0 }, undefined, shops);
       default: break;
     }
@@ -358,6 +359,7 @@ export class PortalVoiceService {
     if (q.job === 'gaadi') return this.gaadiStep(phone, shopId, s, q, value);
     if (q.job === 'yaad') return this.yaadStep(phone, shopId, s, q, value);
     if (q.job === 'bhav') return this.bhavStep(phone, shopId, s, q, value);
+    if (q.job === 'jagah') return this.jagahStep(phone, shopId, s, q, value);
     if (q.slot === 'buyer' && value) {
       if (q.expect === 'text') data.heard = value;
       else if (value.startsWith('go:')) { const [, sid, bid] = value.split(':'); data.shopId = sid; data.buyerId = bid; }
@@ -607,6 +609,57 @@ export class PortalVoiceService {
     };
     if (buyer) s.focus = { buyerId: buyer.id, buyerName: buyer.name };
     return { draft, say: `${buyer?.name ?? (d.newGrahak ? newName : 'Cash grahak')} ki parchi — dekh kar Save dabaiye` };
+  }
+
+  // ---------------------------------------------------------------- where a gaadi stands
+
+  /**
+   * "9098 ki location C12 shed karo": which gaadi (by number, or the supplier's name; asked when it
+   * could be more than one), the new place (asked when not said), a preview, and on its tap the
+   * gaadi's location changes everywhere — slips print it, Gaadi kahan shows it.
+   */
+  private async jagahStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined): Promise<Record<string, unknown>> {
+    const d = q.data as { reply: Reply; truckId?: string; location?: string; miss?: string };
+    const said = ((d.reply as Record<string, unknown>).jagah ?? {}) as { gaadi_no?: string; location?: string };
+    const books = await this.books(shopId);
+    const seen = new Set<string>();
+    const open = (books.commodity === 'angoor'
+      ? [...books.lots.values()].map((l) => ({ id: l.truckId, number: l.number, supplier: l.supplier }))
+      : [...books.trucks.values()].map((t) => ({ id: t.id, number: t.number, supplier: t.supplier })))
+      .filter((g) => !seen.has(g.id) && seen.add(g.id));
+    const match = (heard: string) => {
+      const p = plate(heard).replace(/(WALI|WALA|GAADI|SE|KI|KA)+$/, '');
+      const digits = p.replace(/\D/g, '');
+      const byNo = open.filter((g) => /\d/.test(p) && p.length >= 3 && (plate(g.number).includes(p) || (digits.length >= 3 && plate(g.number).replace(/\D/g, '').endsWith(digits))));
+      if (byNo.length) return byNo;
+      const name = norm(heard);
+      return name.length >= 3 ? open.filter((g) => norm(g.supplier).includes(name) || name.includes(norm(g.supplier) || '~')) : [];
+    };
+    if (value !== undefined) {
+      if (q.slot === 'gaadi') { const hit = open.find((g) => g.id === value) ?? (match(value).length === 1 ? match(value)[0] : undefined); if (hit) d.truckId = hit.id; else d.miss = value; }
+      if (q.slot === 'place') d.location = value.trim().slice(0, 80);
+    }
+    if (!d.truckId) {
+      const hits = said.gaadi_no && !d.miss ? match(said.gaadi_no) : [];
+      if (hits.length === 1) d.truckId = hits[0].id;
+      else if (open.length === 1 && !said.gaadi_no) d.truckId = open[0].id;
+      else if (!open.length) return { say: 'Koi khuli gaadi nahi' };
+      else {
+        const miss = d.miss ?? said.gaadi_no ?? '';
+        d.miss = undefined;
+        return this.ask(s, q, d, 'gaadi', 'text', `${miss && !hits.length ? `Gaadi ${miss} nahi mili. ` : ''}Kaun si gaadi?`,
+          [...(hits.length > 1 ? hits : open).slice(0, 8).map((g) => ({ label: [g.number, g.supplier].filter(Boolean).join(' · '), value: g.id })), CANCEL]);
+      }
+    }
+    const g = open.find((x) => x.id === d.truckId)!;
+    if (!d.location) {
+      d.location = (said.location ?? '').trim().slice(0, 80);
+      if (!d.location) return this.ask(s, q, d, 'place', 'text', `Gaadi ${g.number} ab kahan khadi hai?`);
+    }
+    if (q.slot !== 'confirm' || value !== 'yes') return this.confirm(s, q, d, `Gaadi ${g.number} ki jagah badlein?`, 'Jagah badlo', [`Gaadi ${g.number}${g.supplier ? ` · ${g.supplier}` : ''}`, `Nayi jagah: ${d.location}`]);
+    await this.entries.setGaadiLocation(phone, shopId, g.id, d.location);
+    this.cache.delete(shopId);
+    return { say: `Gaadi ${g.number} ab ${d.location} par`, saved: { truckId: g.id } };
   }
 
   // ---------------------------------------------------------------- a gaadi, added by Bolo

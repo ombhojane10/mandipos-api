@@ -121,7 +121,7 @@ const oneOf = (...values: string[]) => ({ type: 'string', enum: values });
  * decide each one out loud gets them right, and the nulls are stripped server-side. The lite
  * fallback models take 20 s+ to decode that, though, so they get the loose form.
  */
-const PORTAL_EXTRAS = new Set(['query', 'edit', 'download', 'heard', 'grahak', 'calc', 'bhav', 'nayi_gaadi', 'yaad']);
+const PORTAL_EXTRAS = new Set(['query', 'edit', 'download', 'heard', 'grahak', 'calc', 'bhav', 'nayi_gaadi', 'yaad', 'jagah']);
 
 function schema(strict: boolean, portal = false) {
   const obj = (properties: Record<string, object>) => strict
@@ -170,6 +170,7 @@ function schema(strict: boolean, portal = false) {
       calc: obj({ lines: { type: 'array', items: obj({ qty: num, rate: num }) }, amounts: { type: 'array', items: num } }),
       bhav: { type: 'array', items: obj({ maal: str, grade: oneOf('I', 'II', 'III'), rate: num }) },
       nayi_gaadi: obj({ number: str, supplier: str, maal: str, lines: { type: 'array', items: obj({ grade: oneOf('I', 'II', 'III'), qty: int, rate: num }) }, freight: num }),
+      jagah: obj({ gaadi_no: str, location: str }),
       yaad: obj({
         what: str, day: int, date: str, time: str, after_minutes: int, part: oneOf('subah', 'dopahar', 'shaam', 'raat'),
         send_udhaar: bool, list: bool, cancel: bool,
@@ -180,7 +181,7 @@ function schema(strict: boolean, portal = false) {
     type: 'object',
     properties: {
       transcript: str,
-      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp', 'grahak', 'call', 'calc', 'bhav', 'gaadi', 'yaad'] : [])),
+      kind: oneOf('slip', 'collect', 'expense', 'show', 'open', 'answer', 'unclear', ...(portal ? ['query', 'edit', 'download', 'whatsapp', 'grahak', 'call', 'calc', 'bhav', 'gaadi', 'yaad', 'jagah'] : [])),
       say: str, ...rest.properties,
     },
     // The website's own extras may be left out: writing each as null costs reply tokens (time)
@@ -210,6 +211,7 @@ Always put the grahak's name exactly as they said it in "heard" (Latin script), 
 - "grahak": save a grahak's details or make a new one. grahak {name (only for a new one or a rename), phone (10 digits), address, code, opening (purana udhaar in rupees), new (true when they said naya / add karo / banao)}; buyer for an existing one. "Om ka number 9876543210 likh lo", "naya grahak Raju, number …, purana udhaar 5000".
 - "call": phone a grahak. buyer. "Om ko call lagao", "Raju ko phone karo".
 - "gaadi": a new truck of stock arrived — "gaadi add karo", "nayi gaadi", "gaadi aayi hai", "gaadi jod do". nayi_gaadi {number (as said: "3289", "MH12 3289"), maal (the maal name: Pollachi, Gujarat, V Kota…), supplier (the person/party who sent it, only if said), lines [{grade, qty = dana, rate = kharid bhav only if said}], freight (bhada) }. "15000 dana ek number, 200 do number" = two lines. Never "open nayi_gaadi" for this.
+- "jagah": a gaadi now stands somewhere else, or its place was written wrong — "9098 ki location C12 shed karo", "3289 ab pillar 210 pe khadi hai", "Manat wali gaadi shed 4 pe le gaye". jagah {gaadi_no as said (or the supplier's name if that is how they named it), location as said ("C12 Shed", "Pillar 210, Shed 4")}. Never answer how to do it in the app: this kind does it.
 - "yaad": a reminder for the person speaking, later — "mujhe yaad dilana", "remind karna", "kal batana", "bhool na jaun", and also "kal X 20000 dene wala hai, dhyaan rakhna". ("Wasim ko yaad dila do" with no later time means remind the GRAHAK of his dues now = "whatsapp".) yaad.what = what to remind, short Hinglish in their words with names and amounts ("Afzal se ₹20,000 lene hain", "Ramesh ko maal bhejna"). When: day = 0 aaj, 1 kal, 2 parson, N for "N din baad"; date (YYYY-MM-DD) for a named date or weekday ("15 tarikh", "somvar") worked out from the shop's Date; time "HH:MM" 24-hour only if a clock time was said ("5 baje shaam" = 17:00, "subah 7" = 07:00, "5 baje" alone in a shop = 17:00 if 1–7, else morning); part subah/dopahar/shaam/raat if said without a clock time; after_minutes for "1 ghante baad" (60), "aadhe ghante mein" (30). Leave every time field null when no time or day was said. send_udhaar = true only when they asked that the grahak be sent their udhaar/khata on WhatsApp at that time ("kal subah Om ko udhaar WhatsApp kar dena"). heard = the grahak's name if the reminder is about one. list = true for "mere reminder dikhao / kya kya yaad rakhna hai"; cancel = true for "Afzal wala reminder hata do" (what = the words that identify it).
 - "calc": arithmetic they asked for. calc.lines [{qty, rate}] for "15 dana 22 ke aur 8 dana 35 ke", calc.amounts for plain sums "500 aur 300 aur 1200". Never compute it yourself.
 - "bhav": set today's rate. bhav [{maal as said, grade I/II/III (I unless said), rate}]. "Aaj Pollachi ek number 30, do number 25", "V Kota ka bhav 28 kar do".

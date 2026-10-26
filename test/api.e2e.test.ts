@@ -433,6 +433,8 @@ describe('angoor on the website', () => {
       const said = (text.match(/# They typed\n([\s\S]*)$/)?.[1] ?? '').trim().toLowerCase();
       const lot = text.match(/\nLOT (l\d+) \| gaadi 3289 \| party Sai \| mark Royal/)?.[1];
       if (said === 'web angoor grahak cash 5000 baaki udhaar') return { text: JSON.stringify({ transcript: said, kind: 'slip', say: 'Grahak', heard: 'Web Angoor Grahak', buyer_name: 'Web Angoor Grahak', slip: {}, pay: { mode: 'mixed', cash: 5000 } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
+      if (said === 'manat wali gaadi shed 9 pe hai') return { text: JSON.stringify({ transcript: said, kind: 'jagah', say: 'Jagah', jagah: { gaadi_no: 'HR26X1111', location: 'Shed 9' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
+      if (said === '9999 ki location badlo') return { text: JSON.stringify({ transcript: said, kind: 'jagah', say: 'Jagah', jagah: { gaadi_no: '9999' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'gaadi kahan') return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Gaadi', query: { sql: "SELECT gaadi_no, jagah, bika_dana AS bika_box FROM gaadi WHERE band IS NULL AND gaadi_no LIKE '%3289%'", title: 'Gaadi 3289' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'dispatch') return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Dispatch', query: { sql: `SELECT parchi_no, box, diye, baaki_box, haal, gaadi_no, jagah FROM dispatch WHERE parchi_no = ${b.slipNo}`, title: 'Dispatch' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       const reply = said.startsWith('cash')
@@ -453,6 +455,18 @@ describe('angoor on the website', () => {
       expect(n1.ask.question).toBe('Kaun si quality, kaun si gaadi?');
       const n2 = (await http().post(`${base}/voice`).set(web).send({ pick: n1.ask.options.find((o: any) => /HR26X1111/.test(o.label)).value, session: 'ang5' }).expect(200)).body;
       expect(n2.draft).toMatchObject({ kind: 'parchi', buyer: { name: 'Web Angoor Grahak' }, cashPaise: 500000, lots: [{ truckId: manat, brandId: royal, qty: 0 }] });
+      // Where a gaadi stands, changed by voice: previewed, done on the tap.
+      const j1 = (await http().post(`${base}/voice`).set(web).send({ text: 'manat wali gaadi shed 9 pe hai', session: 'ang6' }).expect(200)).body;
+      expect(j1.ask).toMatchObject({ question: 'Gaadi HR26X1111 ki jagah badlein?', tap: true, detail: ['Gaadi HR26X1111 · Manat', 'Nayi jagah: Shed 9'] });
+      expect((await http().post(`${base}/voice`).set(web).send({ pick: 'yes', session: 'ang6' }).expect(200)).body).toMatchObject({ say: 'Gaadi HR26X1111 ab Shed 9 par' });
+      expect((await http().get(`${base}/angoor?from=${today}&to=${today}`).set(web).expect(200)).body.gaadis.find((x: any) => x.truckId === manat).location).toBe('Shed 9');
+      // An unknown number: asked which gaadi, then where.
+      const j2 = (await http().post(`${base}/voice`).set(web).send({ text: '9999 ki location badlo', session: 'ang7' }).expect(200)).body;
+      expect(j2.ask.question).toBe('Gaadi 9999 nahi mili. Kaun si gaadi?');
+      const j3 = (await http().post(`${base}/voice`).set(web).send({ pick: sai, session: 'ang7' }).expect(200)).body;
+      expect(j3.ask.question).toBe('Gaadi 3289 ab kahan khadi hai?');
+      expect((await http().post(`${base}/voice`).set(web).send({ text: 'Pillar 400', session: 'ang7' }).expect(200)).body.ask.detail).toEqual(['Gaadi 3289 · Sai', 'Nayi jagah: Pillar 400']);
+
       // The floor, asked: where gaadi 3289 stands, and a slip's dispatch — said in boxes.
       const q1 = (await http().post(`${base}/voice`).set(web).send({ text: 'gaadi kahan', session: 'ang3' }).expect(200)).body;
       expect(q1.answer.rows[0]).toMatchObject({ gaadi_no: '3289', jagah: 'Pillar 321', bika_box: 25 });

@@ -646,6 +646,20 @@ export class EntriesService {
     return { truckId, results };
   }
 
+  /** Where a gaadi stands, changed (Bolo's "9098 ki location C12 shed karo"): the truck row, with its new place. */
+  async setGaadiLocation(phone: string, shopId: string, truckId: string, location: string) {
+    const p = await this.device(phone, shopId);
+    const t = await this.db.withShop(shopId, async (tx) => (await tx.query<{ id: string; created_at: Date; number: string; supplier: string; arrived_at: Date; freight_paise: string; labour_paise: string; commission_paise: string; closed_at: Date | null }>(
+      `SELECT id, created_at, number, supplier, arrived_at, freight_paise, labour_paise, commission_paise, closed_at FROM trucks WHERE id = $1`, [truckId])).rows[0]);
+    if (!t) throw new NotFoundException('Gaadi nahi mili');
+    await this.push(p, shopId, [{ table: 'trucks', txn: uuidv7(), row: {
+      id: t.id, created_at: t.created_at.toISOString(), updated_at: new Date().toISOString(), number: t.number, supplier: t.supplier, arrived_at: t.arrived_at.toISOString(),
+      freight_paise: n(t.freight_paise), labour_paise: n(t.labour_paise), commission_paise: n(t.commission_paise), closed_at: t.closed_at?.toISOString() ?? null,
+      location: location.trim().slice(0, 80),
+    } }]);
+    return { truckId, location };
+  }
+
   /**
    * A grapes gaadi changed after it came, as the app's Gaadi screen does: number, supplier, where
    * it stands and bhada on the gaadi itself; a quality's boxes by the difference — more boxes as
