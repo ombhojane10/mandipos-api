@@ -14,6 +14,10 @@ on:
         description: Build desktop/ at this commit instead of downloading the published exe
         type: boolean
         default: false
+      plain_typing:
+        description: Type into a plain run (for exes older than --typing, 0.1.3 and before); judge by typing.png
+        type: boolean
+        default: false
 permissions:
   actions: read
   contents: read
@@ -92,7 +96,8 @@ jobs:
         run: |
           # Real keyboard input (SendKeys), with a trip to Notepad in between: activation must
           # hand the keyboard back to the page. Never Enter: no OTP goes out.
-          $p = Start-Process .\app.exe -ArgumentList '--typing', "$PWD\out\typing.json", '--home', "$PWD\out\typing-home" -PassThru
+          $a = if ('${{ inputs.plain_typing }}' -eq 'true') { @('--no-install') } else { @('--typing', "$PWD\out\typing.json") }
+          $p = Start-Process .\app.exe -ArgumentList ($a + @('--home', "$PWD\out\typing-home")) -PassThru
           Start-Sleep 12
           $w = New-Object -ComObject WScript.Shell
           $w.AppActivate($p.Id) | Out-Null; Start-Sleep 1
@@ -103,6 +108,7 @@ jobs:
           $w.SendKeys('{F2}'); Start-Sleep 1; $w.SendKeys('{ESC}'); Start-Sleep 1
           .\shot.ps1 out\typing.png
           $n | Stop-Process -Force -ErrorAction SilentlyContinue
+          if ('${{ inputs.plain_typing }}' -eq 'true') { $p | Stop-Process -Force; exit 0 }
           for ($i = 0; $i -lt 60 -and -not (Test-Path out\typing.json); $i++) { Start-Sleep 1 }
           Get-Content out\typing.json
           Get-Content out\typing-home\dashboard.log -ErrorAction SilentlyContinue
