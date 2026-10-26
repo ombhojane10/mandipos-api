@@ -49,7 +49,22 @@ const smokeScript = `(async () => {
   setTimeout(() => chrome.webview.postMessage('smoke:' + JSON.stringify(r)), 1500)
 })()`
 
+// --typing <file>: every keydown the page sees for 40 s, and what ended up in its fields. The
+// workflow types into the window with real (SendKeys) input meanwhile.
+const typingListen = `window.__keys = []; addEventListener('keydown', (e) => __keys.push(e.key), true)`
+
+const typingReport = `chrome.webview.postMessage('typing:' + JSON.stringify({
+  keys: window.__keys, hasFocus: document.hasFocus(),
+  active: document.activeElement && (document.activeElement.tagName + ' ' + (document.activeElement.placeholder || '')),
+  values: [...document.querySelectorAll('input')].map((i) => i.value) }))`
+
 func (a *app) message(m string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
+	if a.o.typing != "" && strings.HasPrefix(m, "typing:") {
+		var page map[string]interface{}
+		_ = json.Unmarshal([]byte(strings.TrimPrefix(m, "typing:")), &page)
+		writeSmoke(a.o.typing, map[string]interface{}{"shell": version, "page": page})
+		os.Exit(0)
+	}
 	if a.o.smoke == "" || !strings.HasPrefix(m, "smoke:") {
 		return
 	}

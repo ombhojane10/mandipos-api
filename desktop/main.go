@@ -27,9 +27,13 @@ type options struct {
 	debug     bool   // DevTools on
 	smoke     string // load the portal, write what the page can do to this file, exit
 	updateNow string // check for a newer shell now, write the outcome to this file, exit
+	typing    string // log the keys the page gets for 40 s, write them to this file, exit
 	uninstall bool
 	url       string
 }
+
+// test: a run driven by the smoke workflow, not a shop owner.
+func (o options) test() bool { return o.smoke != "" || o.typing != "" }
 
 func parseFlags() options {
 	var o options
@@ -38,6 +42,7 @@ func parseFlags() options {
 	flag.BoolVar(&o.debug, "debug", false, "DevTools")
 	flag.StringVar(&o.smoke, "smoke", "", "smoke test, results to this file")
 	flag.StringVar(&o.updateNow, "update-now", "", "update check, outcome to this file")
+	flag.StringVar(&o.typing, "typing", "", "keyboard test, results to this file")
 	flag.BoolVar(&o.uninstall, "uninstall", false, "remove shortcuts and data")
 	flag.StringVar(&o.url, "url", portal, "page to open")
 	showVersion := flag.Bool("version", false, "print the version")

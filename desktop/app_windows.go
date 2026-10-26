@@ -53,6 +53,7 @@ const (
 	wmMove          = 0x0003
 	wmSize          = 0x0005
 	wmActivate      = 0x0006
+	wmSetFocus      = 0x0007
 	wmClose         = 0x0010
 	wmGetMinMaxInfo = 0x0024
 	wmDpiChanged    = 0x02E0
@@ -134,7 +135,7 @@ func run(o options) int {
 	if o.updateNow != "" {
 		return runUpdateNow(dir, exe, o.updateNow)
 	}
-	if o.smoke != "" {
+	if o.test() {
 		o.noInstall = true
 	}
 	if !o.noInstall {
@@ -143,11 +144,11 @@ func run(o options) int {
 			return 0
 		}
 	}
-	if o.smoke == "" && !singleInstance() {
+	if !o.test() && !singleInstance() {
 		return 0
 	}
 	logf("start %s (%s)", version, exe)
-	if o.smoke == "" && afterStart(dir, exe) {
+	if !o.test() && afterStart(dir, exe) {
 		start(exe)
 		return 0
 	}
@@ -181,7 +182,7 @@ func run(o options) int {
 		logf("window: %v", err)
 		return 1
 	}
-	if o.smoke == "" && version != "dev" {
+	if !o.test() && version != "dev" {
 		go updateLoop(dir, exe)
 	}
 	var m msg
@@ -313,7 +314,7 @@ func (a *app) open(runtimeVersion string) error {
 	a.ready = true
 	a.followDpi()
 	c.Resize()
-	c.Focus()
+	a.focus()
 	c.Navigate(a.o.url)
 	logf("opening %s", a.o.url)
 	return nil
@@ -333,10 +334,14 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		if a != nil && a.ready {
 			_ = a.c.NotifyParentWindowPositionChanged()
 		}
-	case wmActivate:
-		if a != nil && a.ready && wp&0xffff != 0 {
-			a.c.Focus()
+	case wmActivate, wmSetFocus:
+		// DefWindowProc gives the keyboard to this bare window on activation, so the page is
+		// handed it back afterwards; doing it first lost every keystroke.
+		r, _, _ := pDefWindowProcW.Call(hwnd, m, wp, lp)
+		if a != nil && a.ready && (m == wmSetFocus || wp&0xffff != 0) {
+			a.focus()
 		}
+		return r
 	case wmGetMinMaxInfo:
 		// MINMAXINFO.ptMinTrackSize
 		mm := (*[10]int32)(unsafe.Pointer(lp))
@@ -366,6 +371,13 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 	}
 	r, _, _ := pDefWindowProcW.Call(hwnd, m, wp, lp)
 	return r
+}
+
+// focus puts the keyboard in the page. (edge's Focus exits the process on an error.)
+func (a *app) focus() {
+	if err := a.c.GetController().MoveFocus(edge.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC); err != nil {
+		logf("focus: %v", err)
+	}
 }
 
 // dispatch runs f on the window's thread, where WebView2 must be called.
@@ -467,6 +479,14 @@ func (a *app) navigationCompleted(_, args uintptr) {
 			go func() {
 				time.Sleep(4 * time.Second)
 				a.dispatch(func() { a.c.Eval(smokeScript) })
+			}()
+		}
+		if a.o.typing != "" && !a.smokeStarted {
+			a.smokeStarted = true
+			a.c.Eval(typingListen)
+			go func() {
+				time.Sleep(40 * time.Second)
+				a.dispatch(func() { a.c.Eval(typingReport) })
 			}()
 		}
 	}

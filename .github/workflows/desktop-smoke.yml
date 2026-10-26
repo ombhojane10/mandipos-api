@@ -88,6 +88,25 @@ jobs:
           Get-Content out\smoke.json
           $p.WaitForExit(30000) | Out-Null
 
+      - name: Typing
+        run: |
+          # Real keyboard input (SendKeys), with a trip to Notepad in between: activation must
+          # hand the keyboard back to the page. Never Enter: no OTP goes out.
+          $p = Start-Process .\app.exe -ArgumentList '--typing', "$PWD\out\typing.json", '--home', "$PWD\out\typing-home" -PassThru
+          Start-Sleep 12
+          $w = New-Object -ComObject WScript.Shell
+          $w.AppActivate($p.Id) | Out-Null; Start-Sleep 1
+          $w.SendKeys('90223'); Start-Sleep 1
+          $n = Start-Process notepad -PassThru; Start-Sleep 3
+          $w.AppActivate($p.Id) | Out-Null; Start-Sleep 1
+          $w.SendKeys('53647'); Start-Sleep 1
+          $w.SendKeys('{F2}'); Start-Sleep 1; $w.SendKeys('{ESC}'); Start-Sleep 1
+          .\shot.ps1 out\typing.png
+          $n | Stop-Process -Force -ErrorAction SilentlyContinue
+          for ($i = 0; $i -lt 60 -and -not (Test-Path out\typing.json); $i++) { Start-Sleep 1 }
+          Get-Content out\typing.json
+          Get-Content out\typing-home\dashboard.log -ErrorAction SilentlyContinue
+
       - name: Console copy (crash output)
         if: failure() && inputs.build
         run: |
