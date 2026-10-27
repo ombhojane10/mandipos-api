@@ -20,7 +20,7 @@ import { Bhav, GaadiHisab, Munafa, Nigrani, SalesRegister, Vasooli } from './pag
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
-import { Apmc, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
+import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
 import { openEntry } from './entries/kinds'
 import { F_KEYS, REPORT_KEYS, lastRow, openHelp, pagePath, periodKey } from './keys'
@@ -74,6 +74,7 @@ export const ANGOOR_REPORTS: (typeof REPORTS)[number] = { group: t('Angoor'), it
   { report: 'dispatch', label: t('Dispatch'), key: '', icon: I.IScan },
   { report: 'pata', label: t('Gaadi kahan'), key: '', icon: I.IPin },
   { report: 'commission', label: t('Supplier commission'), key: '', icon: I.IRupee },
+  { report: 'beejak', label: t('Beejak'), key: '', icon: I.ILedger },
   { report: 'apmc', label: t('APMC'), key: '', icon: I.IChart },
   { report: 'mazdoori', label: t('Mazdoori'), key: '', icon: I.IWallet },
 ] }
@@ -348,6 +349,7 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'dispatch': return <Dispatch key={shopId} shopId={shopId} />
     case 'pata': return <GaadiPata key={shopId} shopId={shopId} />
     case 'commission': return <Commission key={shopId} shopId={shopId} />
+    case 'beejak': return <Beejaks key={shopId} shopId={shopId} />
     case 'apmc': return <Apmc key={shopId} shopId={shopId} />
     case 'mazdoori': return <Mazdoori key={shopId} shopId={shopId} />
     case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />

@@ -355,62 +355,115 @@ export function Commission({ shopId }: { shopId: string }) {
   )
 }
 
+type Saved = { id: string; truckId: string; no: number; party: string; gaadi: string; day: string; boxes: number
+  grossPaise: number; expensesPaise: number; netPaise: number; madeAt: string
+  lines: { quality: string; qty: number; ratePaise: number; amountPaise: number }[]
+  expenses: { key: string; kind: string; rate: number | null; amountPaise: number }[] }
 type Beejak = { truckId: string; number: string; party: string; supplierKey: string; location: string; arrivedOn: string; closed: boolean
   received: number; sold: number; off: number; left: number; freightPaise: number; grossPaise: number; from: string | null; to: string | null
-  groups: { quality: string; qty: number }[] }
+  groups: { quality: string; qty: number }[]; saved: Saved | null }
 
 /**
- * The party's beejak for one gaadi, the same sheet the app makes: each quality with the boxes
- * sold (fixed) and a bhav the shop types itself — empty to start, never what the boxes actually
- * went for; the gross; commission, mazdoori a box, dak and the gaadi's bhada off it; and the
- * shudh bikri the party is paid. Printed in the app's BEEJAK layout.
+ * The kharcha heads, as on the shop's old "Sale Proceed" screen: a % of the gross, ₹ a box, or a
+ * flat ₹. The server works each one out again from the same rate when the beejak is kept.
  */
-function BeejakSheet({ shopId, truckId, onClose }: { shopId: string; truckId: string; onClose: () => void }) {
+const HEADS: { key: string; label: string; kind: 'pct' | 'box' | 'flat' }[] = [
+  { key: 'commission', label: t('Commission'), kind: 'pct' },
+  { key: 'association', label: t('Association'), kind: 'box' },
+  { key: 'loading', label: t('Loading/Unloading'), kind: 'box' },
+  { key: 'labour', label: t('Labour'), kind: 'box' },
+  { key: 'bardana', label: t('Bardana'), kind: 'box' },
+  { key: 'freight', label: t('Lorry Freight'), kind: 'flat' },
+  { key: 'dak', label: t('Telephone & Postage'), kind: 'flat' },
+  { key: 'bank', label: t('Bank Charges'), kind: 'pct' },
+  { key: 'crate', label: t('Crate Handling'), kind: 'box' },
+  { key: 'store', label: t('Store Expenses'), kind: 'flat' },
+  { key: 'custom', label: t('Custom Duty'), kind: 'flat' },
+  { key: 'other', label: t('Other Expenses'), kind: 'flat' },
+]
+const UNIT = { pct: '%', box: '₹/box', flat: '₹' }
+// The heads start where the app's do (6%, ₹7 a box, ₹10 dak) and then as this computer last left them.
+const HEAD_KEY = (shopId: string, key: string) => `mp.angoor.beejak.head.${key}.${shopId}`
+const HEAD_START: Record<string, number> = { commission: 600, labour: 700, dak: 1000 }
+const headStart = (shopId: string, key: string) => {
+  // The older single settings (commission %, mazdoori, dak) carry over.
+  const old = key === 'commission' ? BPS_KEY(shopId) : key === 'labour' ? LABOUR_KEY(shopId) : key === 'dak' ? DAK_KEY(shopId) : ''
+  const v = store.get(HEAD_KEY(shopId, key), old ? store.get(old, HEAD_START[key] ?? 0) : HEAD_START[key] ?? 0)
+  return v ? String(v / 100) : ''
+}
+const num = (v: string) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0)
+const hundredths = (v: string) => Math.round(num(v) * 100)
+
+/**
+ * The party's beejak for one gaadi: each quality with the boxes sold (fixed) and a bhav the shop
+ * types itself — never what the boxes actually went for; the gross; the kharcha heads off it; and
+ * the shudh bikri the party is paid. Kept on Save (one beejak a gaadi, its number kept when made
+ * again), printed or sent as PDF in the app's BEEJAK layout.
+ */
+export function BeejakSheet({ shopId, truckId, onClose }: { shopId: string; truckId: string; onClose: () => void }) {
   const { data: b, error } = useLoad(() => api<Beejak>(`/v1/admin/shops/${shopId}/beejak/${truckId}`), [shopId, truckId])
-  const [pct, setPct] = useState(() => String(store.get(BPS_KEY(shopId), 600) / 100))
-  const [labour, setLabour] = useState(() => String(store.get(LABOUR_KEY(shopId), 700) / 100))
-  const [dak, setDak] = useState(() => String(store.get(DAK_KEY(shopId), 1000) / 100))
-  const [freight, setFreight] = useState<string | null>(null)
-  const [bhav, setBhav] = useState<Record<string, string>>({})
-  const num = (v: string) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0)
-  const bps = Math.round(num(pct) * 100)
-  const lines = (b?.groups ?? []).map((g) => { const r = Math.round(num(bhav[g.quality] ?? '') * 100); return { ...g, ratePaise: r, amountPaise: r * g.qty } })
+  const [bhav, setBhav] = useState<Record<string, string> | null>(null)
+  const [heads, setHeads] = useState<Record<string, string> | null>(null)
+  const [saved, setSaved] = useState<Saved | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [fail, setFail] = useState('')
+  const kept = saved ?? b?.saved ?? null
+
+  // What the sheet opens with: the kept beejak's bhav and heads, else empty bhav and this computer's rates.
+  const bhavNow = bhav ?? Object.fromEntries((kept?.lines ?? []).map((l) => [l.quality, String(l.ratePaise / 100)]))
+  const headsNow = heads ?? Object.fromEntries(HEADS.map((h) => {
+    const k = kept?.expenses.find((e) => e.key === h.key)
+    if (k) return [h.key, h.kind === 'flat' ? (k.amountPaise ? String(k.amountPaise / 100) : '') : (k.rate ? String(k.rate / 100) : '')]
+    if (h.key === 'freight') return [h.key, b?.freightPaise ? String(b.freightPaise / 100) : '']
+    return [h.key, headStart(shopId, h.key)]
+  }))
+  const lines = (b?.groups ?? []).map((g) => { const r = hundredths(bhavNow[g.quality] ?? ''); return { ...g, ratePaise: r, amountPaise: r * g.qty } })
+  const boxes = lines.reduce((s, l) => s + l.qty, 0)
   const gross = lines.reduce((s, l) => s + l.amountPaise, 0)
-  const commission = Math.round((gross * bps) / 10_000)
-  const labourRate = Math.round(num(labour) * 100)
-  const labourPaise = labourRate * (b?.sold ?? 0)
-  const dakPaise = Math.round(num(dak) * 100)
-  const freightPaise = freight === null ? b?.freightPaise ?? 0 : Math.round(num(freight) * 100)
-  const expenses = commission + labourPaise + dakPaise + freightPaise
+  const amountOf = (h: (typeof HEADS)[number]) => {
+    const r = hundredths(headsNow[h.key] ?? '')
+    return h.kind === 'pct' ? Math.round((gross * r) / 10_000) : h.kind === 'box' ? r * boxes : r
+  }
+  const exp = HEADS.map((h) => ({ ...h, amountPaise: amountOf(h) }))
+  const expenses = exp.reduce((s, e) => s + e.amountPaise, 0)
   const nett = gross - expenses
-  const keep = () => { store.set(BPS_KEY(shopId), bps); store.set(LABOUR_KEY(shopId), labourRate); store.set(DAK_KEY(shopId), dakPaise) }
-  const pctLabel = `${num(pct)}%`
-  const exp: [string, number][] = [
-    [`${t('Commission')} ${pctLabel}`, commission],
-    [`${t('Mazdoori')} (${count(b?.sold ?? 0)} × ${rate(labourRate).slice(1)})`, labourPaise],
-    [t('Dak'), dakPaise],
-    ...(freightPaise > 0 ? [[t('Bhada'), freightPaise] as [string, number]] : []),
-  ]
+  const rateText = (h: (typeof HEADS)[number]) => h.kind === 'pct' ? `${num(headsNow[h.key] ?? '')}%` : h.kind === 'box' ? `${count(boxes)} × ${rate(hundredths(headsNow[h.key] ?? '')).slice(1)}` : ''
+
+  const save = async (andPrint: boolean) => {
+    if (!b) return
+    if (lines.some((l) => l.ratePaise <= 0)) { setFail(t('Har quality ka bhav likhein')); return }
+    setBusy(true); setFail('')
+    try {
+      const r = await api<Saved>(`/v1/admin/shops/${shopId}/beejak/${truckId}`, { method: 'POST', body: {
+        bhav: lines.map((l) => ({ quality: l.quality, ratePaise: l.ratePaise })),
+        heads: HEADS.map((h) => h.kind === 'flat' ? { key: h.key, amountPaise: hundredths(headsNow[h.key] ?? '') } : { key: h.key, rate: hundredths(headsNow[h.key] ?? '') }),
+      } })
+      HEADS.filter((h) => h.key !== 'freight').forEach((h) => store.set(HEAD_KEY(shopId, h.key), hundredths(headsNow[h.key] ?? '')))
+      setSaved(r); booksChanged()
+      if (andPrint) setTimeout(openExport, 50)
+    } catch (e) { setFail(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) }
+  }
 
   useExport(b ? () => ({
-    style: 'book' as const, title: 'BEEJAK', dateLine: b.from && b.to ? dayRange(b.from, b.to) : undefined, file: fileName('Beejak', b.party || b.number, b.number),
+    style: 'book' as const, title: kept ? `BEEJAK #${kept.no}` : 'BEEJAK', dateLine: b.from && b.to ? dayRange(b.from, b.to) : undefined,
+    file: fileName('Beejak', kept ? String(kept.no) : '', b.party || b.number, b.number),
     summary: [[t('Party'), b.party || '—'], [t('Gaadi'), b.number], [t('Aaya'), shortDate(b.arrivedOn)], [t('Box aaye · bike · baaki'), `${count(b.received)} · ${count(b.sold)} · ${count(b.left)}`]],
     columns: [{ label: t('Mark'), wide: true }, { label: t('Box × Bhav'), num: true }, { label: t('Rakam'), num: true }],
     rows: [
       ...lines.map((g) => ({ cells: [g.quality, `${count(g.qty)} × ${rate(g.ratePaise).slice(1)}`, rs(g.amountPaise)] })),
       { kind: 'total' as const, bold: true, cells: [t('Kul bikri'), '', rs(gross)] },
       { kind: 'heading' as const, bold: true, cells: [t('Kharcha')] },
-      ...exp.map(([l, v]) => ({ cells: [l, '', rs(v)] })),
+      ...exp.filter((e) => e.amountPaise > 0).map((e) => ({ cells: [e.label, rateText(e), rs(e.amountPaise)] })),
       { kind: 'total' as const, bold: true, cells: [t('Kul kharcha'), '', rs(expenses)] },
       { kind: 'final' as const, bold: true, cells: [t('Shudh bikri'), '', rs(nett)] },
     ],
     sign: true,
-  }) : null, [b, pct, labour, dak, freight, bhav])
+  }) : null, [b, kept, bhavNow, headsNow])
 
   return (
     <div className="scrim sheet-scrim" onClick={onClose}>
       <div className="sheet beejak" role="dialog" aria-label={t('Beejak')} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}>
-        <div className="sheet-hd"><h3>{t('Beejak')}{b ? ` · ${b.party || b.number}` : ''}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
+        <div className="sheet-hd"><h3>{t('Beejak')}{kept ? ` #${kept.no}` : ''}{b ? ` · ${b.party || b.number}` : ''}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
         <div className="sheet-bd">
           {error && <p className="error">{error}</p>}
           {!b ? <Skeleton rows={4} /> : (
@@ -431,27 +484,112 @@ function BeejakSheet({ shopId, truckId, onClose }: { shopId: string; truckId: st
                     <td><b>{g.quality}</b></td>
                     <td className="num money">{count(g.qty)} ×</td>
                     <td className="num"><input className="field bhav-in" inputMode="decimal" placeholder="0" autoFocus={i === 0} aria-label={`${g.quality} ${t('Bhav')}`}
-                      value={bhav[g.quality] ?? ''} onChange={(e) => setBhav({ ...bhav, [g.quality]: e.target.value.replace(/[^\d.]/g, '').slice(0, 9) })} /></td>
+                      value={bhavNow[g.quality] ?? ''} onChange={(e) => setBhav({ ...bhavNow, [g.quality]: e.target.value.replace(/[^\d.]/g, '').slice(0, 9) })} /></td>
                     <td className="num money">{g.amountPaise ? rupees(g.amountPaise) : '—'}</td>
                   </tr>
                 ))}</tbody>
-                <tfoot><tr><td>{t('Kul bikri')}</td><td className="num money">{count(b.sold)}</td><td /><td className="num money b">{rupees(gross)}</td></tr></tfoot>
+                <tfoot><tr><td>{t('Kul bikri')}</td><td className="num money">{count(boxes)}</td><td /><td className="num money b">{rupees(gross)}</td></tr></tfoot>
               </table>
               {b.groups.length === 0 && <p className="empty">{t('Abhi koi box nahi bika')}</p>}
               <div className="beejak-exp">
-                <label><span>{t('Commission')}</span><input className="field" inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value)} /><span className="unit">%</span><b className="money">{rupees(commission)}</b></label>
-                <label><span>{t('Mazdoori')}</span><input className="field" inputMode="decimal" value={labour} onChange={(e) => setLabour(e.target.value)} /><span className="unit">₹/box</span><b className="money">{rupees(labourPaise)}</b></label>
-                <label><span>{t('Dak')}</span><input className="field" inputMode="decimal" value={dak} onChange={(e) => setDak(e.target.value)} /><span className="unit">₹</span><b className="money">{rupees(dakPaise)}</b></label>
-                <label><span>{t('Bhada')}</span><input className="field" inputMode="decimal" placeholder="0" value={freight ?? (b.freightPaise ? String(b.freightPaise / 100) : '')} onChange={(e) => setFreight(e.target.value)} /><span className="unit">₹</span><b className="money">{rupees(freightPaise)}</b></label>
+                {exp.map((h) => (
+                  <label key={h.key}><span>{h.label}</span>
+                    <input className="field" inputMode="decimal" placeholder="0" value={headsNow[h.key] ?? ''}
+                      onChange={(e) => setHeads({ ...headsNow, [h.key]: e.target.value.replace(/[^\d.]/g, '').slice(0, 9) })} />
+                    <span className="unit">{UNIT[h.kind]}</span><b className="money">{h.amountPaise ? rupees(h.amountPaise) : '—'}</b></label>
+                ))}
               </div>
               <div className="total-line"><span>{t('Kul kharcha')}</span><b className="money">{rupees(expenses)}</b></div>
               <div className="total-line big net"><span>{t('Shudh bikri')}</span><b className="money">{nett < 0 ? '−' : ''}{rupees(Math.abs(nett))}</b></div>
+              {fail && <p className="error">{fail}</p>}
             </>
           )}
         </div>
         <div className="sheet-ft">
-          <button type="button" className="btn ghost" onClick={onClose}>{t('Band karein')}</button>
-          <button type="button" className="btn primary" disabled={!b} onClick={() => { keep(); openExport() }}><I.IExport /> {t('Beejak chhapein')}</button>
+          <button type="button" className="btn ghost" disabled={!b || busy} onClick={() => void save(false)}>{t('Save karein')}</button>
+          <button type="button" className="btn primary" disabled={!b || busy || !b.groups.length} onClick={() => void save(true)}><I.IExport /> {t('Save + PDF')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Every beejak the shop has made, newest first, each opening again to print, send or change; and
+ * a new one for any gaadi from Naya beejak.
+ */
+export function Beejaks({ shopId }: { shopId: string }) {
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState<string | null>(null)
+  const [pick, setPick] = useState(false)
+  const { data, error, loading } = useLoad(() => api<{ beejaks: Saved[] }>(`/v1/admin/shops/${shopId}/beejaks?q=${encodeURIComponent(q)}`), [shopId, q])
+  const list = data?.beejaks ?? []
+
+  useExport(data ? () => ({
+    style: 'book' as const, title: t('Beejak'), file: fileName('Beejak list'),
+    columns: [{ label: '#' }, { label: t('Party'), wide: true }, { label: t('Gaadi') }, { label: t('Din') }, { label: t('Box'), num: true }, { label: t('Bikri'), num: true }, { label: t('Kharcha'), num: true }, { label: t('Shudh bikri'), num: true }],
+    rows: list.map((x) => ({ cells: [String(x.no), x.party, x.gaadi, shortDate(x.day), count(x.boxes), rs(x.grossPaise), rs(x.expensesPaise), rs(x.netPaise)] })),
+  }) : null, [data])
+
+  return (
+    <>
+      <div className="toolbar">
+        <input className="field search" data-search placeholder={t('Party, gaadi ya beejak no.')} value={q} onChange={(e) => setQ(e.target.value)} />
+        <button type="button" className="btn primary" onClick={() => setPick(true)}>{t('Naya beejak')}</button>
+      </div>
+      {error && <p className="error">{error}</p>}
+      {!data ? <Skeleton /> : (
+        <div className={`card wrap-x${loading ? ' dim' : ''}`}>
+          <table className="tbl fold">
+            <thead><tr><th>{t('Beejak')}</th><th className="num">{t('Box')}</th><th className="num">{t('Bikri')}</th><th className="num">{t('Kharcha')}</th><th className="num">{t('Shudh bikri')}</th></tr></thead>
+            <tbody>
+              {list.map((x) => (
+                <tr key={x.id} data-row tabIndex={0} onClick={() => setOpen(x.truckId)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(x.truckId) }}>
+                  <td className="main-col"><b>#{x.no} · {x.party || '—'}</b><small>{[x.gaadi, shortDate(x.day)].filter(Boolean).join(' · ')}<span className="show-sm"> · {rupees(x.netPaise)}</span></small></td>
+                  <td className="num opt-col money">{count(x.boxes)}</td>
+                  <td className="num opt-col money">{rupees(x.grossPaise)}</td>
+                  <td className="num opt-col money">{rupees(x.expensesPaise)}</td>
+                  <td className="num amt-col"><span className="money b">{rupees(x.netPaise)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {list.length === 0 && <p className="empty">{q ? t('Koi beejak nahi mila') : t('Abhi koi beejak nahi bana')}</p>}
+        </div>
+      )}
+      {pick && <GaadiPick shopId={shopId} onPick={(id) => { setPick(false); setOpen(id) }} onClose={() => setPick(false)} />}
+      {open && <BeejakSheet shopId={shopId} truckId={open} onClose={() => setOpen(null)} />}
+    </>
+  )
+}
+
+/** Which gaadi the new beejak is for: open ones first, then those of the last 60 days. */
+function GaadiPick({ shopId, onPick, onClose }: { shopId: string; onPick: (truckId: string) => void; onClose: () => void }) {
+  const today = todayIst()
+  const from = new Date(Date.parse(today) - 60 * 86_400_000).toISOString().slice(0, 10)
+  const { data, error } = useLoad(() => loadDesk(shopId, from, today), [shopId, from, today])
+  const [q, setQ] = useState('')
+  const rows = (data?.suppliers ?? []).flatMap((s) => s.gaadis.map((g) => ({ s, g })))
+    .filter(({ s, g }) => !q || `${s.name} ${g.number}`.toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => Number(a.g.closed) - Number(b.g.closed) || b.g.arrivedOn.localeCompare(a.g.arrivedOn))
+  return (
+    <div className="scrim sheet-scrim" onClick={onClose}>
+      <div className="sheet" role="dialog" aria-label={t('Naya beejak')} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}>
+        <div className="sheet-hd"><h3>{t('Naya beejak')}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
+        <div className="sheet-bd">
+          <input className="field" autoFocus placeholder={t('Party ya gaadi')} value={q} onChange={(e) => setQ(e.target.value)} />
+          {error && <p className="error">{error}</p>}
+          {!data ? <Skeleton rows={3} /> : (
+            <div className="lines-list pick-list">
+              {rows.map(({ s, g }) => (
+                <button type="button" key={g.truckId} onClick={() => onPick(g.truckId)}>
+                  <span className="grow"><b>{s.name || '—'}</b><small className="muted">{[g.number, g.location, shortDate(g.arrivedOn), g.closed ? t('Band') : ''].filter(Boolean).join(' · ')}</small></span>
+                  <span className="money">{box(g.boxes)}</span>
+                </button>
+              ))}
+              {rows.length === 0 && <p className="empty">{t('Koi gaadi nahi')}</p>}
+            </div>
+          )}
         </div>
       </div>
     </div>

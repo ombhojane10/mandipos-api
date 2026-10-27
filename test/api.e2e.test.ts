@@ -406,6 +406,24 @@ describe('angoor on the website', () => {
     // The party's beejak for gaadi 3289: Royal 25 boxes, ₹27,000 gross.
     const bj = (await http().get(`${base}/beejak/${sai}`).set(web).expect(200)).body;
     expect(bj).toMatchObject({ number: '3289', party: 'Sai', received: 10, sold: 25, grossPaise: 2700000, groups: [{ quality: 'Royal', qty: 25, amountPaise: 2700000 }] });
+    expect(bj.saved).toBeNull();
+
+    // Made and kept: 25 Royal × ₹1,000 = ₹25,000; 6% commission ₹1,500, labour ₹7 × 25 = ₹175,
+    // bank 0.30% ₹75, dak ₹10 → ₹1,760 off, ₹23,240 to the party. A missing bhav is refused.
+    await http().post(`${base}/beejak/${sai}`).set(web).send({ bhav: [], heads: [] }).expect(400);
+    const heads = [{ key: 'commission', rate: 600 }, { key: 'labour', rate: 700 }, { key: 'bank', rate: 30 }, { key: 'dak', amountPaise: 1000 }];
+    const made = (await http().post(`${base}/beejak/${sai}`).set(web).send({ bhav: [{ quality: 'Royal', ratePaise: 100000 }], heads }).expect(201)).body;
+    expect(made).toMatchObject({ no: 1, party: 'Sai', gaadi: '3289', boxes: 25, grossPaise: 2500000, expensesPaise: 176000, netPaise: 2324000, lines: [{ quality: 'Royal', qty: 25, ratePaise: 100000, amountPaise: 2500000 }] });
+    expect(made.expenses.map((e: any) => e.key)).toEqual(['commission', 'association', 'loading', 'labour', 'bardana', 'freight', 'dak', 'bank', 'crate', 'store', 'custom', 'other']);
+    expect(Object.fromEntries(made.expenses.filter((e: any) => e.amountPaise).map((e: any) => [e.key, e.amountPaise]))).toEqual({ commission: 150000, labour: 17500, dak: 1000, bank: 7500 });
+    // Made again: the same beejak, same number, new figures; listed and opened by id.
+    const remade = (await http().post(`${base}/beejak/${sai}`).set(web).send({ bhav: [{ quality: 'Royal', ratePaise: 110000 }], heads: [{ key: 'other', amountPaise: 5000 }] }).expect(201)).body;
+    expect(remade).toMatchObject({ id: made.id, no: 1, grossPaise: 2750000, expensesPaise: 5000, netPaise: 2745000 });
+    expect((await http().get(`${base}/beejaks`).set(web).expect(200)).body.beejaks).toEqual([expect.objectContaining({ id: made.id, no: 1, party: 'Sai', netPaise: 2745000 })]);
+    expect((await http().get(`${base}/beejaks?q=sai`).set(web).expect(200)).body.beejaks).toHaveLength(1);
+    expect((await http().get(`${base}/beejaks?q=nobody`).set(web).expect(200)).body.beejaks).toHaveLength(0);
+    expect((await http().get(`${base}/beejaks/${made.id}`).set(web).expect(200)).body.netPaise).toBe(2745000);
+    expect((await http().get(`${base}/beejak/${sai}`).set(web).expect(200)).body.saved).toMatchObject({ no: 1 });
 
     // Gaadi edited on the website: moved, bhada, Royal up to 30 boxes, then down to 28 (a correction).
     const royalLot = (q: number) => ({ number: '3289', supplier: 'Sai', location: 'Pillar 321', freightPaise: 500000, lots: [{ brandId: royal, grade: '1', qty: q, ratePaise: 0 }] });

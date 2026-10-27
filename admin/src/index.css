@@ -1246,3 +1246,7 @@ button.chip { border: 0; cursor: pointer; }
 .labour-list .amber { color: var(--amber); font-weight: 600; }
 .labour-list .up, .labour-list .due { font-weight: 600; }
 .link-row { display: block; width: 100%; margin-top: 12px; padding: 12px 4px; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: var(--accent); font-weight: 700; font-size: 15px; cursor: pointer; }
+.pick-list { margin-top: 10px; }
+.pick-list > button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.pick-list > button:hover { background: var(--accent-soft); }
+.pick-list .grow { display: flex; flex-direction: column; flex: 1; min-width: 0; }

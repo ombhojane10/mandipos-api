@@ -13,7 +13,7 @@ import { AdminService } from './admin.service';
 import { ReportsService, type Pot } from './reports.service';
 import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
-import { InsightsService } from './insights.service';
+import { BEEJAK_HEADS, InsightsService } from './insights.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -133,6 +133,11 @@ const GaadiBody = z.object({
   location: z.string().trim().max(80).optional(),
   lots: z.array(z.object({ brandId: z.uuid().optional(), brandName: z.string().trim().max(60).optional(), grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise,
     boxGrams: z.number().int().min(0).max(1_000_000).optional() })).min(1).max(12),
+});
+const BeejakBody = z.object({
+  day: z.iso.date().optional(),
+  bhav: z.array(z.object({ quality: z.string().max(60), ratePaise: paise })).max(50),
+  heads: z.array(z.object({ key: z.enum(BEEJAK_HEADS.map((h) => h.key) as [string, ...string[]]), rate: z.number().int().min(0).max(10_000_000).optional(), amountPaise: paise.optional() })).max(20),
 });
 const SupplierPayBody = z.object({ supplier: z.string().trim().min(1).max(120), mode: z.enum(['cash', 'office', 'upi', 'bank']), amountPaise: paise.positive(), note: z.string().max(200).optional(), date: DayIso });
 
@@ -308,6 +313,23 @@ export class AdminController {
   angoor(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
     const r = parse(Range.extend({ commissionBps: z.coerce.number().int().min(0).max(5000).default(600) }), query);
     return this.insights.angoor(mine(v, id), r.from, r.to, r.commissionBps);
+  }
+
+  /** The beejaks the shop has made, newest first. */
+  @Get('shops/:id/beejaks')
+  beejaks(@See() v: Viewer, @Param('id') id: string, @Query('q') q?: string) {
+    return this.insights.beejaks(mine(v, id), (q ?? '').slice(0, 60));
+  }
+
+  @Get('shops/:id/beejaks/:bid')
+  beejakById(@See() v: Viewer, @Param('id') id: string, @Param('bid') bid: string) {
+    return this.insights.beejakById(mine(v, id), parse(z.uuid(), bid));
+  }
+
+  /** Makes (or makes again) a gaadi's beejak and keeps it. */
+  @Post('shops/:id/beejak/:truckId')
+  saveBeejak(@See() v: Viewer, @Param('id') id: string, @Param('truckId') truckId: string, @Body() body: unknown) {
+    return this.insights.saveBeejak(v.phone, mine(v, id), parse(z.uuid(), truckId), parse(BeejakBody, body));
   }
 
   /** A party's beejak for one gaadi: qualities sold, average bhav, gross and bhada. */

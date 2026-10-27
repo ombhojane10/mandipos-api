@@ -2,6 +2,28 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Db } from '../db/db.service';
 import { BALANCES, IST_DAY, LIVE_BILLS, n } from './sql';
 import { nameKey } from './reports.service';
+import { uuidv7 } from '../common/uuid';
+
+/**
+ * The beejak's kharcha heads, in the order of the shop's old software: a % of the gross (rate in
+ * basis points), ₹ a box (rate in paise, times the boxes on the beejak), or a flat amount.
+ */
+export const BEEJAK_HEADS = [
+  { key: 'commission', kind: 'pct' }, { key: 'association', kind: 'box' }, { key: 'loading', kind: 'box' },
+  { key: 'labour', kind: 'box' }, { key: 'bardana', kind: 'box' }, { key: 'freight', kind: 'flat' },
+  { key: 'dak', kind: 'flat' }, { key: 'bank', kind: 'pct' }, { key: 'crate', kind: 'box' },
+  { key: 'store', kind: 'flat' }, { key: 'custom', kind: 'flat' }, { key: 'other', kind: 'flat' },
+] as const;
+export type BeejakInput = { day?: string; bhav: { quality: string; ratePaise: number }[]; heads: { key: string; rate?: number; amountPaise?: number }[] };
+type BeejakRow = { id: string; truck_id: string; beejak_no: number; party: string; gaadi: string; day: Date | string; lines: unknown; expenses: unknown;
+  boxes: number; gross_paise: string; expenses_paise: string; net_paise: string; made_by: string; created_at: Date; updated_at: Date };
+const beejakView = (r: BeejakRow) => ({
+  id: r.id, truckId: r.truck_id, no: r.beejak_no, party: r.party, gaadi: r.gaadi, day: typeof r.day === 'string' ? r.day : r.day.toISOString().slice(0, 10),
+  lines: r.lines as { quality: string; qty: number; ratePaise: number; amountPaise: number }[],
+  expenses: r.expenses as { key: string; kind: string; rate: number | null; amountPaise: number }[],
+  boxes: r.boxes, grossPaise: n(r.gross_paise), expensesPaise: n(r.expenses_paise), netPaise: n(r.net_paise), madeAt: r.updated_at.toISOString(),
+});
+const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 /**
  * What an owner away from the counter asks of the books, beyond the registers:
@@ -276,12 +298,73 @@ export class InsightsService {
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage WHERE truck_id = $1 AND kind <> 'correction') AS off`, [truckId])).rows[0];
       const received = Math.max(0, n(came.received) - n(came.corrected));
       const sold = groups.reduce((s, g) => s + g.qty, 0);
+      const saved = (await tx.query<BeejakRow>(`SELECT * FROM beejaks WHERE truck_id = $1`, [truckId])).rows[0];
       return {
         truckId: t.id, number: t.number, party: t.supplier, supplierKey: nameKey(t.supplier), location: t.location, arrivedOn: t.arrived, closed: t.closed,
         received, sold, off: n(came.off), left: Math.max(0, received - sold - n(came.off)), freightPaise: n(t.freight),
         groups, grossPaise: groups.reduce((s, g) => s + g.amountPaise, 0),
         from: groups.map((g) => g.first).sort()[0] ?? null, to: groups.map((g) => g.last).sort().at(-1) ?? null,
+        saved: saved ? beejakView(saved) : null,
       };
+    });
+  }
+
+  /**
+   * Makes (or makes again) a gaadi's beejak and keeps it. The boxes per quality are what has sold
+   * off the gaadi now; the bhav is the shop's; each kharcha head is worked out here from its rate
+   * — a % of the gross, ₹ a box, or a flat amount — so a kept beejak always adds up.
+   */
+  async saveBeejak(phone: string, shopId: string, truckId: string, input: BeejakInput) {
+    const b = await this.beejak(shopId, truckId);
+    if (!b.groups.length) throw new BadRequestException('Is gaadi ka abhi koi box nahi bika');
+    const bhav = new Map(input.bhav.map((x) => [x.quality, x.ratePaise]));
+    const lines = b.groups.map((g) => {
+      const ratePaise = bhav.get(g.quality) ?? 0;
+      return { quality: g.quality, qty: g.qty, ratePaise, amountPaise: g.qty * ratePaise };
+    });
+    if (lines.some((l) => l.ratePaise <= 0)) throw new BadRequestException('Har quality ka bhav likhein');
+    const boxes = lines.reduce((s, l) => s + l.qty, 0);
+    const gross = lines.reduce((s, l) => s + l.amountPaise, 0);
+    const given = new Map(input.heads.map((h) => [h.key, h]));
+    const expenses = BEEJAK_HEADS.map((head) => {
+      const h = given.get(head.key);
+      const rate = head.kind === 'flat' ? null : Math.max(0, h?.rate ?? 0);
+      const amountPaise = head.kind === 'pct' ? Math.round((gross * rate!) / 10_000)
+        : head.kind === 'box' ? rate! * boxes
+          : Math.max(0, h?.amountPaise ?? 0);
+      return { key: head.key, kind: head.kind, rate, amountPaise };
+    });
+    const spent = expenses.reduce((s, e) => s + e.amountPaise, 0);
+    return this.db.withShop(shopId, async (tx) => {
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended('beejak:' || $1::text, 0))`, [shopId]);
+      const row = (await tx.query<BeejakRow>(
+        `INSERT INTO beejaks (id, shop_id, truck_id, beejak_no, party, gaadi, day, lines, expenses, boxes, gross_paise, expenses_paise, net_paise, made_by)
+         VALUES ($1, $2, $3, (SELECT COALESCE(MAX(beejak_no), 0) + 1 FROM beejaks WHERE shop_id = $2), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (shop_id, truck_id) DO UPDATE SET party = EXCLUDED.party, gaadi = EXCLUDED.gaadi, day = EXCLUDED.day, lines = EXCLUDED.lines,
+           expenses = EXCLUDED.expenses, boxes = EXCLUDED.boxes, gross_paise = EXCLUDED.gross_paise, expenses_paise = EXCLUDED.expenses_paise,
+           net_paise = EXCLUDED.net_paise, made_by = EXCLUDED.made_by, updated_at = now()
+         RETURNING *`,
+        [uuidv7(), shopId, truckId, b.party, b.number, input.day ?? istToday(), JSON.stringify(lines), JSON.stringify(expenses), boxes, gross, spent, gross - spent, phone])).rows[0];
+      return beejakView(row);
+    });
+  }
+
+  /** Every beejak the shop has made, newest first; [q] finds a party or gaadi. */
+  async beejaks(shopId: string, q = '') {
+    return this.db.withShop(shopId, async (tx) => {
+      const like = `%${q.trim()}%`;
+      const rows = (await tx.query<BeejakRow>(
+        `SELECT * FROM beejaks WHERE $1 = '%%' OR party ILIKE $1 OR gaadi ILIKE $1 OR beejak_no::text = $2
+         ORDER BY day DESC, beejak_no DESC LIMIT 500`, [like, q.trim()])).rows;
+      return { beejaks: rows.map(beejakView) };
+    });
+  }
+
+  async beejakById(shopId: string, id: string) {
+    return this.db.withShop(shopId, async (tx) => {
+      const row = (await tx.query<BeejakRow>(`SELECT * FROM beejaks WHERE id = $1`, [id])).rows[0];
+      if (!row) throw new NotFoundException('Beejak nahi mila');
+      return beejakView(row);
     });
   }
 
