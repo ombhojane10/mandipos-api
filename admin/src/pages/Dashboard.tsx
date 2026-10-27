@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import NumberFlow from '@number-flow/react'
-import { Area, AreaChart, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, type Buckets, type Dashboard as Dash, type DayEntry } from '../api'
 import { usePeriod } from '../hooks'
 import { addDays, count, rupees, shortDate, spanDays, time } from '../format'
@@ -72,7 +72,7 @@ export function Dashboard({ shopId }: { shopId: string }) {
             <Owed title={t('Supplier (dena)')} due={data.d.payables} who={t('{n} supplier', { n: count(data.d.payables.count) })} to={go('suppliers')} />
           </div>
           <div className="pro-grid g2-1">
-            <Heat slips={slipsOf(data.book)} single={len === 1} />
+            <Hours slips={slipsOf(data.book)} />
             <TopGrahak shopId={shopId} slips={slipsOf(data.book)} />
           </div>
           <YaadCard shopId={shopId} />
@@ -316,50 +316,37 @@ function Owed({ title, due, who, to, tone }: { title: string; due: Buckets & { d
   )
 }
 
-const DAYS = ['Ravi', 'Som', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani']
-
-/** When the shop sells: weekday by hour, darker where more was sold. A single day is one row. */
-function Heat({ slips, single }: { slips: DayEntry[]; single: boolean }) {
-  const grid = new Map<string, number>()
-  let max = 0
-  const hours = new Set<number>()
-  for (const e of slips) {
-    const h = istHour(e.at)
-    const w = single ? 0 : new Date(`${e.date}T00:00:00Z`).getUTCDay()
-    const k = `${w}-${h}`
-    const v = (grid.get(k) ?? 0) + e.amountPaise
-    grid.set(k, v); max = Math.max(max, v); hours.add(h)
-  }
-  const lo = Math.min(6, ...hours), hi = Math.max(22, ...hours)
-  const cols = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i)
-  const rows = single ? [0] : [1, 2, 3, 4, 5, 6, 0]
-  const busiest = [...grid.entries()].sort((a, b) => b[1] - a[1])[0]
+/** When the shop sells: the period's bikri by hour of day, the busiest hour in the accent. */
+function Hours({ slips }: { slips: DayEntry[] }) {
+  const by = new Array(24).fill(0) as number[]
+  for (const e of slips) by[istHour(e.at)] += e.amountPaise
+  const used = by.map((v, h) => (v ? h : -1)).filter((h) => h >= 0)
+  const lo = Math.min(6, ...used), hi = Math.max(21, ...used)
+  const rows = Array.from({ length: hi - lo + 1 }, (_, i) => ({ h: lo + i, v: by[lo + i] }))
+  const top = rows.reduce((m, r) => (r.v > m.v ? r : m), rows[0])
   return (
-    <motion.div {...rise} className="pro-card pro-heat">
+    <motion.div {...rise} className="pro-card pro-hours">
       <div className="hd">
         <h3>{t('Kab bikta hai')}</h3>
-        {busiest && <span className="pill">{!single && `${t(DAYS[Number(busiest[0].split('-')[0])])} · `}{hourLabel(Number(busiest[0].split('-')[1]))}</span>}
+        {top?.v > 0 && <span className="pill">{hourLabel(top.h)}</span>}
       </div>
       {!slips.length ? <p className="empty">{t('Is period mein bikri nahi')}</p> : (
-        <div className="heat" style={{ gridTemplateColumns: `${single ? 0 : 52}px repeat(${cols.length}, minmax(0, 1fr))` }}>
-          {rows.map((w) => (
-            <Row key={w}>
-              {!single ? <span className="rl">{t(DAYS[w])}</span> : <span />}
-              {cols.map((h) => {
-                const v = grid.get(`${w}-${h}`) ?? 0
-                const a = v ? 0.12 + 0.88 * (v / max) : 0
-                return <span key={h} className="cell" title={`${single ? '' : `${t(DAYS[w])} `}${hourLabel(h)} · ${rupees(v)}`} style={{ background: v ? `rgb(15 118 110 / ${a})` : undefined }} />
-              })}
-            </Row>
-          ))}
-          <span />
-          {cols.map((h) => <span key={h} className="cl">{h % 3 === 0 ? hourLabel(h).replace(' ', '') : ''}</span>)}
-        </div>
+        <div className="hours-chart"><ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} margin={{ top: 8, right: 18, left: 18, bottom: 0 }} barCategoryGap="22%">
+            <XAxis dataKey="h" ticks={rows.filter((r) => r.h % 3 === 0).map((r) => r.h)} interval={0} tickFormatter={(h: number) => hourLabel(h)} tickLine={false} axisLine={false} tick={{ fontSize: 11.5, fill: '#a3aab5' }} />
+            <YAxis hide />
+            <Tooltip cursor={{ fill: '#f3f4f6' }} content={({ active, payload }) => active && payload?.length ? (
+              <div className="pro-tip"><b>{hourLabel(Number(payload[0].payload.h))}</b><span>{rupees(Number(payload[0].value))}</span></div>
+            ) : null} />
+            <Bar dataKey="v" radius={[4, 4, 0, 0]} animationDuration={600}>
+              {rows.map((r) => <Cell key={r.h} fill={r.h === top.h && r.v ? C.accent : '#dfe5e4'} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer></div>
       )}
     </motion.div>
   )
 }
-const Row = ({ children }: { children: ReactNode }) => <>{children}</>
 
 /** The period's biggest buyers, with a bar against the first. */
 function TopGrahak({ shopId, slips }: { shopId: string; slips: DayEntry[] }) {
