@@ -944,6 +944,7 @@ describe('Bolo conversation', () => {
       'sohan ko udhaar bhejo': { kind: 'whatsapp', say: 'Sohan ko udhaar', heard: 'Sohan' },
       '15 dana 22 ke aur 8 dana 35 ke': { kind: 'calc', say: 'Hisab', calc: { lines: [{ qty: 15, rate: 22 }, { qty: 8, rate: 35 }] } },
       'naya grahak pappu number 9876500099 purana udhaar 500': { kind: 'grahak', say: 'Naya grahak Pappu', heard: 'Pappu', grahak: { name: 'Pappu', phone: '9876500099', opening: 500, new: true } },
+      'bholu traders ka number 600 kar do': { kind: 'grahak', say: 'Number badlo', heard: 'Bholu Traders', grahak: { name: 'Bholu Traders', phone: '600' } },
       'nayi gaadi 3289 pollachi 500 dana': { kind: 'gaadi', say: 'Nayi gaadi', nayi_gaadi: { number: '3289', maal: 'Pollachi', lines: [{ grade: 'I', qty: 500 }] } },
       'ek gaadi aayi hai': { kind: 'gaadi', say: 'Nayi gaadi' },
       'om bhojane 35 panni 43 ke': { kind: 'slip', say: 'Om', heard: 'Om Bhojane', buyer_name: 'Om Bhojane', slip: { lines: [{ grade: 'I', rate: 43 }], kattas: 35, packing: 'panni' } },
@@ -1020,6 +1021,15 @@ describe('Bolo conversation', () => {
       expect(e1.ask).toMatchObject({ question: 'Naya grahak Pappu banayein?', detail: ['Naya grahak: Pappu', 'Mobile: 9876500099', 'Purana udhaar: ₹500'] });
       expect((await tap('yes', 's5')).say).toBe('Naya grahak Pappu ban gaya, number 9876500099');
       expect((await http().get(`/v1/admin/shops/${shopId}/buyers?q=Pappu`).set(web).expect(200)).body.buyers[0]).toMatchObject({ name: 'Pappu', phone: '9876500099', balancePaise: 50000 });
+
+      // 5b. A half-heard number is asked again; the typed answer is what's saved — not the first
+      // sentence's "600" (that asked forever and ended in "Samajh nahi aaya").
+      expect((await say('bholu traders ka number 600 kar do', 's5b')).ask).toMatchObject({ expect: 'phone', question: 'Bholu Traders ka 10 ank ka mobile number boliye' });
+      expect((await say('600', 's5b')).ask.question).toBe('Bholu Traders ka 10 ank ka mobile number boliye');
+      const n3 = await say('98765 00083', 's5b');
+      expect(n3.ask).toMatchObject({ question: 'Bholu Traders ki jaankari badlein?', tap: true, detail: ['Bholu Traders', 'Mobile: 9876500082 → 9876500083'] });
+      expect((await tap('yes', 's5b')).say).toBe('Bholu Traders ki jaankari save ho gayi');
+      expect((await http().get(`/v1/admin/shops/${shopId}/buyers?q=Bholu Traders`).set(web).expect(200)).body.buyers[0]).toMatchObject({ phone: '9876500083' });
 
       // 6. A gaadi: the supplier asked once (or later), previewed, added only on the tap.
       expect((await say('nayi gaadi 3289 pollachi 500 dana', 's6')).ask).toMatchObject({ question: 'Supplier kaun hai?', expect: 'text' });

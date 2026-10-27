@@ -298,7 +298,12 @@ export class PortalVoiceService {
     // On a preview, a no cancels; a yes ("haan jod do") or a word or two shows it again for the tap.
     if (q.slot === 'confirm') return quit && words <= 3 ? { value: 'cancel', heard } : yn === 'yes' || (words <= 3 && !command) ? { heard, keep: true } : { heard };
     if (quit && words <= 3) return { value: 'cancel', heard };
-    if (q.expect === 'phone') { const ph = phoneIn(heard); return ph && words <= 6 ? { value: ph, heard } : { heard }; }
+    if (q.expect === 'phone') {
+      const ph = phoneIn(heard);
+      if (ph && words <= 6) return { value: ph, heard };
+      // A few digits short ("600", "98765 4321") is a wrong number, not a new request: ask again.
+      return words <= 6 && /\d{3,}/.test(heard.replace(/[\s-]/g, '')) ? { value: heard, heard } : { heard };
+    }
     if (q.expect === 'number') { const x = numberIn(heard); return x !== null && !command ? { value: String(x), heard } : { heard }; }
     if (command) return { heard };
     if (q.expect === 'text') {
@@ -418,10 +423,14 @@ export class PortalVoiceService {
     s.focus = { buyerId: b.id, buyerName: b.name };
 
     if (q.job === 'grahak') {
-      const ph = g.phone ? phoneIn(g.phone) : null;
+      // The number answered to "number boliye" (typed or spoken), or the one already read back,
+      // wins over the half-heard one in the first sentence — else that asks again forever.
+      type Patch = { phone?: string; address?: string; code?: string };
+      const kept = (data as Record<string, unknown>).patch as Patch | undefined;
+      const answered = q.slot === 'phone' && value ? phoneIn(value) : null;
+      const ph = answered ?? kept?.phone ?? (g.phone ? phoneIn(g.phone) : null);
       if (g.phone && !ph) return this.ask(s, q, data, 'phone', 'phone', `${b.name} ka 10 ank ka mobile number boliye`, [CANCEL]);
-      const patch: { phone?: string; address?: string; code?: string } = { ...(ph ? { phone: ph } : {}), ...(g.address ? { address: g.address } : {}), ...(g.code ? { code: g.code } : {}) };
-      if (q.slot === 'phone' && value && phoneIn(value)) patch.phone = phoneIn(value)!;
+      const patch: Patch = { ...(ph ? { phone: ph } : {}), ...(g.address ? { address: g.address } : {}), ...(g.code ? { code: g.code } : {}) };
       if (!Object.keys(patch).length) return this.ask(s, q, data, 'phone', 'phone', `${b.name} ka mobile number boliye`, [CANCEL]);
       (data as Record<string, unknown>).patch = patch;
       const detail = [b.name, ...(patch.phone ? [`Mobile: ${b.phone || '—'} → ${patch.phone}`] : []), ...(patch.address ? [`Pata: ${patch.address}`] : []), ...(patch.code ? [`Code: ${patch.code}`] : [])];

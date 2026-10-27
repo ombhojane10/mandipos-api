@@ -317,11 +317,11 @@ export default function App() {
         )}
 
         {goto && <GoTo shopId={shopId} onClose={() => setGoto(false)} />}
-        {shopId && <NewEntry key={shopId} shopId={shopId} />}
+        {shopId && <NewEntry key={`entry-${shopId}`} shopId={shopId} />}
         <VoucherHost />
         <WhatsAppHost />
         <ScanHost />
-        {shopId && <BoloDock key={shopId} shopId={shopId} screen={title} onBoloPage={current === 'bolo'} />}
+        {shopId && <BoloDock key={`bolo-${shopId}`} shopId={shopId} screen={title} onBoloPage={current === 'bolo'} />}
         <ExportHost shopId={shopId} fallback={shop ?? null} />
         <Help />
       </div>
