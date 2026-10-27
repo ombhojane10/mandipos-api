@@ -1,137 +1,451 @@
-import { api, type Dashboard as Dash, type DayEntry } from '../api'
-import { TrendChart } from '../Chart'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
+import NumberFlow from '@number-flow/react'
+import { Area, AreaChart, CartesianGrid, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { api, type Buckets, type Dashboard as Dash, type DayEntry } from '../api'
 import { usePeriod } from '../hooks'
-import { count, rupees } from '../format'
+import { addDays, count, rupees, shortDate, spanDays, time } from '../format'
 import { href, periodQuery, type Report } from '../routes'
 import { useLoad } from '../useLoad'
-import { Ages, Change, Kpi, PeriodBar, Skeleton } from '../ui'
-import { EntryTable } from './DayBook'
+import { PeriodBar } from '../ui'
 import * as I from '../icons'
 import { openEntry, type EntryKind } from '../entries/kinds'
+import { openRaseed, openVoucher } from '../keys'
 import { MicIcon } from '../voice/MicIcon'
 import { t } from '../i18n'
 import { useSession } from '../App'
 import { AngoorStrip } from './Angoor'
+import { HEADS } from './DayBook'
 import { openScan } from '../Scan'
+import { compact, hourLabel, istHour, paymentsOf, perSlot, series, slipsOf, type Books, type Metric } from './dash/series'
 
-const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
-  { kind: 'parchi', key: 'F8', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
-  { kind: 'vasooli', key: 'F6', label: t('Vasooli'), sub: t('Grahak se paisa'), tone: 'blue', icon: I.IWallet },
-  { kind: 'kharcha', key: 'N K', label: t('Kharcha'), sub: t('Day book'), tone: 'red', icon: I.ICash },
-  { kind: 'gaadi', key: 'F9', label: t('Nayi Gaadi'), sub: t('Kharid'), tone: 'amber', icon: I.ITruck },
+const QUICK: { kind: EntryKind; key: string; label: string; icon: () => ReactNode }[] = [
+  { kind: 'parchi', key: 'F8', label: t('Nayi Parchi'), icon: I.IRupee },
+  { kind: 'vasooli', key: 'F6', label: t('Vasooli'), icon: I.IWallet },
+  { kind: 'kharcha', key: 'N K', label: t('Kharcha'), icon: I.ICash },
+  { kind: 'gaadi', key: 'F9', label: t('Nayi Gaadi'), icon: I.ITruck },
 ]
 
-/** The shop at a glance, like the first page of Tally: four figures, the trend, and what happened last. */
+const C = { accent: '#0f766e', before: '#a3aab5', cash: '#12a150', upi: '#5b5bd6', udhaar: '#e8890c', grid: '#eef0f3' }
+const INR = { style: 'currency', currency: 'INR', maximumFractionDigits: 0 } as const
+const rise = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } } as const
+
+/** The shop at a glance: where the money is, how the period went against the last one, and what just happened. */
 export function Dashboard({ shopId }: { shopId: string }) {
   const [period, setPeriod] = usePeriod()
   const angoor = useSession().shops?.find((s) => s.id === shopId)?.commodity === 'angoor'
-  const unit = (n: number) => t(angoor ? '{n} box' : '{n} nag', { n: count(n) })
-  const { data, error, loading } = useLoad(async () => {
-    const [d, book] = await Promise.all([
-      api<Dash>(`/v1/admin/shops/${shopId}/dashboard?from=${period.from}&to=${period.to}`),
-      api<{ entries: DayEntry[] }>(`/v1/admin/shops/${shopId}/daybook?from=${period.from}&to=${period.to}`),
+  const unit = angoor ? t('box') : t('nag')
+  const { from, to } = period
+  const len = spanDays(from, to)
+  const pFrom = addDays(from, -len), pTo = addDays(from, -1)
+  const { data, error, loading } = useLoad(async (): Promise<Books> => {
+    const day = (a: string, b: string) => api<{ entries: DayEntry[] }>(`/v1/admin/shops/${shopId}/daybook?from=${a}&to=${b}`).then((r) => r.entries)
+    const [d, prev, book, prevBook] = await Promise.all([
+      api<Dash>(`/v1/admin/shops/${shopId}/dashboard?from=${from}&to=${to}`),
+      api<Dash>(`/v1/admin/shops/${shopId}/dashboard?from=${pFrom}&to=${pTo}`),
+      day(from, to), day(pFrom, pTo),
     ])
-    return { d, recent: book.entries.slice(0, 8) }
-  }, [shopId, period.from, period.to])
-  const to = (report: Report) => href({ page: 'report', shopId, report }) + periodQuery()
+    return { d, prev, book, prevBook }
+  }, [shopId, from, to])
+  const go = (report: Report) => href({ page: 'report', shopId, report }) + periodQuery()
 
   return (
-    <>
-      <div className="quick" style={{ marginBottom: 10 }}>
-        <a className="quick-bolo" href={href({ page: 'report', shopId, report: 'bolo' })}>
-          <span className="ic t-blue"><MicIcon /></span><span><b>{t('Bolo')}</b> · {angoor ? t('Parchi bolein, kuch bhi poochhein') : t('Kuch bhi poochhein')}</span>
-        </a>
-        {angoor && (
-          <button type="button" onClick={() => openScan(shopId)}>
-            <span className="ic t-green"><I.IScan /></span><span><b>{t('Scan')}</b> · {t('Maal dein')}</span>
-          </button>
-        )}
+    <div className="pro-dash">
+      <BoloBar shopId={shopId} angoor={angoor} />
+      <div className="pro-actions">
+        {angoor && <button type="button" onClick={() => openScan(shopId)}><I.IScan /><span>{t('Scan')}</span></button>}
         {QUICK.map((q) => (
-          <button key={q.kind} type="button" onClick={() => openEntry(q.kind)}>
-            <span className={`ic t-${q.tone}`}><q.icon /></span><span><kbd>{q.key}: </kbd><b>{q.label}</b></span>
-          </button>
+          <button key={q.kind} type="button" onClick={() => openEntry(q.kind)}><q.icon /><span>{q.label}</span><kbd>{q.key}</kbd></button>
         ))}
       </div>
-      <div className="toolbar"><PeriodBar value={period} onChange={setPeriod} /></div>
+      <div className="pro-bar"><PeriodBar value={period} onChange={setPeriod} /></div>
       {error && <p className="error">{error}</p>}
-      {!data ? <Skeleton rows={8} /> : (
-        <div className={`stack${loading ? ' dim' : ''}`}>
-          <div className="grid g4">
-            <Kpi icon={<I.IRupee />} tone="green" label={t('Bikri')} value={rupees(data.d.now.salesPaise)} to={to('daybook')}
-              sub={<><Change now={data.d.now.salesPaise} before={data.d.before.salesPaise} /> · {t('{n} parchi', { n: count(data.d.now.slips) })}</>} />
-            <Kpi icon={<I.ICart />} tone="blue" label={t('Kharid')} value={rupees(data.d.now.purchasePaise)} to={to('suppliers')}
-              sub={<><Change now={data.d.now.purchasePaise} before={data.d.before.purchasePaise} /> · {t('{n} gaadi', { n: count(data.d.now.gaadis) })}</>} />
-            <Kpi icon={<I.IUdhaar />} tone="amber" label={t('Udhaar (lena)')} value={<span className="due">{rupees(data.d.receivables.duePaise)}</span>} to={to('outstanding')}
-              sub={t('{n} grahak', { n: count(data.d.receivables.count) })} />
-            <Kpi icon={<I.IWallet />} tone="red" label={t('Supplier (dena)')} value={rupees(data.d.payables.duePaise)} to={to('suppliers')}
-              sub={t('{n} supplier', { n: count(data.d.payables.count) })} />
+      {!data ? <DashSkeleton /> : (
+        <div className={`pro-stack${loading ? ' dim' : ''}`}>
+          <Paisa d={data.d} go={go} />
+          <Overview books={data} from={from} to={to} go={go} />
+          <Insights books={data} from={from} to={to} unit={unit} />
+          {angoor && <AngoorStrip shopId={shopId} from={from} to={to} />}
+          <div className="pro-grid g3">
+            <Split slips={slipsOf(data.book)} />
+            <Owed title={t('Udhaar (lena)')} due={data.d.receivables} who={t('{n} grahak', { n: count(data.d.receivables.count) })} to={go('outstanding')} tone="due" />
+            <Owed title={t('Supplier (dena)')} due={data.d.payables} who={t('{n} supplier', { n: count(data.d.payables.count) })} to={go('suppliers')} />
           </div>
-
-          {angoor && <AngoorStrip shopId={shopId} from={period.from} to={period.to} />}
-
-          <div className="grid g2-1">
-            <div className="card">
-              <div className="hd"><h3>{t('Bikri aur Kharid')}</h3></div>
-              <div className="bd">{data.d.trend.some((t) => t.salesPaise || t.purchasePaise) ? <TrendChart data={data.d.trend} /> : <p className="empty">{t('Is hafte koi bikri ya kharid nahi')}</p>}</div>
-            </div>
-            <div className="card">
-              <div className="hd"><h3>{t('Sabse zyada bika')}</h3><a href={to('items')}>{t('Sab')} ›</a></div>
-              <div className="bd lines-list">
-                {data.d.items.map((it, i) => (
-                  <div key={it.brand}>
-                    <span className="rank">{i + 1}</span>
-                    <span className="grow"><b>{it.brand}</b><small>{unit(it.nags)}</small></span>
-                    <span className="money b">{rupees(it.amountPaise)}</span>
-                  </div>
-                ))}
-                {data.d.items.length === 0 && <p className="empty">{t('Is period mein bikri nahi')}</p>}
-              </div>
-            </div>
+          <div className="pro-grid g2-1">
+            <Heat slips={slipsOf(data.book)} single={len === 1} />
+            <TopGrahak shopId={shopId} slips={slipsOf(data.book)} />
           </div>
-
           <YaadCard shopId={shopId} />
-
-          <div>
-            <div className="card">
-              <div className="hd"><h3>{t('Taaza entries')}</h3><a href={to('daybook')}>{t('Day Book')} ›</a></div>
-              <EntryTable shopId={shopId} entries={data.recent} compact />
+          <div className="pro-grid g2">
+            <Feed shopId={shopId} entries={data.book.slice(0, 9)} more={go('daybook')} />
+            <div className="pro-col">
+              <Items items={data.d.items} unit={unit} more={go('items')} />
+              <StockCard shopId={shopId} unit={unit} />
             </div>
-          </div>
-
-          <div className="grid g4 stack-sm">
-            <a className="card" href={to('cashbook')}>
-              <div className="hd"><h3>{t('Cash aur Bank')}</h3></div>
-              <div className="bd">
-                <div className="big-fig">
-                  <span className="lb">{t('Abhi kul')}</span>
-                  <span className="v">{rupees(data.d.cash.galla + data.d.cash.office + data.d.cash.bank)}</span>
-                </div>
-                <div className="ages" style={{ marginTop: 10 }}>
-                  <div><span className="dot" style={{ background: '#16a34a' }} /><span>{t('Galla')}</span><span className="money">{rupees(data.d.cash.galla)}</span></div>
-                  <div><span className="dot" style={{ background: '#a3a3a3' }} /><span>{t('Office')}</span><span className="money">{rupees(data.d.cash.office)}</span></div>
-                  <div><span className="dot" style={{ background: '#2563eb' }} /><span>{t('Bank / UPI')}</span><span className="money">{rupees(data.d.cash.bank)}</span></div>
-                </div>
-              </div>
-            </a>
-            <a className="card" href={to('outstanding')}>
-              <div className="hd"><h3>{t('Udhaar · kitna purana')}</h3></div>
-              <div className="bd">
-                <span className="money b due" style={{ fontSize: 18 }}>{rupees(data.d.receivables.duePaise)}</span>
-                <Ages b={data.d.receivables} />
-              </div>
-            </a>
-            <a className="card" href={to('suppliers')}>
-              <div className="hd"><h3>{t('Supplier · kitna purana')}</h3></div>
-              <div className="bd">
-                <span className="money b" style={{ fontSize: 18 }}>{rupees(data.d.payables.duePaise)}</span>
-                <Ages b={data.d.payables} />
-              </div>
-            </a>
-            <StockCard shopId={shopId} unit={unit} />
           </div>
         </div>
       )}
-    </>
+    </div>
+  )
+}
+
+/** Like a payments console's "ask" bar: one line, an example question turning over. */
+function BoloBar({ shopId, angoor }: { shopId: string; angoor: boolean }) {
+  const asks = angoor
+    ? [t('aaj kitna bika?'), t('Sharma ko 20 box Royal 450 bhav'), t('kiska udhaar sabse zyada hai?'), t('kal kitni gaadi aayi?')]
+    : [t('aaj kitna bika?'), t('kiska udhaar sabse zyada hai?'), t('is hafte ki vasooli?'), t('galla mein kitna hai?')]
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setI((n) => (n + 1) % asks.length), 3200)
+    return () => clearInterval(id)
+  }, [asks.length])
+  return (
+    <a className="pro-bolo" href={href({ page: 'report', shopId, report: 'bolo' })}>
+      <span className="pro-bolo-ic"><MicIcon /></span>
+      <span className="pro-bolo-lb">{t('Bolo')}</span>
+      <span className="pro-bolo-q">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.25 }}>“{asks[i]}”</motion.span>
+        </AnimatePresence>
+      </span>
+      <span className="pro-bolo-go">{t('Poochhein')}</span>
+    </a>
+  )
+}
+
+/** Where the money is right now — a settlement strip: three pots and the total. */
+function Paisa({ d, go }: { d: Dash; go: (r: Report) => string }) {
+  const total = d.cash.galla + d.cash.office + d.cash.bank
+  const pots: { k: string; label: string; v: number; icon: ReactNode }[] = [
+    { k: 'galla', label: t('Galla'), v: d.cash.galla, icon: <I.ICash /> },
+    { k: 'office', label: t('Office'), v: d.cash.office, icon: <I.IStore /> },
+    { k: 'bank', label: t('Bank / UPI'), v: d.cash.bank, icon: <I.IWallet /> },
+  ]
+  return (
+    <motion.a {...rise} className="pro-card pro-paisa" href={go('cashbook')}>
+      {pots.map((p) => (
+        <div key={p.k} className="pot">
+          <span className={`pot-ic ${p.k}`}>{p.icon}</span>
+          <span className="lb">{p.label}</span>
+          <span className="v"><NumberFlow value={Math.round(p.v / 100)} locales="en-IN" format={INR} /></span>
+        </div>
+      ))}
+      <div className="pot total">
+        <span className="lb">{t('Abhi kul')}</span>
+        <span className="v big"><NumberFlow value={Math.round(total / 100)} locales="en-IN" format={INR} /></span>
+      </div>
+    </motion.a>
+  )
+}
+
+const TABS: { m: Metric; label: string }[] = [
+  { m: 'bikri', label: t('Bikri') }, { m: 'vasooli', label: t('Vasooli') }, { m: 'kharid', label: t('Kharid') }, { m: 'parchi', label: t('Parchi') },
+]
+
+/** The period's four figures as tabs, each against the last period; the chosen one drawn below. */
+function Overview({ books, from, to, go }: { books: Books; from: string; to: string; go: (r: Report) => string }) {
+  const [m, setM] = useState<Metric>('bikri')
+  const { d, prevBook } = books
+  const vas = (es: DayEntry[]) => paymentsOf(es).reduce((s, e) => s + e.amountPaise, 0)
+  const figs: Record<Metric, [number, number]> = {
+    bikri: [d.now.salesPaise, d.before.salesPaise],
+    vasooli: [vas(books.book), vas(prevBook)],
+    kharid: [d.now.purchasePaise, d.before.purchasePaise],
+    parchi: [d.now.slips, d.before.slips],
+  }
+  const { points, hourly } = useMemo(() => series(m, books, from, to), [m, books, from, to])
+  const money = m !== 'parchi'
+  const fmt = (v: number) => (money ? rupees(v) : count(v))
+  const xLabel = (x: string) => (hourly ? hourLabel(Number(x)) : shortDate(x))
+  const empty = points.every((p) => !p.now && !p.before)
+  const link: Record<Metric, Report> = { bikri: 'register', vasooli: 'vasooli', kharid: 'gaadis', parchi: 'daybook' }
+
+  return (
+    <motion.section {...rise} className="pro-card pro-over">
+      <div className="tabs-row" role="tablist">
+        {TABS.map((tb) => {
+          const [now, before] = figs[tb.m]
+          return (
+            <button key={tb.m} role="tab" aria-selected={m === tb.m} onClick={() => setM(tb.m)}>
+              <span className="lb">{tb.label}</span>
+              <span className="v">{tb.m === 'parchi' ? <NumberFlow value={now} locales="en-IN" /> : <NumberFlow value={Math.round(now / 100)} locales="en-IN" format={INR} />}</span>
+              <Delta now={now} before={before} />
+              {m === tb.m && <motion.span layoutId="tab-line" className="line" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />}
+            </button>
+          )
+        })}
+      </div>
+      <div className="chart-area">
+        {empty ? <p className="empty">{t('Is period mein kuch nahi')}</p> : (
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={points} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="fillNow" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={C.accent} stopOpacity={0.22} />
+                  <stop offset="100%" stopColor={C.accent} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} stroke={C.grid} />
+              <XAxis dataKey="x" tickFormatter={xLabel} tickLine={false} axisLine={false} minTickGap={24} tick={{ fontSize: 11.5, fill: '#8a919c' }} />
+              <YAxis tickFormatter={(v: number) => (money ? compact(v) : count(v))} tickLine={false} axisLine={false} width={56} tick={{ fontSize: 11.5, fill: '#8a919c' }} />
+              <Tooltip cursor={{ stroke: '#cfd4db', strokeDasharray: '3 3' }} content={({ active, payload, label }) => active && payload?.length ? (
+                <div className="pro-tip">
+                  <b>{xLabel(String(label))}</b>
+                  <span><i style={{ background: C.accent }} />{fmt(Number(payload.find((p) => p.dataKey === 'now')?.value ?? 0))}</span>
+                  {payload.some((p) => p.dataKey === 'before') && <span className="muted"><i style={{ background: C.before }} />{t('Pichhla')} {fmt(Number(payload.find((p) => p.dataKey === 'before')?.value ?? 0))}</span>}
+                </div>
+              ) : null} />
+              <Line type="monotone" dataKey="before" stroke={C.before} strokeWidth={1.5} strokeDasharray="4 4" dot={false} activeDot={false} isAnimationActive={false} />
+              <Area type="monotone" dataKey="now" stroke={C.accent} strokeWidth={2.25} fill="url(#fillNow)" activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }} animationDuration={700} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+        <div className="chart-ft">
+          <span><i style={{ background: C.accent }} />{t('Is period')}</span>
+          <span><i className="dash" />{t('Pichhla')}</span>
+          <a href={go(link[m])}>{t('Sab dekhein')} →</a>
+        </div>
+      </div>
+    </motion.section>
+  )
+}
+
+function Delta({ now, before }: { now: number; before: number }) {
+  if (!before) return <span className="delta flat">—</span>
+  const pct = Math.round(((now - before) / before) * 100)
+  if (pct === 0) return <span className="delta flat">0%</span>
+  return <span className={`delta ${pct > 0 ? 'up' : 'down'}`}>{pct > 0 ? '▲' : '▼'} {Math.abs(pct)}%</span>
+}
+
+/** Small figures with their own line, as a payments console's "insights". */
+function Insights({ books, from, to, unit }: { books: Books; from: string; to: string; unit: string }) {
+  const slips = slipsOf(books.book), pays = paymentsOf(books.book)
+  const sales = slips.reduce((s, e) => s + e.amountPaise, 0)
+  const nags = slips.reduce((s, e) => s + e.nags, 0)
+  const given = slips.reduce((s, e) => s + e.udhaarPaise, 0)
+  const got = pays.reduce((s, e) => s + e.amountPaise, 0)
+  const net = given - got
+  const tiles = [
+    { k: 'avg', label: t('Avg parchi'), v: slips.length ? rupees(sales / slips.length) : '—', line: perSlot(slips, from, to, (e) => e.amountPaise) },
+    { k: 'nag', label: angoorLabel(unit), v: count(nags), line: perSlot(slips, from, to, (e) => e.nags) },
+    { k: 'given', label: t('Naya udhaar'), v: rupees(given), sub: sales ? t('{n}% bikri ka', { n: Math.round((given / sales) * 100) }) : '', line: perSlot(slips, from, to, (e) => e.udhaarPaise), tone: C.udhaar },
+    { k: 'net', label: net > 0 ? t('Udhaar badha') : t('Udhaar ghata'), v: rupees(Math.abs(net)), sub: t('vasooli {v}', { v: rupees(got) }), line: perSlot(books.book.filter((e) => !e.voided), from, to, (e) => (e.kind === 'slip' ? e.udhaarPaise : e.kind === 'payment' ? -e.amountPaise : 0)), tone: net > 0 ? '#d92d20' : C.cash },
+  ]
+  return (
+    <div className="pro-grid g4">
+      {tiles.map((x, i) => (
+        <motion.div key={x.k} {...rise} transition={{ ...rise.transition, delay: 0.04 * i }} className="pro-card pro-tile">
+          <span className="lb">{x.label}</span>
+          <span className="v">{x.v}</span>
+          {x.sub && <span className="sub">{x.sub}</span>}
+          <Spark data={x.line} color={x.tone ?? C.accent} />
+        </motion.div>
+      ))}
+    </div>
+  )
+}
+const angoorLabel = (unit: string) => (unit === t('box') ? t('Box bike') : t('Nag bike'))
+
+function Spark({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2 || data.every((v) => !v)) return <div className="spark" />
+  const pts = data.map((v, i) => ({ i, v }))
+  const id = `sp${color.replace('#', '')}`
+  return (
+    <div className="spark">
+      <ResponsiveContainer width="100%" height={40}>
+        <AreaChart data={pts} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.18} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.75} fill={`url(#${id})`} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+/** How the period's slips were paid: cash, UPI, udhaar. */
+function Split({ slips }: { slips: DayEntry[] }) {
+  const parts = [
+    { k: 'cash', label: t('Cash'), v: slips.reduce((s, e) => s + e.cashPaise, 0), c: C.cash },
+    { k: 'upi', label: 'UPI', v: slips.reduce((s, e) => s + e.upiPaise, 0), c: C.upi },
+    { k: 'udhaar', label: t('Udhaar'), v: slips.reduce((s, e) => s + e.udhaarPaise, 0), c: C.udhaar },
+  ]
+  const total = parts.reduce((s, p) => s + p.v, 0)
+  return (
+    <motion.div {...rise} className="pro-card pro-split">
+      <h3>{t('Payment')}</h3>
+      {!total ? <p className="empty">{t('Is period mein bikri nahi')}</p> : (
+        <div className="split-body">
+          <div className="donut">
+            <ResponsiveContainer width="100%" height={150}>
+              <PieChart>
+                <Pie data={parts.filter((p) => p.v)} dataKey="v" nameKey="label" innerRadius={50} outerRadius={70} paddingAngle={2} cornerRadius={4} stroke="none" startAngle={90} endAngle={-270} animationDuration={700}>
+                  {parts.filter((p) => p.v).map((p) => <Cell key={p.k} fill={p.c} />)}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+            <span className="mid"><b>{Math.round(((parts[0].v + parts[1].v) / total) * 100)}%</b><small>{t('nakad')}</small></span>
+          </div>
+          <div className="split-list">
+            {parts.map((p) => (
+              <div key={p.k}>
+                <i style={{ background: p.c }} /><span>{p.label}</span>
+                <b className="money">{rupees(p.v)}</b>
+                <small>{Math.round((p.v / total) * 100)}%</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  )
+}
+
+/** A balance and how old it is, as one bar in three shades. */
+function Owed({ title, due, who, to, tone }: { title: string; due: Buckets & { duePaise: number }; who: string; to: string; tone?: 'due' }) {
+  const all = due.d0_7 + due.d8_30 + due.d31 || 1
+  const segs = [
+    { k: 'a0', label: t('0–7 din'), v: due.d0_7 },
+    { k: 'a1', label: t('8–30 din'), v: due.d8_30 },
+    { k: 'a2', label: t('30+ din'), v: due.d31 },
+  ]
+  return (
+    <motion.a {...rise} className="pro-card pro-owed" href={to}>
+      <h3>{title}</h3>
+      <span className={`v${tone ? ` ${tone}` : ''}`}><NumberFlow value={Math.round(due.duePaise / 100)} locales="en-IN" format={INR} /></span>
+      <span className="sub">{who}</span>
+      <div className="age-bar">
+        {segs.map((s) => s.v > 0 && <motion.span key={s.k} className={s.k} initial={{ width: 0 }} animate={{ width: `${(s.v / all) * 100}%` }} transition={{ duration: 0.6, ease: 'easeOut' }} />)}
+      </div>
+      <div className="age-list">
+        {segs.map((s) => <div key={s.k}><i className={s.k} /><span>{s.label}</span><b className="money">{compact(s.v)}</b></div>)}
+      </div>
+    </motion.a>
+  )
+}
+
+const DAYS = ['Ravi', 'Som', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani']
+
+/** When the shop sells: weekday by hour, darker where more was sold. A single day is one row. */
+function Heat({ slips, single }: { slips: DayEntry[]; single: boolean }) {
+  const grid = new Map<string, number>()
+  let max = 0
+  const hours = new Set<number>()
+  for (const e of slips) {
+    const h = istHour(e.at)
+    const w = single ? 0 : new Date(`${e.date}T00:00:00Z`).getUTCDay()
+    const k = `${w}-${h}`
+    const v = (grid.get(k) ?? 0) + e.amountPaise
+    grid.set(k, v); max = Math.max(max, v); hours.add(h)
+  }
+  const lo = Math.min(6, ...hours), hi = Math.max(22, ...hours)
+  const cols = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i)
+  const rows = single ? [0] : [1, 2, 3, 4, 5, 6, 0]
+  const busiest = [...grid.entries()].sort((a, b) => b[1] - a[1])[0]
+  return (
+    <motion.div {...rise} className="pro-card pro-heat">
+      <div className="hd">
+        <h3>{t('Kab bikta hai')}</h3>
+        {busiest && <span className="pill">{!single && `${t(DAYS[Number(busiest[0].split('-')[0])])} · `}{hourLabel(Number(busiest[0].split('-')[1]))}</span>}
+      </div>
+      {!slips.length ? <p className="empty">{t('Is period mein bikri nahi')}</p> : (
+        <div className="heat" style={{ gridTemplateColumns: `${single ? 0 : 52}px repeat(${cols.length}, minmax(0, 1fr))` }}>
+          {rows.map((w) => (
+            <Row key={w}>
+              {!single ? <span className="rl">{t(DAYS[w])}</span> : <span />}
+              {cols.map((h) => {
+                const v = grid.get(`${w}-${h}`) ?? 0
+                const a = v ? 0.12 + 0.88 * (v / max) : 0
+                return <span key={h} className="cell" title={`${single ? '' : `${t(DAYS[w])} `}${hourLabel(h)} · ${rupees(v)}`} style={{ background: v ? `rgb(15 118 110 / ${a})` : undefined }} />
+              })}
+            </Row>
+          ))}
+          <span />
+          {cols.map((h) => <span key={h} className="cl">{h % 3 === 0 ? hourLabel(h).replace(' ', '') : ''}</span>)}
+        </div>
+      )}
+    </motion.div>
+  )
+}
+const Row = ({ children }: { children: ReactNode }) => <>{children}</>
+
+/** The period's biggest buyers, with a bar against the first. */
+function TopGrahak({ shopId, slips }: { shopId: string; slips: DayEntry[] }) {
+  const by = new Map<string, { id: string | null; name: string; v: number; n: number }>()
+  for (const e of slips) {
+    const k = e.buyerId ?? `cash:${e.party}`
+    const r = by.get(k) ?? { id: e.buyerId, name: e.party || t('Cash'), v: 0, n: 0 }
+    r.v += e.amountPaise; r.n += 1; by.set(k, r)
+  }
+  const top = [...by.values()].sort((a, b) => b.v - a.v).slice(0, 6)
+  const max = top[0]?.v || 1
+  return (
+    <motion.div {...rise} className="pro-card pro-rank">
+      <div className="hd"><h3>{t('Top grahak')}</h3></div>
+      {!top.length ? <p className="empty">{t('Is period mein bikri nahi')}</p> : top.map((r, i) => {
+        const body = (
+          <>
+            <span className="av" data-i={i % 5}>{initials(r.name)}</span>
+            <span className="nm"><b>{r.name}</b><small>{t('{n} parchi', { n: count(r.n) })}</small></span>
+            <b className="money">{rupees(r.v)}</b>
+            <span className="bar"><motion.i initial={{ width: 0 }} animate={{ width: `${(r.v / max) * 100}%` }} transition={{ duration: 0.6, delay: 0.05 * i }} /></span>
+          </>
+        )
+        return r.id ? <a key={r.id} className="rank-row" href={href({ page: 'grahak', shopId, buyerId: r.id })}>{body}</a> : <div key={r.name} className="rank-row">{body}</div>
+      })}
+    </motion.div>
+  )
+}
+
+const initials = (s: string) => s.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('') || '₹'
+
+/** What just happened, newest first: parchi, vasooli, kharcha — each opens its voucher. */
+function Feed({ shopId, entries, more }: { shopId: string; entries: DayEntry[]; more: string }) {
+  return (
+    <motion.div {...rise} className="pro-card pro-feed">
+      <div className="hd"><h3>{t('Taaza entries')}</h3><a href={more}>{t('Day Book')} →</a></div>
+      {!entries.length && <p className="empty">{t('Abhi koi entry nahi')}</p>}
+      {entries.map((e) => {
+        const open = e.kind === 'slip' ? () => openVoucher(shopId, e.id) : e.kind === 'payment' ? () => openRaseed(shopId, e.id) : undefined
+        const mode = e.kind === 'slip'
+          ? (e.payMode === 'free' ? 'Free' : [e.cashPaise && 'Cash', e.upiPaise && 'UPI', e.udhaarPaise && 'Udhaar'].filter(Boolean).length > 1 ? 'Mixed' : e.udhaarPaise ? 'Udhaar' : e.upiPaise ? 'UPI' : 'Cash')
+          : e.kind === 'payment' ? (e.upiPaise && !e.cashPaise ? 'UPI' : 'Cash') : ''
+        const kind = e.kind === 'slip' ? t('Parchi') : e.kind === 'payment' ? t('Vasooli') : e.kind === 'out' ? t('Kharcha') : t('Aaya')
+        const name = e.kind === 'slip' || e.kind === 'payment' ? e.party || t('Cash') : HEADS[e.title] ?? (e.title || kind)
+        return (
+          <button key={`${e.kind}-${e.id}`} type="button" className={`feed-row k-${e.kind}${e.voided ? ' void' : ''}`} onClick={open} disabled={!open}>
+            <span className="av">{e.kind === 'slip' ? <I.IRupee /> : e.kind === 'payment' ? <I.IWallet /> : <I.ICash />}</span>
+            <span className="nm"><b>{name}</b><small>{time(e.at)} · {kind}{e.kind === 'slip' ? ` ${e.title.replace(/^Parchi /, '')}` : ''}</small></span>
+            <span className="amt">
+              <b className="money">{e.kind === 'out' ? '−' : e.kind === 'payment' || e.kind === 'in' ? '+' : ''}{rupees(e.amountPaise)}</b>
+              {e.voided ? <em className="st void">{e.voided === 'edited' ? t('Badli') : t('Hatayi')}</em> : mode && <em className={`st ${mode.toLowerCase()}`}>{t(mode)}</em>}
+            </span>
+          </button>
+        )
+      })}
+    </motion.div>
+  )
+}
+
+function Items({ items, unit, more }: { items: Dash['items']; unit: string; more: string }) {
+  const max = items[0]?.amountPaise || 1
+  return (
+    <motion.div {...rise} className="pro-card pro-rank">
+      <div className="hd"><h3>{t('Sabse zyada bika')}</h3><a href={more}>{t('Sab')} →</a></div>
+      {!items.length && <p className="empty">{t('Is period mein bikri nahi')}</p>}
+      {items.map((it, i) => (
+        <div key={it.brand} className="rank-row">
+          <span className="av sq" data-i={i % 5}>{i + 1}</span>
+          <span className="nm"><b>{it.brand}</b><small>{count(it.nags)} {unit}</small></span>
+          <b className="money">{rupees(it.amountPaise)}</b>
+          <span className="bar"><motion.i initial={{ width: 0 }} animate={{ width: `${(it.amountPaise / max) * 100}%` }} transition={{ duration: 0.6, delay: 0.05 * i }} /></span>
+        </div>
+      ))}
+    </motion.div>
   )
 }
 
@@ -143,37 +457,41 @@ function YaadCard({ shopId }: { shopId: string }) {
   if (!data?.reminders.length) return null
   const cancel = async (id: string) => { await api(`/v1/admin/shops/${shopId}/reminders/${id}`, { method: 'DELETE' }).catch(() => {}); reload() }
   return (
-    <div className="card">
+    <div className="pro-card pro-rank">
       <div className="hd"><h3>{t('Yaad (reminders)')}</h3></div>
-      <div className="bd lines-list">
-        {data.reminders.map((r) => (
-          <div key={r.id}>
-            <span className="grow"><b>{r.what}</b><small>{r.label}{r.action === 'udhaar_whatsapp' ? ` · ${t('grahak ko udhaar WhatsApp')}` : ` · ${t('aapko WhatsApp')}`}</small></span>
-            <button type="button" className="btn line" onClick={() => void cancel(r.id)}>{t('Hatayein')}</button>
-          </div>
-        ))}
-      </div>
+      {data.reminders.map((r) => (
+        <div key={r.id} className="rank-row">
+          <span className="nm"><b>{r.what}</b><small>{r.label}{r.action === 'udhaar_whatsapp' ? ` · ${t('grahak ko udhaar WhatsApp')}` : ` · ${t('aapko WhatsApp')}`}</small></span>
+          <button type="button" className="btn line" onClick={() => void cancel(r.id)}>{t('Hatayein')}</button>
+        </div>
+      ))}
     </div>
   )
 }
 
-function StockCard({ shopId, unit }: { shopId: string; unit: (n: number) => string }) {
+function StockCard({ shopId, unit }: { shopId: string; unit: string }) {
   const { data } = useLoad(() => api<{ totals: { left: number; valuePaise: number; gaadis: number; stale: number } }>(`/v1/admin/shops/${shopId}/stock`), [shopId])
   return (
-    <a className="card" href={href({ page: 'report', shopId, report: 'stock' })}>
-      <div className="hd"><h3>{t('Stock')}</h3></div>
-      <div className="bd">
-        {!data ? <div className="sk" /> : (
-          <>
-            <span className="money b" style={{ fontSize: 18 }}>{unit(data.totals.left)}</span>
-            <div className="ages" style={{ marginTop: 10 }}>
-              <div><span /><span>{t('Kharid bhav par')}</span><span className="money">{rupees(data.totals.valuePaise)}</span></div>
-              <div><span /><span>{t('Khuli gaadi')}</span><span className="money">{count(data.totals.gaadis)}</span></div>
-              <div><span /><span>{t('Purani gaadi')}</span><span className={`money${data.totals.stale ? ' due b' : ''}`}>{count(data.totals.stale)}</span></div>
-            </div>
-          </>
-        )}
-      </div>
+    <a className="pro-card pro-stock" href={href({ page: 'report', shopId, report: 'stock' })}>
+      <h3>{t('Stock')}</h3>
+      {!data ? <div className="sk" /> : (
+        <div className="stock-row">
+          <div><span className="lb">{t('Maal')}</span><b>{count(data.totals.left)} {unit}</b></div>
+          <div><span className="lb">{t('Kharid bhav par')}</span><b>{compact(data.totals.valuePaise)}</b></div>
+          <div><span className="lb">{t('Khuli gaadi')}</span><b>{count(data.totals.gaadis)}</b></div>
+          <div><span className="lb">{t('Purani')}</span><b className={data.totals.stale ? 'due' : ''}>{count(data.totals.stale)}</b></div>
+        </div>
+      )}
     </a>
+  )
+}
+
+function DashSkeleton() {
+  return (
+    <div className="pro-stack">
+      <div className="pro-card sk-card" style={{ height: 112 }} />
+      <div className="pro-card sk-card" style={{ height: 380 }} />
+      <div className="pro-grid g4">{[0, 1, 2, 3].map((i) => <div key={i} className="pro-card sk-card" style={{ height: 120 }} />)}</div>
+    </div>
   )
 }
