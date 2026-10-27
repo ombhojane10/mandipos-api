@@ -424,6 +424,12 @@ describe('angoor on the website', () => {
     expect((await http().get(`${base}/beejaks?q=nobody`).set(web).expect(200)).body.beejaks).toHaveLength(0);
     expect((await http().get(`${base}/beejaks/${made.id}`).set(web).expect(200)).body.netPaise).toBe(2745000);
     expect((await http().get(`${base}/beejak/${sai}`).set(web).expect(200)).body.saved).toMatchObject({ no: 1 });
+    // The POS opens the same kept beejak, and saving there keeps its number for the website too.
+    const pos = auth(res.accessToken);
+    expect((await http().get(`/v1/beejaks/${sai}`).set(pos).expect(200)).body.saved).toMatchObject({ id: made.id, no: 1, netPaise: 2745000 });
+    const fromApp = (await http().post(`/v1/beejaks/${sai}`).set(pos).send({ by: 'Nilesh', bhav: [{ quality: 'Royal', ratePaise: 100000 }], heads: [{ key: 'crate', rate: 200 }] }).expect(201)).body;
+    expect(fromApp).toMatchObject({ id: made.id, no: 1, grossPaise: 2500000, expensesPaise: 5000, netPaise: 2495000 });
+    expect((await http().get(`${base}/beejaks/${made.id}`).set(web).expect(200)).body.netPaise).toBe(2495000);
 
     // Gaadi edited on the website: moved, bhada, Royal up to 30 boxes, then down to 28 (a correction).
     const royalLot = (q: number) => ({ number: '3289', supplier: 'Sai', location: 'Pillar 321', freightPaise: 500000, lots: [{ brandId: royal, grade: '1', qty: q, ratePaise: 0 }] });

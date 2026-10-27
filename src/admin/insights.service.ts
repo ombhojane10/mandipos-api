@@ -314,7 +314,7 @@ export class InsightsService {
    * off the gaadi now; the bhav is the shop's; each kharcha head is worked out here from its rate
    * — a % of the gross, ₹ a box, or a flat amount — so a kept beejak always adds up.
    */
-  async saveBeejak(phone: string, shopId: string, truckId: string, input: BeejakInput) {
+  async saveBeejak(by: string, shopId: string, truckId: string, input: BeejakInput) {
     const b = await this.beejak(shopId, truckId);
     if (!b.groups.length) throw new BadRequestException('Is gaadi ka abhi koi box nahi bika');
     const bhav = new Map(input.bhav.map((x) => [x.quality, x.ratePaise]));
@@ -344,7 +344,7 @@ export class InsightsService {
            expenses = EXCLUDED.expenses, boxes = EXCLUDED.boxes, gross_paise = EXCLUDED.gross_paise, expenses_paise = EXCLUDED.expenses_paise,
            net_paise = EXCLUDED.net_paise, made_by = EXCLUDED.made_by, updated_at = now()
          RETURNING *`,
-        [uuidv7(), shopId, truckId, b.party, b.number, input.day ?? istToday(), JSON.stringify(lines), JSON.stringify(expenses), boxes, gross, spent, gross - spent, phone])).rows[0];
+        [uuidv7(), shopId, truckId, b.party, b.number, input.day ?? istToday(), JSON.stringify(lines), JSON.stringify(expenses), boxes, gross, spent, gross - spent, by])).rows[0];
       return beejakView(row);
     });
   }

@@ -134,7 +134,7 @@ const GaadiBody = z.object({
   lots: z.array(z.object({ brandId: z.uuid().optional(), brandName: z.string().trim().max(60).optional(), grade, qty: z.number().int().min(0).max(10_000_000), ratePaise: paise,
     boxGrams: z.number().int().min(0).max(1_000_000).optional() })).min(1).max(12),
 });
-const BeejakBody = z.object({
+export const BeejakBody = z.object({
   day: z.iso.date().optional(),
   bhav: z.array(z.object({ quality: z.string().max(60), ratePaise: paise })).max(50),
   heads: z.array(z.object({ key: z.enum(BEEJAK_HEADS.map((h) => h.key) as [string, ...string[]]), rate: z.number().int().min(0).max(10_000_000).optional(), amountPaise: paise.optional() })).max(20),

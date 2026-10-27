@@ -27,6 +27,7 @@ import { PrintController } from './print/print.controller';
 import { PrintService } from './print/print.service';
 import { PhotosController } from './shops/photos.controller';
 import { RequestsController } from './requests/requests.controller';
+import { BeejaksController } from './beejaks/beejaks.controller';
 import { RequestsService } from './requests/requests.service';
 import { ShopsController } from './shops/shops.controller';
 import { SyncController } from './sync/sync.controller';
@@ -39,7 +40,7 @@ import { PortalVoiceService } from './voice/portal-voice.service';
 import { SheetService } from './voice/sheet.service';
 
 @Module({
-  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController],
+  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController],
   providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService],
 })
 export class AppModule {}
