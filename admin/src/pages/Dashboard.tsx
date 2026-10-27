@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import NumberFlow from '@number-flow/react'
-import { Area, AreaChart, CartesianGrid, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, type Buckets, type Dashboard as Dash, type DayEntry } from '../api'
 import { usePeriod } from '../hooks'
 import { addDays, count, rupees, shortDate, spanDays, time } from '../format'
@@ -26,7 +26,7 @@ const QUICK: { kind: EntryKind; key: string; label: string; icon: () => ReactNod
   { kind: 'gaadi', key: 'F9', label: t('Nayi Gaadi'), icon: I.ITruck },
 ]
 
-const C = { accent: '#0f766e', before: '#a3aab5', cash: '#12a150', upi: '#5b5bd6', udhaar: '#e8890c', grid: '#eef0f3' }
+const C = { accent: '#0f766e', before: '#a3aab5', cash: '#12a150', upi: '#5b5bd6', udhaar: '#e8890c' }
 const INR = { style: 'currency', currency: 'INR', maximumFractionDigits: 0 } as const
 const rise = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } } as const
 
@@ -63,7 +63,7 @@ export function Dashboard({ shopId }: { shopId: string }) {
       {!data ? <DashSkeleton /> : (
         <div className={`pro-stack${loading ? ' dim' : ''}`}>
           <Paisa d={data.d} go={go} />
-          <Overview books={data} from={from} to={to} go={go} />
+          <Overview books={data} from={from} to={to} />
           <Insights books={data} from={from} to={to} unit={unit} />
           {angoor && <AngoorStrip shopId={shopId} from={from} to={to} />}
           <div className="pro-grid g3">
@@ -143,7 +143,7 @@ const TABS: { m: Metric; label: string }[] = [
 ]
 
 /** The period's four figures as tabs, each against the last period; the chosen one drawn below. */
-function Overview({ books, from, to, go }: { books: Books; from: string; to: string; go: (r: Report) => string }) {
+function Overview({ books, from, to }: { books: Books; from: string; to: string }) {
   const [m, setM] = useState<Metric>('bikri')
   const { d, prevBook } = books
   const vas = (es: DayEntry[]) => paymentsOf(es).reduce((s, e) => s + e.amountPaise, 0)
@@ -158,7 +158,8 @@ function Overview({ books, from, to, go }: { books: Books; from: string; to: str
   const fmt = (v: number) => (money ? rupees(v) : count(v))
   const xLabel = (x: string) => (hourly ? hourLabel(Number(x)) : shortDate(x))
   const empty = points.every((p) => !p.now && !p.before)
-  const link: Record<Metric, Report> = { bikri: 'register', vasooli: 'vasooli', kharid: 'gaadis', parchi: 'daybook' }
+  // First, middle and last label only.
+  const ends = (xs: string[]) => [...new Set([xs[0], xs[Math.floor((xs.length - 1) / 2)], xs[xs.length - 1]])]
 
   return (
     <motion.section {...rise} className="pro-card pro-over">
@@ -177,34 +178,28 @@ function Overview({ books, from, to, go }: { books: Books; from: string; to: str
       </div>
       <div className="chart-area">
         {empty ? <p className="empty">{t('Is period mein kuch nahi')}</p> : (
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={points} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={points} margin={{ top: 16, right: 4, left: 4, bottom: 0 }}>
               <defs>
                 <linearGradient id="fillNow" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={C.accent} stopOpacity={0.22} />
+                  <stop offset="0%" stopColor={C.accent} stopOpacity={0.08} />
                   <stop offset="100%" stopColor={C.accent} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid vertical={false} stroke={C.grid} />
-              <XAxis dataKey="x" tickFormatter={xLabel} tickLine={false} axisLine={false} minTickGap={24} tick={{ fontSize: 11.5, fill: '#8a919c' }} />
-              <YAxis tickFormatter={(v: number) => (money ? compact(v) : count(v))} tickLine={false} axisLine={false} width={56} tick={{ fontSize: 11.5, fill: '#8a919c' }} />
-              <Tooltip cursor={{ stroke: '#cfd4db', strokeDasharray: '3 3' }} content={({ active, payload, label }) => active && payload?.length ? (
+              <XAxis dataKey="x" ticks={ends(points.map((p) => p.x))} tickFormatter={xLabel} tickLine={false} axisLine={false} interval={0} padding={{ left: 24, right: 24 }} tick={{ fontSize: 11.5, fill: '#a3aab5' }} />
+              <YAxis hide domain={[0, 'dataMax']} />
+              <Tooltip cursor={{ stroke: '#e3e6ea' }} content={({ active, payload, label }) => active && payload?.length ? (
                 <div className="pro-tip">
                   <b>{xLabel(String(label))}</b>
-                  <span><i style={{ background: C.accent }} />{fmt(Number(payload.find((p) => p.dataKey === 'now')?.value ?? 0))}</span>
-                  {payload.some((p) => p.dataKey === 'before') && <span className="muted"><i style={{ background: C.before }} />{t('Pichhla')} {fmt(Number(payload.find((p) => p.dataKey === 'before')?.value ?? 0))}</span>}
+                  <span>{fmt(Number(payload.find((p) => p.dataKey === 'now')?.value ?? 0))}</span>
+                  {payload.some((p) => p.dataKey === 'before') && <span className="muted">{t('Pichhla')} {fmt(Number(payload.find((p) => p.dataKey === 'before')?.value ?? 0))}</span>}
                 </div>
               ) : null} />
-              <Line type="monotone" dataKey="before" stroke={C.before} strokeWidth={1.5} strokeDasharray="4 4" dot={false} activeDot={false} isAnimationActive={false} />
-              <Area type="monotone" dataKey="now" stroke={C.accent} strokeWidth={2.25} fill="url(#fillNow)" activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }} animationDuration={700} />
+              <Line type="monotone" dataKey="before" stroke="#dfe2e7" strokeWidth={1.25} dot={false} activeDot={false} isAnimationActive={false} />
+              <Area type="monotone" dataKey="now" stroke={C.accent} strokeWidth={2} fill="url(#fillNow)" activeDot={{ r: 3.5, strokeWidth: 0, fill: C.accent }} animationDuration={600} />
             </AreaChart>
           </ResponsiveContainer>
         )}
-        <div className="chart-ft">
-          <span><i style={{ background: C.accent }} />{t('Is period')}</span>
-          <span><i className="dash" />{t('Pichhla')}</span>
-          <a href={go(link[m])}>{t('Sab dekhein')} →</a>
-        </div>
       </div>
     </motion.section>
   )
@@ -249,18 +244,11 @@ const angoorLabel = (unit: string) => (unit === t('box') ? t('Box bike') : t('Na
 function Spark({ data, color }: { data: number[]; color: string }) {
   if (data.length < 2 || data.every((v) => !v)) return <div className="spark" />
   const pts = data.map((v, i) => ({ i, v }))
-  const id = `sp${color.replace('#', '')}`
   return (
     <div className="spark">
       <ResponsiveContainer width="100%" height={40}>
         <AreaChart data={pts} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.18} />
-              <stop offset="100%" stopColor={color} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.75} fill={`url(#${id})`} isAnimationActive={false} />
+          <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.5} fill="none" isAnimationActive={false} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -283,7 +271,7 @@ function Split({ slips }: { slips: DayEntry[] }) {
           <div className="donut">
             <ResponsiveContainer width="100%" height={150}>
               <PieChart>
-                <Pie data={parts.filter((p) => p.v)} dataKey="v" nameKey="label" innerRadius={50} outerRadius={70} paddingAngle={2} cornerRadius={4} stroke="none" startAngle={90} endAngle={-270} animationDuration={700}>
+                <Pie data={parts.filter((p) => p.v)} dataKey="v" nameKey="label" innerRadius={60} outerRadius={67} paddingAngle={0} cornerRadius={0} stroke="none" startAngle={90} endAngle={-270} animationDuration={700}>
                   {parts.filter((p) => p.v).map((p) => <Cell key={p.k} fill={p.c} />)}
                 </Pie>
               </PieChart>

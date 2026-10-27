@@ -199,12 +199,7 @@ a.pro-card:hover { border-color: #d5d9e0; box-shadow: var(--shadow-lg); }
 .delta.up { color: #067647; background: #e9f7ef; }
 .delta.down { color: #c4320a; background: #fdefe9; }
 .delta.flat { color: var(--muted); background: #f1f2f5; }
-.chart-area { padding: 14px 16px 12px 6px; }
-.chart-ft { display: flex; align-items: center; gap: 16px; padding: 6px 0 0 16px; font-size: 12.5px; color: var(--muted); }
-.chart-ft span { display: inline-flex; align-items: center; gap: 6px; }
-.chart-ft i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.chart-ft i.dash { height: 0; width: 14px; border-top: 2px dashed #a3aab5; border-radius: 0; }
-.chart-ft a { margin-left: auto; color: var(--accent); font-weight: 600; }
+.chart-area { padding: 8px 18px 14px; }
 .pro-tip { background: var(--frame); color: #fff; border-radius: 10px; padding: 9px 12px; display: grid; gap: 3px; font-size: 12.5px; box-shadow: var(--shadow-lg); }
 .pro-tip b { font-weight: 600; color: #cdd3dc; font-size: 11.5px; }
 .pro-tip span { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; font-weight: 600; }
