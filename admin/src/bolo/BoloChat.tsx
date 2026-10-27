@@ -168,7 +168,7 @@ export function BoloChat({ shopId, mode, screen, onClose }: { shopId: string; mo
   }
 
   return (
-    <div className="bc bc-page">
+    <div className={`bc bc-page${state.chats.some((c) => c.msgs.length) ? '' : ' no-rail'}`}>
       {hist && <div className="bc-rail-scrim" onClick={() => setHist(false)} />}
       <aside className={`bc-rail${hist ? ' open' : ''}`} aria-label={t('Purani baatein')}>
         <button type="button" className="bc-new" onClick={fresh}>

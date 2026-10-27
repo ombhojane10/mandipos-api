@@ -28,6 +28,7 @@
   --radius: 16px;
   --radius-sm: 10px;
   --side: 236px;
+  --keys: 0px;
   --top: 56px;
   --shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.03);
   --shadow-lg: 0 12px 32px -12px rgb(16 24 40 / 0.18);
@@ -46,7 +47,7 @@ kbd { font: 500 10.5px/1 'Inter Variable', system-ui; border: 1px solid var(--li
 /* ================================================================ frame */
 @media (min-width: 900px) {
   body { background: var(--frame); }
-  .app::before { content: ''; position: fixed; inset: var(--top) 10px 0 10px; background: var(--page); border-radius: 18px 18px 0 0; z-index: 0; }
+  .app::before { content: ''; position: fixed; inset: var(--top) 10px 0 10px; background: var(--page); border-radius: 18px 18px 0 0; z-index: -1; }
   .top {
     position: fixed; top: 0; left: 0; right: 0; margin: 0; z-index: 35; height: var(--top);
     background: var(--frame); border: 0; backdrop-filter: none; padding: 0 16px 0 calc(var(--side) + 28px); gap: 10px; color: #fff;
@@ -76,9 +77,12 @@ kbd { font: 500 10.5px/1 'Inter Variable', system-ui; border: 1px solid var(--li
   .side .nav { padding: 6px 10px 16px; border-right: 1px solid var(--line); }
   .side .shop-name, .side .shop-pick { border-right: 1px solid var(--line); }
   .side .side-ft { border-right: 1px solid var(--line); border-top: 1px solid var(--line); }
-  .main { margin-left: calc(var(--side) + 10px); margin-right: 10px; padding: calc(var(--top) + 22px) 28px 64px; max-width: none; position: relative; z-index: 1; }
+  .main { margin-left: calc(var(--side) + 10px); margin-right: 10px; padding: calc(var(--top) + 22px) 28px 64px; max-width: none; }
+  /* Bolo fills the canvas under the bar. */
+  .main.main-bolo { padding: var(--top) 0 0 !important; height: 100dvh; }
+  .bc-page { border-radius: 0 18px 0 0; overflow: hidden; }
 }
-.main > * { max-width: 1280px; }
+.main > :not(.scrim):not(.bc) { max-width: 1280px; }
 
 .nav .grp { font-size: 11px; font-weight: 600; color: #98a1ae; text-transform: uppercase; letter-spacing: 0.06em; padding: 16px 10px 6px; text-decoration: none; }
 .nav a, .side-ft > a, .side-ft > button { height: 36px; border-radius: 10px; color: #3d4452; font-weight: 500; font-size: 13.5px; gap: 11px; }
@@ -342,3 +346,16 @@ a.rank-row:hover { background: #fafbfc; }
   .heat .cell { height: 16px; border-radius: 4px; }
   .stock-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ================================================================ Bolo page in the new frame */
+.bc { --bc-bg: var(--page); --bc-line: var(--line); --bc-accent: var(--accent); --bc-accent-ink: var(--accent-ink); --bc-accent-soft: var(--accent-soft);
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif; }
+.bc-page { background: var(--page); }
+.bc-page .bc-welcome { background: none; }
+.bc-rail { background: var(--card); }
+.bc .bc-hist:hover, .bc .bc-hist.on { background: #f0f2f5; }
+@media (min-width: 900px) {
+  .bc-page.no-rail { grid-template-columns: minmax(0, 1fr); }
+  .bc-page.no-rail .bc-rail { display: none; }
+}
+.btn.primary kbd { background: transparent; border-color: rgb(255 255 255 / 0.25); color: #cdd3dc; }
