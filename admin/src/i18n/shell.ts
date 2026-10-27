@@ -85,6 +85,11 @@ export const SHELL: Record<string, readonly [string, string]> = {
   'Login': ['Login', 'लॉगिन'],
   'OTP bhejein': ['Send OTP', 'OTP भेजें'],
   'Number badlein': ['Change number', 'नंबर बदलें'],
+  'Login karein': ['Log in', 'लॉगिन करें'],
+  'OTP dobara {s} sec mein': ['Resend OTP in {s}s', 'OTP दोबारा {s} सेकंड में'],
+  'OTP dobara bhejein': ['Resend OTP', 'OTP दोबारा भेजें'],
+  'Mandi ka poora hisaab, ek jagah.': ['Your whole mandi business, in one place.', 'मंडी का पूरा हिसाब, एक जगह।'],
+  'Aaj ki bikri': ["Today's sales", 'आज की बिक्री'],
 
   // Dates and times
   'Kabhi nahi': ['Never', 'कभी नहीं'],
