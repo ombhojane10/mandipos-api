@@ -46,7 +46,8 @@ kbd { font: 500 10.5px/1 'Inter Variable', system-ui; border: 1px solid var(--li
 
 /* ================================================================ frame */
 @media (min-width: 900px) {
-  body { background: var(--frame); }
+  html { background: var(--frame); }
+  body { background: transparent; }
   .app::before { content: ''; position: fixed; inset: var(--top) 10px 0 10px; background: var(--page); border-radius: 18px 18px 0 0; z-index: -1; }
   .top {
     position: fixed; top: 0; left: 0; right: 0; margin: 0; z-index: 35; height: var(--top);
@@ -65,8 +66,7 @@ kbd { font: 500 10.5px/1 'Inter Variable', system-ui; border: 1px solid var(--li
 
   .side { top: 0; left: 10px; bottom: 0; width: var(--side); background: transparent; border: 0; z-index: 36; pointer-events: none; }
   .side > * { pointer-events: auto; }
-  .side .brand { height: var(--top); padding: 0 10px; color: #fff; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
-  .side .brand i { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(140deg, #14b8a6, #0f766e); color: #fff; font-size: 14px; }
+  .side .brand { height: var(--top); padding: 0 14px; gap: 5px; color: #fff; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
   .side .brand span { color: #5eead4; }
   .side .shop-name, .side .shop-pick, .side .nav, .side .side-ft { background: var(--card); }
   .side .shop-name, .side .shop-pick { margin: 0; padding: 14px 14px 6px; border-radius: 18px 0 0 0; height: auto; }
@@ -317,7 +317,8 @@ a.rank-row:hover { background: #fafbfc; }
   .kpi .ic { display: none; }
   .kpi .v { font-size: 18px; }
   .side { background: var(--card); }
-  .side .brand { color: var(--ink); }
+  .side .brand { color: var(--ink); gap: 5px; }
+  .side .brand span { color: var(--accent); }
   .pro-bolo { height: 54px; }
   .pro-bolo-lb, .pro-bolo-go { display: none; }
   .pro-bolo-q { font-size: 15px; }
