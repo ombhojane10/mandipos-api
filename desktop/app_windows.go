@@ -46,8 +46,11 @@ var (
 	pCreateMutexW        = kernel32.NewProc("CreateMutexW")
 )
 
+// The window class and the single-instance mutex: the app name without spaces, so the two apps
+// never mistake each other for themselves.
+var className = strings.ReplaceAll(appName, " ", "")
+
 const (
-	className = "MandiPlusDashboard"
 
 	wmDestroy       = 0x0002
 	wmMove          = 0x0003

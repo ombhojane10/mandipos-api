@@ -17,7 +17,7 @@ import (
 
 // The window only shows the live portal, so a portal deploy reaches every desktop at once. This
 // file updates the shell itself, which changes rarely: the newest build is published to
-// mandipos-api app_releases (flavor 'desktop'); a newer one is downloaded, checked against its
+// mandipos-api app_releases (its own flavor: 'desktop' or 'desktop-new'); a newer one is downloaded, checked against its
 // sha256 and put in place of the running exe, and the next start runs it.
 
 type release struct {
@@ -38,13 +38,12 @@ func latest(ctx context.Context) (*release, error) {
 	if res.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d", res.StatusCode)
 	}
-	var body struct {
-		Desktop *release `json:"desktop"`
-	}
+	// Every flavor's newest release, keyed by flavor; this build reads its own.
+	var body map[string]*release
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		return nil, err
 	}
-	return body.Desktop, nil
+	return body[flavor], nil
 }
 
 // newer: is a ("0.2.0") newer than b ("0.1.9")? A dev build never updates.
@@ -152,7 +151,7 @@ func checkUpdate(ctx context.Context, dir, exe string, force bool) (string, erro
 }
 
 func download(ctx context.Context, path string, rel *release) error {
-	req, _ := http.NewRequestWithContext(ctx, "GET", apiBase()+"/v1/public/app/download?flavor=desktop", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", apiBase()+"/v1/public/app/download?flavor="+flavor, nil)
 	res, err := client.Do(req)
 	if err != nil {
 		return err
