@@ -58,6 +58,12 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       // What they owe the rest of the mandi, as the shop knows it; null = not known.
       // Optional for the same reason as code: an older terminal never wipes it.
       market_paise: paise.nullable().optional(),
+      // Laddan party (kind 'laddan'): the old Ladaan Master's fields. Optional with no default,
+      // so an older terminal that doesn't know them leaves them as they are.
+      city: z.string().trim().max(60).optional(), district: z.string().trim().max(60).optional(),
+      state: z.string().trim().max(60).optional(), contact_person: z.string().trim().max(80).optional(),
+      email: z.string().trim().max(120).optional(), area: z.string().trim().max(60).optional(),
+      bank_details: z.string().trim().max(300).optional(),
     }),
   },
   trucks: {
@@ -200,6 +206,11 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     row: z.object({
       id, created_at: at, updated_at: at,
       name: z.string().trim().min(1).max(120), phone: z.string().trim().regex(/^([6-9][0-9]{9})?$/).default(''),
+      // The supplier creditor master (angoor): manual code, area, and the balance owed to them on
+      // opening_on (negative = they owe us). Optional with no default: older terminals keep them.
+      code: z.string().trim().toUpperCase().max(20).optional(), area: z.string().trim().max(60).optional(),
+      opening_paise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).optional(),
+      opening_on: z.iso.date().nullable().optional(),
     }),
   },
   // Angoor: boxes reported broken after they left (the labour scans the slip again); the

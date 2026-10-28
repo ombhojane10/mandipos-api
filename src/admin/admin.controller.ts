@@ -14,6 +14,7 @@ import { ReportsService, type Pot } from './reports.service';
 import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
 import { BEEJAK_HEADS, InsightsService } from './insights.service';
+import { CreditorsService } from './creditors.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -123,11 +124,27 @@ const DaybookBody = z.object({
   amountPaise: paise.positive(), party: z.string().max(120).optional(), note: z.string().max(200).optional(), date: DayIso,
 }).refine((b) => (b.direction === 'out' ? (OUT_HEADS as readonly string[]) : (IN_HEADS as readonly string[])).includes(b.category), { message: 'yeh head is taraf ka nahi', path: ['category'] });
 const UdhaarBody = z.object({ buyerId: z.uuid(), amountPaise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).refine((v) => v !== 0, 'zero'), note: z.string().max(200).optional(), date: DayIso });
+const LaddanCols = {
+  city: z.string().max(60).optional(), district: z.string().max(60).optional(), state: z.string().max(60).optional(),
+  contactPerson: z.string().max(80).optional(), email: z.string().max(120).optional(), area: z.string().max(60).optional(),
+  bankDetails: z.string().max(300).optional(),
+};
 const GrahakBody = z.object({
   name: z.string().trim().min(1).max(120), phone: z.string().trim().max(15).optional(), address: z.string().max(200).optional(),
   destination: z.string().max(120).optional(), code: z.string().max(20).optional(), vehicle: z.string().max(20).optional(),
   openingPaise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).optional(),
+  kind: z.enum(['', 'laddan']).optional(), ...LaddanCols,
 });
+const GrahakPatchBody = z.object({
+  name: z.string().trim().min(1).max(120).optional(), phone: z.string().trim().max(15).optional(), address: z.string().max(200).optional(),
+  destination: z.string().max(120).optional(), code: z.string().max(20).optional(), kind: z.enum(['', 'laddan']).optional(), ...LaddanCols,
+});
+const SupplierBody = z.object({
+  id: z.uuid().optional(), name: z.string().trim().min(1).max(120), code: z.string().max(20).optional(), area: z.string().max(60).optional(),
+  phone: z.string().trim().max(15).optional(), openingPaise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).optional(),
+  openingOn: z.iso.date().nullable().optional(),
+});
+const FyQuery = z.object({ fy: z.coerce.number().int().min(2000).max(2100).optional() });
 const GaadiBody = z.object({
   number: z.string().trim().min(1).max(20), supplier: z.string().trim().max(120).default(''), freightPaise: paise.optional(),
   location: z.string().trim().max(80).optional(),
@@ -182,8 +199,39 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
-    private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService,
+    private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
   ) {}
+
+  // ---------------------------------------------------------------- supplier creditors and laddan (angoor)
+
+  /** Every supplier for a financial year (April to March): carried opening, beejaks, paid, balance. */
+  @Get('shops/:id/creditors')
+  creditorList(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    return this.creditors.list(mine(v, id), parse(FyQuery, query).fy);
+  }
+
+  @Get('shops/:id/creditors/:key')
+  creditorKhata(@See() v: Viewer, @Param('id') id: string, @Param('key') key: string, @Query() query: unknown) {
+    return this.creditors.khata(mine(v, id), key.slice(0, 120), parse(FyQuery, query).fy);
+  }
+
+  /** Adds or changes a supplier on the creditors' list (name, code, area, phone, opening balance). */
+  @Post('shops/:id/creditors')
+  saveCreditor(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.entries.saveSupplier(v.phone, mine(v, id), parse(SupplierBody, body));
+  }
+
+  /** Laddan parties with their master fields and balances. */
+  @Get('shops/:id/laddan')
+  laddan(@See() v: Viewer, @Param('id') id: string, @Query('q') q?: string) {
+    return this.creditors.laddan(mine(v, id), (q ?? '').slice(0, 60));
+  }
+
+  /** Changes a grahak or laddan party's details (only what is sent). */
+  @Post('shops/:id/grahak/:buyerId')
+  editGrahak(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string, @Body() body: unknown) {
+    return this.entries.updateGrahak(v.phone, mine(v, id), parse(z.uuid(), buyerId), parse(GrahakPatchBody, body));
+  }
 
   // ---------------------------------------------------------------- Bolo (voice), as on the terminal
 

@@ -300,6 +300,50 @@ describe('angoor round 2', () => {
 describe('angoor on the website', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
+  it('keeps supplier creditors April to March (carried forward) and laddan parties; grapes names in capitals', async () => {
+    const s = await login('9829200051');
+    const res = await createApproved(s.accessToken, { name: 'Creditor Angoor', mandi: 'Azadpur', shopNo: 'C-51', role: 'owner', commodity: 'angoor' });
+    const id = res.me.shop.id as string;
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829200051' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829200051', code: OtpService.issuedForTests.get('9829200051') }).expect(200)).body.token);
+    const base = `${'/v1/admin/shops/'}${id}`;
+
+    // The master: name in capitals, manual code, area, ₹50,000 owed on 15 Mar 2026.
+    const sup = (await http().post(`${base}/creditors`).set(web).send({ name: 'sai fruits', code: 's1', area: 'nashik', phone: '9876500051', openingPaise: 5000000, openingOn: '2026-03-15' }).expect(201)).body;
+    expect(sup).toMatchObject({ name: 'SAI FRUITS', code: 'S1' });
+    expect((await http().post(`${base}/creditors`).set(web).send({ name: 'Other', code: 'S1' }).expect(409)).body.message).toMatch(/S1/);
+
+    // A gaadi of his, sold, its beejak kept (net owed to him), and a part payment.
+    const gaadi = (await http().post(`${base}/entries/gaadi`).set(web).send({ number: 'mh15ab1234', supplier: 'Sai Fruits', location: 'Shed 2', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0, boxGrams: 10000 }] }).expect(201)).body;
+    const opts = (await http().get(`${base}/entry-options`).set(web).expect(200)).body;
+    const lot = opts.lots.find((l: any) => l.truckId === gaadi.truckId);
+    expect(lot.supplier).toBe('SAI FRUITS');
+    await http().post(`${base}/entries/parchi`).set(web).send({ lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 100, ratePaise: 100000 }], pay: 'cash' }).expect(201);
+    const bj = (await http().post(`${base}/beejak/${lot.truckId}`).set(web).send({ bhav: [{ quality: 'Royal', ratePaise: 100000 }], heads: [{ key: 'commission', rate: 600 }] }).expect(201)).body;
+    expect(bj.netPaise).toBe(9400000);
+    await http().post(`${base}/entries/supplier-payment`).set(web).send({ supplier: 'SAI FRUITS', mode: 'cash', amountPaise: 4000000 }).expect(201);
+
+    // This year: last year's ₹50,000 carried in, ₹94,000 credited, ₹40,000 paid → ₹1,04,000.
+    const fy = new Date(Date.now() + 330 * 60_000).getUTCMonth() >= 3 ? new Date().getUTCFullYear() : new Date().getUTCFullYear() - 1;
+    const now = (await http().get(`${base}/creditors?fy=${fy}`).set(web).expect(200)).body;
+    expect(now.rows.find((r: any) => r.code === 'S1')).toMatchObject({ name: 'SAI FRUITS', area: 'NASHIK', openingPaise: 5000000, creditPaise: 9400000, paidPaise: 4000000, balancePaise: 10400000 });
+    // Last year (2025-26): the opening was owed then; it closed at ₹50,000 and was not zeroed.
+    const last = (await http().get(`${base}/creditors?fy=2025`).set(web).expect(200)).body;
+    expect(last.rows.find((r: any) => r.code === 'S1')).toMatchObject({ openingPaise: 0, creditPaise: 5000000, balancePaise: 5000000 });
+    const k = (await http().get(`${base}/creditors/${now.rows.find((r: any) => r.code === 'S1').key}?fy=${fy}`).set(web).expect(200)).body;
+    expect(k).toMatchObject({ openingPaise: 5000000, closingPaise: 10400000 });
+    expect(k.lines.map((l: any) => [l.kind, l.creditPaise, l.debitPaise])).toEqual([['beejak', 9400000, 0], ['payment', 0, 4000000]]);
+
+    // Laddan: a party with the old master's fields, all in capitals; edited, listed with balance.
+    const lp = (await http().post(`${base}/entries/grahak`).set(web).send({ name: 'aa manglore r/a/c', kind: 'laddan', code: 'l1', city: 'mangalore', state: 'karnataka', contactPerson: 'ravi', phone: '9876500052', email: 'AA@Example.com', area: 'south', bankDetails: 'SBI 123' }).expect(201)).body;
+    await http().post(`${base}/grahak/${lp.id}`).set(web).send({ district: 'dakshina kannada' }).expect(201);
+    const parties = (await http().get(`${base}/laddan`).set(web).expect(200)).body.parties;
+    expect(parties).toEqual([expect.objectContaining({ id: lp.id, name: 'AA MANGLORE R/A/C', code: 'L1', city: 'MANGALORE', district: 'DAKSHINA KANNADA', state: 'KARNATAKA', contactPerson: 'RAVI', email: 'aa@example.com', area: 'SOUTH', bankDetails: 'SBI 123', balancePaise: 0 })]);
+    // A plain grahak in a grapes shop also goes in capitals.
+    await http().post(`${base}/entries/grahak`).set(web).send({ name: 'kishore lal' }).expect(201);
+    expect((await http().get(`${base}/buyers?q=kishore`).set(web).expect(200)).body.buyers[0].name).toBe('KISHORE LAL');
+  });
+
   it('tells the grahak on WhatsApp after the gaadi hands over their boxes: one message per round of scans', async () => {
     const s = await login('9829200031');
     const res = await createApproved(s.accessToken, { name: 'Notice Angoor', mandi: 'Azadpur', shopNo: 'C-31', role: 'owner', commodity: 'angoor' });
@@ -332,7 +376,7 @@ describe('angoor on the website', () => {
     expect(await notices.tick(new Date())).toMatchObject({ sent: 0 });
     // …then one message for the round; the cash slip has no number and is skipped.
     expect(await notices.tick(later())).toMatchObject({ sent: 1, skipped: 1 });
-    expect(sent).toEqual([{ to: '919876500031', params: ['Noor Traders', 'Notice Angoor', `#${slip.slipNo}`, '8', '12 में से 8 बॉक्स दिए, 4 बाकी', expect.stringMatching(/^\d+ \w+, \d+:\d\d [ap]m$/)] }]);
+    expect(sent).toEqual([{ to: '919876500031', params: ['NOOR TRADERS', 'Notice Angoor', `#${slip.slipNo}`, '8', '12 में से 8 बॉक्स दिए, 4 बाकी', expect.stringMatching(/^\d+ \w+, \d+:\d\d [ap]m$/)] }]);
     expect(await notices.tick(later(90))).toMatchObject({ sent: 0, skipped: 0 });
 
     // The last 4 boxes: a second message saying all of it has gone.
@@ -403,7 +447,7 @@ describe('angoor on the website', () => {
     const lines = (bid: string) => pulled.body.changes.filter((x: any) => x.table === 'bill_lines' && x.row.bill_id === bid).map((x: any) => x.row);
     expect(bill(a.billId)).toMatchObject({ truck_id: null, total_paise: 1181700, cash_paise: 1181700, chungi_paise: 11700, apmc_paise: 11700, labour_paise: 0, pay_mode: 'cash' });
     expect(lines(a.billId).map((l: any) => [l.truck_id, l.qty]).sort()).toEqual([[sai, 5], [manat, 3]].sort());
-    expect(bill(b.billId)).toMatchObject({ total_paise: 2000000 + 20000 + 24000, chungi_paise: 44000, apmc_paise: 20000, labour_paise: 24000, packs: 20, pay_mode: 'credit', buyer_name: 'Web Angoor Grahak' });
+    expect(bill(b.billId)).toMatchObject({ total_paise: 2000000 + 20000 + 24000, chungi_paise: 44000, apmc_paise: 20000, labour_paise: 24000, packs: 20, pay_mode: 'credit', buyer_name: 'WEB ANGOOR GRAHAK' });
     expect(bill(c.billId)).toMatchObject({ total_paise: 202000, labour_paise: 0 });
 
     // Alter keeps both gaadis; the view carries each line's gaadi.
@@ -529,12 +573,12 @@ describe('angoor on the website', () => {
       expect(v2.ask.question).toBe('Kaun si quality, kaun si gaadi?');
       const manatOpt = v2.ask.options.find((o: any) => /HR26X1111/.test(o.label));
       const v3 = (await http().post(`${base}/voice`).set(web).send({ pick: manatOpt.value, session: 'ang2' }).expect(200)).body;
-      expect(v3.draft).toMatchObject({ kind: 'parchi', pay: 'credit', buyer: { name: 'Web Angoor Grahak' }, lots: [{ truckId: manat, brandId: royal, qty: 3, ratePaise: 140000 }] });
+      expect(v3.draft).toMatchObject({ kind: 'parchi', pay: 'credit', buyer: { name: 'WEB ANGOOR GRAHAK' }, lots: [{ truckId: manat, brandId: royal, qty: 3, ratePaise: 140000 }] });
       // No boxes said at all: asked which quality (it used to fall over), then the form opens on it, boxes to fill.
       const n1 = (await http().post(`${base}/voice`).set(web).send({ text: 'web angoor grahak cash 5000 baaki udhaar', session: 'ang5' }).expect(200)).body;
       expect(n1.ask.question).toBe('Kaun si quality, kaun si gaadi?');
       const n2 = (await http().post(`${base}/voice`).set(web).send({ pick: n1.ask.options.find((o: any) => /HR26X1111/.test(o.label)).value, session: 'ang5' }).expect(200)).body;
-      expect(n2.draft).toMatchObject({ kind: 'parchi', buyer: { name: 'Web Angoor Grahak' }, cashPaise: 500000, lots: [{ truckId: manat, brandId: royal, qty: 0 }] });
+      expect(n2.draft).toMatchObject({ kind: 'parchi', buyer: { name: 'WEB ANGOOR GRAHAK' }, cashPaise: 500000, lots: [{ truckId: manat, brandId: royal, qty: 0 }] });
       // Where a gaadi stands, changed by voice: previewed, done on the tap.
       const j1 = (await http().post(`${base}/voice`).set(web).send({ text: 'manat wali gaadi shed 9 pe hai', session: 'ang6' }).expect(200)).body;
       expect(j1.ask).toMatchObject({ question: 'Gaadi HR26X1111 ki jagah badlein?', tap: true, detail: ['Gaadi HR26X1111 · Manat', 'Nayi jagah: Shed 9'] });
