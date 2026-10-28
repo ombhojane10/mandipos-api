@@ -1,4 +1,5 @@
-# Runs MandiPlus Dashboard (desktop/, the Windows app, flavor 'desktop') on a Windows runner:
+# Runs MandiPlus Dashboard (desktop/, the Windows app; flavor 'desktop', or 'desktop-new' for
+# MandiPlus Dashboard New on the beta portal) on a Windows runner:
 # smoke test from inside the page, a real install with screenshots, and optionally a self-update
 # from the exe an earlier run kept. Tests the published exe, or with build=true one built here
 # from this commit (plus a console copy, whose crashes show in the log).
@@ -14,6 +15,11 @@ on:
         description: Build desktop/ at this commit instead of downloading the published exe
         type: boolean
         default: false
+      flavor:
+        description: Which app — desktop (Tally look) or desktop-new (new-look beta)
+        type: choice
+        options: [desktop, desktop-new]
+        default: desktop
       plain_typing:
         description: Type into a plain run (for exes older than --typing, 0.1.3 and before); judge by typing.png
         type: boolean
@@ -21,6 +27,10 @@ on:
 permissions:
   actions: read
   contents: read
+env:
+  FLAVOR: ${{ inputs.flavor }}
+  APPNAME: ${{ inputs.flavor == 'desktop-new' && 'MandiPlus Dashboard New' || 'MandiPlus Dashboard' }}
+  LDX: ${{ inputs.flavor == 'desktop-new' && '-X ''main.appName=MandiPlus Dashboard New'' -X main.portal=https://mandipos-admin-beta.onrender.com/ -X main.flavor=desktop-new' || '' }}
 jobs:
   smoke:
     runs-on: windows-latest
@@ -41,8 +51,8 @@ jobs:
         run: |
           go install github.com/tc-hib/go-winres@v0.3.3
           go-winres make --in winres/winres.json --arch amd64 --product-version 0.0.0.1 --file-version 0.0.0.1
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=dev" -o ..\app.exe .
-          go build -trimpath -ldflags "-X main.version=dev" -o ..\app-console.exe .
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=dev $env:LDX" -o ..\app.exe .
+          go build -trimpath -ldflags "-X main.version=dev $env:LDX" -o ..\app-console.exe .
           ..\app-console.exe --version
 
       - name: Screenshot helper
@@ -72,7 +82,7 @@ jobs:
       - name: Download the published exe
         if: ${{ !inputs.build }}
         run: |
-          $r = Invoke-WebRequest 'https://mandipos-api.onrender.com/v1/public/app/download?flavor=desktop' -OutFile app.exe -PassThru
+          $r = Invoke-WebRequest "https://mandipos-api.onrender.com/v1/public/app/download?flavor=$env:FLAVOR" -OutFile app.exe -PassThru
           "version: $($r.Headers['X-App-Version'])"
 
       - name: About the exe
@@ -88,7 +98,7 @@ jobs:
           "exited: $($p.HasExited) code: $(if ($p.HasExited) { $p.ExitCode })"
           Start-Sleep 4
           .\shot.ps1 out\print-preview.png
-          Get-Content "$env:LOCALAPPDATA\MandiPlus Dashboard\dashboard.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:LOCALAPPDATA\$env:APPNAME\dashboard.log" -ErrorAction SilentlyContinue
           Get-Content out\smoke.json
           $p.WaitForExit(30000) | Out-Null
 
@@ -131,20 +141,20 @@ jobs:
           # 0.9.0 updates to 0.9.1 from a stand-in server, once by the portal's button and once
           # by itself while minimized.
           Push-Location desktop
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=0.9.0" -o ..\v090.exe .
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=0.9.1" -o ..\v091.exe .
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=0.9.0 $env:LDX" -o ..\v090.exe .
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=0.9.1 $env:LDX" -o ..\v091.exe .
           Pop-Location
           @'
           import hashlib, http.server, json, sys
           exe = open(sys.argv[1], 'rb').read()
-          meta = json.dumps({'desktop': {'versionName': '0.9.1', 'sha256': hashlib.sha256(exe).hexdigest(), 'sizeBytes': len(exe)}}).encode()
+          meta = json.dumps({sys.argv[2]: {'versionName': '0.9.1', 'sha256': hashlib.sha256(exe).hexdigest(), 'sizeBytes': len(exe)}}).encode()
           class H(http.server.BaseHTTPRequestHandler):
               def do_GET(self):
                   body = exe if self.path.startswith('/v1/public/app/download') else meta
                   self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
           http.server.HTTPServer(('127.0.0.1', 8765), H).serve_forever()
           '@ | Set-Content mock.py
-          $srv = Start-Process python -ArgumentList 'mock.py', 'v091.exe' -PassThru -WindowStyle Hidden
+          $srv = Start-Process python -ArgumentList 'mock.py', 'v091.exe', $env:FLAVOR -PassThru -WindowStyle Hidden
           Start-Sleep 2
 
           mkdir btn | Out-Null; Copy-Item v090.exe btn\app.exe
@@ -185,27 +195,27 @@ jobs:
           Start-Process .\app.exe
           Start-Sleep 30
           .\shot.ps1 out\window.png
-          $d = "$env:LOCALAPPDATA\MandiPlus Dashboard"
+          $d = "$env:LOCALAPPDATA\$env:APPNAME"
           Get-ChildItem $d | Select-Object Name, Length
-          Test-Path "$([Environment]::GetFolderPath('Desktop'))\MandiPlus Dashboard.lnk"
-          Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\MandiPlus Dashboard.lnk"
-          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MandiPlusDashboard' | Select-Object DisplayName, DisplayVersion, UninstallString
-          Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' -or $_.Path -like '*app.exe' } | Select-Object Id, Path
+          Test-Path "$([Environment]::GetFolderPath('Desktop'))\$env:APPNAME.lnk"
+          Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$env:APPNAME.lnk"
+          Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($env:APPNAME -replace ' ', '')" | Select-Object DisplayName, DisplayVersion, UninstallString
+          Get-Process | Where-Object { $_.Path -like "*$env:APPNAME*" -or $_.Path -like '*app.exe' } | Select-Object Id, Path
           Start-Process .\app.exe
           Start-Sleep 5
-          "processes after a second start: $((Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' }).Count)"
+          "processes after a second start: $((Get-Process | Where-Object { $_.Path -like "*$env:APPNAME*" }).Count)"
           Get-Content "$d\dashboard.log"
-          Get-Process | Where-Object { $_.Path -like '*MandiPlus Dashboard*' } | Stop-Process -Force
+          Get-Process | Where-Object { $_.Path -like "*$env:APPNAME*" } | Stop-Process -Force
           Start-Sleep 2
           # Uninstall as Apps & features would, then OK on its message box.
-          $u = Start-Process "$d\MandiPlus Dashboard.exe" -ArgumentList '--uninstall' -PassThru
+          $u = Start-Process "$d\$env:APPNAME.exe" -ArgumentList '--uninstall' -PassThru
           Start-Sleep 5
           .\shot.ps1 out\uninstall.png
           $w = New-Object -ComObject WScript.Shell
           $w.AppActivate($u.Id) | Out-Null; Start-Sleep 1; $w.SendKeys('~')
           "uninstall exited: $($u.WaitForExit(10000))"
           Start-Sleep 12
-          "after uninstall: desktop lnk $(Test-Path "$([Environment]::GetFolderPath('Desktop'))\MandiPlus Dashboard.lnk"), start lnk $(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\MandiPlus Dashboard.lnk"), reg $(Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MandiPlusDashboard'), folder $(Test-Path $d)"
+          "after uninstall: desktop lnk $(Test-Path "$([Environment]::GetFolderPath('Desktop'))\$env:APPNAME.lnk"), start lnk $(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$env:APPNAME.lnk"), reg $(Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($env:APPNAME -replace ' ', '')"), folder $(Test-Path $d)"
 
       - name: Self-update
         if: inputs.from_run != ''

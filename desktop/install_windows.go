@@ -21,7 +21,7 @@ import (
 // rights needed), adds Desktop and Start menu shortcuts and an entry in Apps & features, and
 // starts the copy. Updates replace that copy.
 
-const uninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\MandiPlusDashboard`
+var uninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\` + className
 
 func installedExe(dir string) string { return filepath.Join(dir, appName+".exe") }
 

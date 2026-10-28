@@ -13,10 +13,16 @@ import (
 	"time"
 )
 
-const (
+const liveAPI = "https://mandipos-api.onrender.com"
+
+// Which app this build is, set at build time (build.sh): the Tally-look portal ("MandiPlus
+// Dashboard", releases flavor 'desktop') or the new-look beta ("MandiPlus Dashboard New",
+// 'desktop-new'). Each installs to its own folder with its own shortcuts and updates, so a
+// computer can keep both.
+var (
 	appName = "MandiPlus Dashboard"
 	portal  = "https://mandipos-admin.onrender.com/"
-	liveAPI = "https://mandipos-api.onrender.com"
+	flavor  = "desktop"
 )
 
 // apiOverride is --api: a stand-in update server for tests.
