@@ -590,6 +590,202 @@ a.kpi:hover { border-color: #cfd3da; }
 .big-fig .v { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
 
 
+/* ================================================================ Tally ERP 9 */
+*, *::before, *::after { border-radius: 0 !important; box-shadow: none !important; }
+body { font-family: Verdana, Tahoma, 'DejaVu Sans', 'Noto Sans', 'Noto Sans Devanagari', sans-serif; font-size: 12.5px; }
+h1 { font-size: 13px; font-weight: 700; }
+h3, .card > .hd h3 { font-size: 12.5px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+small { font-size: 11.5px; }
+b, .b { font-weight: 700; }
+.muted { color: var(--muted); }
+
+/* Title strip: report left, date right, white on teal. */
+.top { height: var(--top); background: var(--accent); color: #fff; border: 0; padding: 0 12px; gap: 10px; backdrop-filter: none; }
+.top .title h1 { color: #fff; font-size: 12.5px; }
+.top-date { font-weight: 700; font-size: 12px; white-space: nowrap; }
+.top .icon-btn { color: #fff; width: 30px; height: 30px; }
+.top .icon-btn:hover { background: rgba(255, 255, 255, 0.15); }
+.top .export-btn, .top .new-btn, .top .goto { height: 22px; font-size: 11.5px; border: 1px solid rgba(255, 255, 255, 0.5); background: transparent; color: #fff; min-width: 0; padding: 0 8px; }
+.top .goto svg, .top .export-btn svg { width: 14px; height: 14px; }
+.top .goto kbd { display: none; }
+
+/* The menu: Gateway of Tally — plain lines, the hotkey letter, a teal bar on the one you are on. */
+.side { background: var(--page); border-right: 1px solid var(--line); }
+.side .brand { height: var(--top); background: var(--accent); color: #fff; font-size: 12.5px; padding: 0 12px; gap: 8px; }
+.side .brand i { width: 20px; height: 20px; background: #fff; color: var(--accent); font-size: 12px; }
+.side .brand span { color: #fff; }
+.shop-pick { margin: 8px 8px 4px; }
+.shop-pick select, .shop-name { height: 28px; border: 1px solid var(--line); background: var(--card); font-weight: 700; font-size: 12px; }
+.shop-pick::after { top: 6px; }
+.shop-name { height: auto; padding: 4px 8px; margin: 8px 8px 4px; }
+.nav { padding: 2px 8px 10px; }
+.nav .grp { font-size: 11.5px; font-weight: 700; color: var(--ink); text-transform: none; letter-spacing: 0; text-decoration: underline; text-underline-offset: 3px; padding: 10px 6px 2px; }
+.nav a, .side-ft > a, .side-ft > button { height: 24px; padding: 0 8px; gap: 8px; color: var(--ink); font-weight: 700; font-size: 12px; }
+.nav a svg, .side-ft svg { display: none; }
+.nav a:hover, .side-ft > a:hover, .side-ft > button:hover { background: var(--accent-soft); }
+.nav a[aria-current='page'], .side-ft > a[aria-current='page'] { background: var(--accent); color: #fff; }
+.side-ft { border-top: 1px solid var(--line); padding: 4px 8px 8px; }
+.hk { text-decoration-color: currentColor !important; text-decoration-thickness: 1px !important; }
+
+/* Key panel down the right, as Tally's: pale buttons, the key then what it does. */
+.keypanel { display: none; }
+@media (min-width: 1100px) {
+  .keypanel { display: flex; flex-direction: column; position: fixed; top: var(--top); right: 0; bottom: 0; width: var(--keys); z-index: 15; background: var(--page); border-left: 1px solid var(--line); }
+  .keypanel button { height: 28px; border: 0; border-bottom: 1px solid #b9c9b5; background: var(--keybar); text-align: left; padding: 0 8px; font: 700 11.5px Verdana, Tahoma, sans-serif; color: var(--ink); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .keypanel button:hover:not(:disabled) { background: #b8dbb0; }
+  .keypanel button:disabled { color: #8d978b; cursor: default; }
+  .keypanel kbd { all: unset; color: var(--accent); text-decoration: underline; }
+  .top, .main { margin-right: var(--keys); }
+  .top .export-btn, .top .new-btn, .top .goto { display: none; }
+  .main { max-width: none; }
+}
+.main { padding: 10px 14px 40px; }
+
+/* Panels: no cards — ruled boxes on the screen. */
+.card { background: var(--card); border: 1px solid var(--line); }
+.card > .hd { padding: 6px 10px; border-bottom: 1px solid var(--line); background: #eef2e1; }
+.card > .hd a { color: var(--accent); font-weight: 700; font-size: 11.5px; }
+.card > .bd { padding: 8px 10px 10px; }
+.stack, .grid { gap: 10px; }
+
+/* The totals box, Tally's pale yellow: label underlined, figure bold. */
+.sum { background: var(--box); border-color: var(--line); padding: 6px 0; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.sum > div { padding: 0 12px; }
+.sum > div + div { border-left: 1px solid #d8d3a4; }
+.sum .lb { color: var(--ink); font-size: 11px; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+.sum .v { font-size: 13.5px; font-weight: 700; }
+
+/* Reports: dense lines, bold names, column titles ruled, Grand Total ruled. */
+.tbl th { background: transparent; color: var(--ink); font-size: 11.5px; font-weight: 700; text-transform: none; letter-spacing: 0; padding: 5px 8px; border-bottom: 1px solid var(--ink); }
+.tbl th + th { border-left: 1px solid var(--line-2); }
+.tbl td { padding: 3px 8px; border-bottom: 0; font-size: 12px; }
+.tbl td small { display: inline; margin-left: 6px; font-size: 11px; }
+.tbl td.main-col b, .tbl td .name { font-weight: 700; }
+.tbl th.num, .tbl td.num { padding-left: 18px; }
+.tbl tbody tr[data-row]:hover { background: #e7eedc; }
+.tbl tbody tr[data-row]:focus, .tbl tbody tr[data-row]:focus-visible { background: var(--select); }
+.tbl tbody tr[data-row]:focus > td:first-child { box-shadow: none !important; }
+.tbl tfoot td { border-top: 1px solid var(--ink); background: transparent; font-weight: 700; padding: 5px 8px; }
+.tbl .day td { background: transparent; color: var(--ink); font-weight: 700; font-size: 11.5px; padding: 8px 8px 2px; text-decoration: underline; text-underline-offset: 2px; }
+.tbl tr.open-lines td { background: #f0f3e4; }
+.money { font-variant-numeric: tabular-nums; }
+.chip { height: 18px; padding: 0 5px; font-size: 10.5px; font-weight: 700; border: 1px solid currentColor; background: transparent !important; }
+.empty { padding: 18px 10px; }
+
+/* Controls: Tally fields — thin box, no fill; buttons as the key bar. */
+.field { height: 28px; padding: 0 8px; font-size: 12.5px; border: 1px solid var(--line); background: #fff; }
+.field:focus { outline: 0; border-color: var(--accent); background: #fffde0; }
+.money-in > span { top: 6px; left: 8px; }
+.money-in .field { padding-left: 20px; }
+.btn { height: 28px; padding: 0 12px; font-size: 12px; font-weight: 700; border: 1px solid #9fb89a; background: var(--keybar); color: var(--ink); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:not(:disabled):hover { background: var(--accent-ink); }
+.btn.ghost { background: var(--keybar); color: var(--ink); }
+.btn.ghost:not(:disabled):hover { background: #b8dbb0; }
+.btn kbd { all: unset; text-decoration: underline; }
+.entry-grid kbd { all: unset; text-decoration: underline; }
+.btn.primary kbd { color: #fff; }
+.seg { padding: 0; gap: 0; border: 1px solid var(--line); background: #fff; }
+.seg button { height: 24px; padding: 0 10px; font-size: 11.5px; font-weight: 700; color: var(--ink); }
+.seg button + button { border-left: 1px solid var(--line-2); }
+.seg button[aria-pressed='true'] { background: var(--accent); color: #fff; }
+.stepper { height: 26px; border: 1px solid var(--line); }
+.stepper button { height: 24px; width: 26px; }
+.stepper label { font-size: 12px; min-width: 100px; }
+.goto { border: 1px solid var(--line); }
+kbd { border: 1px solid var(--line); background: #fff; color: var(--ink); font-family: inherit; font-weight: 700; }
+
+/* Dashboard: figures without decoration. */
+.kpi { padding: 8px 10px; gap: 0; }
+.kpi .ic, .quick button .ic { display: none; }
+.kpi .lb { color: var(--ink); font-weight: 700; font-size: 11px; text-decoration: underline; text-underline-offset: 2px; }
+.kpi .v { font-size: 17px; margin: 3px 0 1px; }
+.kpi .s { font-size: 11px; }
+.quick { gap: 6px; }
+.quick button { padding: 6px 10px; border: 1px solid #9fb89a; background: var(--keybar); font-weight: 700; }
+.quick button:hover { background: #b8dbb0; border-color: #9fb89a; }
+.quick button b { font-size: 12px; }
+.quick button small { display: inline; margin-left: 6px; }
+.agebar { display: none; }
+.big-fig .v { font-size: 16px; }
+
+/* Windows (entry, voucher, go to, help): a teal title strip, as Tally's sub-screens. */
+.scrim { background: rgba(0, 0, 0, 0.25); }
+.sheet, .dialog, .palette { border: 1px solid var(--accent); background: var(--page); }
+.sheet-hd { background: var(--accent); color: #fff; padding: 4px 6px 4px 10px; }
+.sheet-hd h3 { color: #fff; font-size: 12.5px; text-decoration: none; }
+.sheet-hd .icon-btn { color: #fff; width: 24px; height: 24px; }
+.sheet-bd { padding: 10px 12px; gap: 9px; }
+.sheet-ft { background: var(--keybar); border-top: 1px solid #9fb89a; padding: 4px 6px; gap: 4px; }
+.sheet-ft .btn { height: 24px; }
+.fld { gap: 3px; }
+.fld-lb { color: var(--ink); font-size: 11.5px; font-weight: 700; }
+.box, .set-bank { background: #f0f3e4; border: 1px solid var(--line-2); padding: 8px; gap: 7px; }
+.chips button { height: 26px; border: 1px solid var(--line); background: #fff; font-size: 11.5px; }
+.chips button[aria-pressed='true'] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.total-line { background: var(--box); border: 1px solid #d8d3a4; padding: 6px 10px; }
+.total-line b { font-size: 15px; }
+.picked { height: 28px; background: #fff; border: 1px solid var(--line); }
+.combo-list { border: 1px solid var(--line); }
+.combo-list .opt { padding: 4px 8px; }
+.combo-list .opt[aria-selected='true'], .palette .opt[aria-selected='true'] { background: var(--select); }
+.palette .field { height: 34px; }
+.help-row { padding: 2px 0; font-size: 12px; }
+.voucher-pay { background: var(--box); border: 1px solid #d8d3a4; }
+.set-sec { padding: 10px 12px; gap: 8px; }
+.set-sec > h3 { font-size: 12.5px; color: var(--ink); text-transform: none; letter-spacing: 0; }
+.set-row { grid-template-columns: 190px minmax(0, 1fr); gap: 10px; }
+.set-lb { font-weight: 700; font-size: 12px; }
+.set-bar { background: var(--keybar); border: 1px solid #9fb89a; padding: 4px 6px; }
+.code { height: 18px; min-width: 0; padding: 0 4px; font-size: 11px; background: transparent; border: 1px solid var(--line); color: var(--ink); }
+.code.big { height: 20px; font-size: 12px; margin-right: 8px; }
+.head h1 { font-size: 15px; }
+.crumb { font-size: 12px; color: var(--accent); }
+.call { color: var(--accent); }
+.export-bar { background: var(--accent); color: #fff; padding: 4px 8px; }
+.export-bar .icon-btn { color: #fff; }
+.export-bar .btn { height: 24px; }
+.export-root { background: #d9ddd0; }
+.toast { background: var(--accent); }
+.login-card { border: 1px solid var(--line); }
+
+/* Phones: the same flat screen, finger-sized. */
+@media (max-width: 899px) {
+  body { font-size: 14px; }
+  :root { --top: 48px; }
+  .top { padding: 0 4px; }
+  .top .title h1 { font-size: 15px; }
+  .top-date { display: none; }
+  .top .goto { border: 0; width: 40px; height: 40px; }
+  .top .goto svg { width: 20px; height: 20px; }
+  .top .export-btn { border: 0; width: 40px; height: 40px; }
+  .top .export-btn svg { width: 20px; height: 20px; }
+  .tbl td { font-size: 14px; }
+  .tbl td small { display: block; margin-left: 0; font-size: 12px; }
+  .tbl.fold tbody tr:not(.day):not(.open-lines), .tbl.fold tfoot tr { padding: 8px 10px; }
+  .field { height: 40px; font-size: 16px; }
+  .money-in > span { top: 11px; }
+  .btn { height: 40px; }
+  .seg button { height: 32px; font-size: 13px; }
+  .stepper { height: 34px; }
+  .stepper button { height: 32px; }
+  .sheet-ft .btn { height: 44px; }
+  .picked { height: 40px; }
+  .chips button { height: 36px; }
+  .nav a, .side-ft > a, .side-ft > button { height: 34px; font-size: 14px; }
+  .kpi .v { font-size: 18px; }
+  .quick button { padding: 10px; }
+  .tabs { background: var(--keybar); border-top: 1px solid #9fb89a; }
+  .tabs .plus span { background: var(--accent); }
+  .tabs [aria-current='page'] { color: var(--accent); }
+  .sum { padding: 10px; }
+  .sum > div { padding: 0; }
+}
+/* In a report, a voucher type or payment is a word, as Tally prints it — not a badge. */
+.tbl .chip { border: 0; padding: 0; height: auto; font-size: inherit; font-weight: 400; color: var(--ink) !important; }
+.quick kbd { all: unset; color: var(--accent); text-decoration: underline; font-weight: 700; }
+.quick button b { display: inline; }
+@media (max-width: 899px), (hover: none) { .quick kbd, .btn kbd, .keypanel { display: none !important; } }
 
 /* ================================================================ vasooli, munafa, bhav */
 .tbl td.act-col { white-space: nowrap; width: 1%; }

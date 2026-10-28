@@ -228,7 +228,7 @@ export default function App() {
     <SessionContext.Provider value={{ me, shops, reload }}>
       <div className="app">
         <aside className={`side${drawer ? ' open' : ''}`} aria-label={t('Menu')}>
-          <a className="brand" href="#/">Mandi<span>Plus</span></a>
+          <a className="brand" href="#/"><i>M</i>Mandi<span>Plus</span></a>
           {/* An owner sees their shop by name; a choice only where there is one to make. */}
           {open.length > 0 && !me?.admin && open.length === 1 && shop && (
             <div className="shop-name"><b>{shop.name}</b>{shop.mandi && <small>{shop.mandi}</small>}</div>
