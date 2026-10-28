@@ -8,6 +8,7 @@ import { InsightsService } from './admin/insights.service';
 import { UdhaarAlertsService } from './alerts/udhaar-alerts.service';
 import { RemindersService } from './alerts/reminders.service';
 import { PickupNoticesService } from './alerts/pickup-notices.service';
+import { CreditorsService } from './admin/creditors.service';
 import { SlipSendsService } from './alerts/slip-sends.service';
 import { SlipSendsController } from './alerts/slip-sends.controller';
 import { AccountsService } from './auth/accounts.service';
@@ -42,6 +43,6 @@ import { SheetService } from './voice/sheet.service';
 
 @Module({
   controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController],
-  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService],
+  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, CreditorsService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService],
 })
 export class AppModule {}

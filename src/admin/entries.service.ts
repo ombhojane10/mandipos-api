@@ -54,7 +54,9 @@ export type ParchiInput = {
 export type VasooliInput = { buyerId: string; cashPaise: number; upiPaise: number; upiBank?: string; paymentRef?: string };
 export type DaybookInput = { direction: 'in' | 'out'; category: string; mode: 'cash' | 'office' | 'upi' | 'bank'; amountPaise: number; party?: string; note?: string; date?: string };
 export type UdhaarInput = { buyerId: string; amountPaise: number; note?: string; date?: string };
-export type GrahakInput = { name: string; phone?: string; address?: string; destination?: string; code?: string; vehicle?: string; openingPaise?: number };
+export type LaddanFields = { city?: string; district?: string; state?: string; contactPerson?: string; email?: string; area?: string; bankDetails?: string };
+export type GrahakInput = { name: string; phone?: string; address?: string; destination?: string; code?: string; vehicle?: string; openingPaise?: number; kind?: '' | 'laddan' } & LaddanFields;
+export type SupplierInput = { id?: string; name: string; code?: string; area?: string; phone?: string; openingPaise?: number; openingOn?: string | null };
 export type GaadiInput = {
   number: string; supplier: string; freightPaise?: number; location?: string;
   lots: { brandId?: string; brandName?: string; grade: Grade; qty: number; ratePaise: number; boxGrams?: number }[];
@@ -211,6 +213,7 @@ export class EntriesService {
     if (!buyerId && buyerName && !walkIn) {
       // A new name on a slip becomes a grahak first, in its own entry, as the app does.
       buyerId = uuidv7();
+      if (await this.capsNames(shopId)) buyerName = buyerName.toUpperCase();
       items.push({ table: 'buyers', row: this.buyerRow(buyerId, { name: buyerName }, now), txn: uuidv7() });
     }
     if (buyerId && !input.buyerName) buyerName = (await this.db.withShop(shopId, async (tx) => (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE id = $1`, [buyerId])).rows[0]?.name)) ?? '';
@@ -311,6 +314,7 @@ export class EntriesService {
     const walkIn = /^(cash|bank|free)$/i.test(buyerName) || (!buyerId && !buyerName);
     if (!buyerId && buyerName && !walkIn) {
       buyerId = uuidv7();
+      if (await this.capsNames(shopId)) buyerName = buyerName.toUpperCase();
       items.push({ table: 'buyers', row: this.buyerRow(buyerId, { name: buyerName }, now), txn: uuidv7() });
     }
     if (buyerId && !input.buyerName) buyerName = (await this.db.withShop(shopId, async (tx) => (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE id = $1`, [buyerId])).rows[0]?.name)) ?? '';
@@ -581,7 +585,8 @@ export class EntriesService {
   }
 
   async grahak(phone: string, shopId: string, input: GrahakInput) {
-    const name = input.name.trim();
+    const name = (await this.capsNames(shopId)) ? input.name.trim().toUpperCase() : input.name.trim();
+    input = { ...input, name };
     if (!name) throw new BadRequestException('Naam daalein');
     const p = await this.device(phone, shopId);
     const dup = await this.db.withShop(shopId, async (tx) => (await tx.query<{ id: string }>(
@@ -615,7 +620,7 @@ export class EntriesService {
         .find((r) => nameKey(r.s) === nameKey(input.supplier))?.s;
       const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;
       const ids = lots.map((l) => l.brandId ?? brands.find((b) => nameKey(b.name) === nameKey(l.brandName ?? ''))?.id ?? null);
-      return { supplier: known ?? input.supplier.trim(), brandIds: ids };
+      return { supplier: known ?? (shop.commodity === 'angoor' ? input.supplier.trim().toUpperCase() : input.supplier.trim()), brandIds: ids };
     });
     const items: PushItem[] = [];
     const newBrands = new Map<string, string>();
@@ -834,7 +839,7 @@ export class EntriesService {
    * WhatsApp can go): the whole row as it is with the change, a newer updated_at, pushed as a
    * terminal pushes it. code, card and market udhaar are left out unless changed, so they stay.
    */
-  async updateGrahak(phone: string, shopId: string, buyerId: string, patch: { phone?: string; address?: string; destination?: string; code?: string; name?: string }) {
+  async updateGrahak(phone: string, shopId: string, buyerId: string, patch: { phone?: string; address?: string; destination?: string; code?: string; name?: string; kind?: '' | 'laddan' } & LaddanFields) {
     const p = await this.device(phone, shopId);
     const g = await this.db.withShop(shopId, async (tx) => (await tx.query<{
       id: string; created_at: Date; name: string; phone: string; kind: string; credit_limit_paise: string; vehicle: string; address: string; destination: string; hidden: boolean
@@ -843,9 +848,11 @@ export class EntriesService {
     if (patch.phone !== undefined && patch.phone && !/^[6-9]\d{9}$/.test(patch.phone)) throw new BadRequestException('Mobile number 10 ank ka hona chahiye');
     const row: Record<string, unknown> = {
       id: g.id, created_at: g.created_at.toISOString(), updated_at: new Date().toISOString(),
-      name: (patch.name ?? g.name).trim(), phone: patch.phone ?? g.phone, kind: g.kind, credit_limit_paise: n(g.credit_limit_paise),
+      name: patch.name !== undefined && (await this.capsNames(shopId)) ? patch.name.trim().toUpperCase() : (patch.name ?? g.name).trim(),
+      phone: patch.phone ?? g.phone, kind: patch.kind ?? g.kind, credit_limit_paise: n(g.credit_limit_paise),
       vehicle: g.vehicle, address: (patch.address ?? g.address).trim(), destination: (patch.destination ?? g.destination).trim(), hidden: g.hidden,
       ...(patch.code !== undefined ? { code: patch.code.trim().toUpperCase() } : {}),
+      ...laddanCols(patch),
     };
     await this.push(p, shopId, [{ table: 'buyers', txn: uuidv7(), row }]);
     return { id: g.id, name: row.name as string, phone: row.phone as string };
@@ -853,10 +860,46 @@ export class EntriesService {
 
   private buyerRow(id: string, b: GrahakInput, now: string) {
     return {
-      id, created_at: now, updated_at: now, name: b.name.trim(), phone: (b.phone ?? '').trim(), kind: '', credit_limit_paise: 0,
+      id, created_at: now, updated_at: now, name: b.name.trim(), phone: (b.phone ?? '').trim(), kind: b.kind ?? '', credit_limit_paise: 0,
       vehicle: (b.vehicle ?? '').toUpperCase().replace(/\s+/g, ''), address: (b.address ?? '').trim(), destination: (b.destination ?? '').trim(),
       code: (b.code ?? '').trim().toUpperCase(),
+      ...laddanCols(b),
     }
+  }
+
+  /** Grapes shops write every name in capitals, as their books always have. */
+  private async capsNames(shopId: string): Promise<boolean> {
+    const r = await this.db.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId]);
+    return r[0]?.commodity === 'angoor';
+  }
+
+  /**
+   * A supplier on the creditors' list: name (in capitals), manual code, area, phone and the
+   * balance owed to them on a date. Synced to the terminals as supplier_phones. A code already
+   * used by another supplier is refused.
+   */
+  async saveSupplier(phone: string, shopId: string, input: SupplierInput) {
+    const name = input.name.trim().toUpperCase();
+    if (!name) throw new BadRequestException('Supplier ka naam daalein');
+    const code = (input.code ?? '').trim().toUpperCase();
+    const mobile = (input.phone ?? '').trim();
+    if (mobile && !/^[6-9]\d{9}$/.test(mobile)) throw new BadRequestException('Mobile number 10 ank ka hona chahiye');
+    const p = await this.device(phone, shopId);
+    const old = await this.db.withShop(shopId, async (tx) => {
+      const all = (await tx.query<{ id: string; name: string; code: string; created_at: Date }>(`SELECT id, name, code, created_at FROM supplier_phones`)).rows;
+      const mine = input.id ? all.find((r) => r.id === input.id) : all.find((r) => nameKey(r.name) === nameKey(name));
+      if (input.id && !mine) throw new NotFoundException('Supplier nahi mila');
+      if (code && all.some((r) => r.code === code && r.id !== mine?.id)) throw new ConflictException(`Code ${code} pehle se kisi aur supplier ka hai`);
+      if (all.some((r) => nameKey(r.name) === nameKey(name) && r.id !== mine?.id)) throw new ConflictException('Is naam ka supplier pehle se hai');
+      return mine ?? null;
+    });
+    const now = new Date().toISOString();
+    const id = old?.id ?? uuidv7();
+    await this.push(p, shopId, [{ table: 'supplier_phones', txn: uuidv7(), row: {
+      id, created_at: old ? old.created_at.toISOString() : now, updated_at: now, name, phone: mobile, code, area: (input.area ?? '').trim().toUpperCase(),
+      opening_paise: input.openingPaise ?? 0, opening_on: input.openingOn ?? null,
+    } }]);
+    return { id, name, code };
   }
 
   // ---------------------------------------------------------------- Aaj ka bhav
@@ -1099,4 +1142,14 @@ async function nextNumber(tx: Tx, table: 'bills' | 'collections', col: string, v
   const r = (await tx.query<{ m: string | null }>(
     `SELECT GREATEST((SELECT MAX(${col}) FROM ${table}), (SELECT MAX(${col}) FROM ${voids})) AS m`)).rows[0];
   return n(r.m) + 1;
+}
+
+/** The laddan master's columns, only those given (an edit never blanks the rest). */
+function laddanCols(b: LaddanFields) {
+  const up = (v: string | undefined) => (v === undefined ? undefined : v.trim().toUpperCase());
+  const cols: Record<string, string | undefined> = {
+    city: up(b.city), district: up(b.district), state: up(b.state), contact_person: up(b.contactPerson),
+    email: b.email === undefined ? undefined : b.email.trim().toLowerCase(), area: up(b.area), bank_details: b.bankDetails === undefined ? undefined : b.bankDetails.trim(),
+  };
+  return Object.fromEntries(Object.entries(cols).filter(([, v]) => v !== undefined));
 }
