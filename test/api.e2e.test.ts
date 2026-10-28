@@ -300,6 +300,62 @@ describe('angoor round 2', () => {
 describe('angoor on the website', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
+  it('tells the grahak on WhatsApp after the gaadi hands over their boxes: one message per round of scans', async () => {
+    const s = await login('9829200031');
+    const res = await createApproved(s.accessToken, { name: 'Notice Angoor', mandi: 'Azadpur', shopNo: 'C-31', role: 'owner', commodity: 'angoor' });
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const royal = uuidv7(), sai = uuidv7();
+    await http().post('/v1/sync/push').set(auth(res.accessToken)).send({ items: [
+      { table: 'brands', row: { id: royal, created_at: t, updated_at: t, name: 'Royal' } },
+      { table: 'trucks', row: { id: sai, created_at: t, updated_at: t, number: '3289', supplier: 'Sai', arrived_at: t, location: 'Pillar 320' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: sai, brand_id: royal, grade: '1', billed_qty: 50, received_qty: 50, rate_paise: 100000, box_grams: 10000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829200031' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829200031', code: OtpService.issuedForTests.get('9829200031') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const g = (await http().post(`${base}/entries/grahak`).set(web).send({ name: 'Noor Traders', phone: '9876500031' }).expect(201)).body;
+    const slip = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerId: g.id, lots: [{ truckId: sai, brandId: royal, qty: 12, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+    const cash = (await http().post(`${base}/entries/parchi`).set(web).send({ lots: [{ truckId: sai, brandId: royal, qty: 2, ratePaise: 100000 }], pay: 'cash' }).expect(201)).body;
+
+    const { PickupNoticesService } = await import('../src/alerts/pickup-notices.service');
+    const { TemplateUnavailable } = await import('../src/alerts/udhaar-alerts.service');
+    const notices = app.get(PickupNoticesService);
+    const sent: { to: string; params: string[] }[] = [];
+    notices.sender = async (to, params) => { sent.push({ to, params }); return `wamid.${sent.length}`; };
+    const later = (s = 60) => new Date(Date.now() + s * 1000);
+
+    // Two scans of the slip in a row, one of the cash slip: nothing while the gaadi is still busy…
+    await http().post(`${base}/pickup`).set(web).send({ billId: slip.billId, qty: 5 }).expect(201);
+    await http().post(`${base}/pickup`).set(web).send({ billId: slip.billId, qty: 3 }).expect(201);
+    await http().post(`${base}/pickup`).set(web).send({ billId: cash.billId, qty: 2 }).expect(201);
+    expect(await notices.tick(new Date())).toMatchObject({ sent: 0 });
+    // …then one message for the round; the cash slip has no number and is skipped.
+    expect(await notices.tick(later())).toMatchObject({ sent: 1, skipped: 1 });
+    expect(sent).toEqual([{ to: '919876500031', params: ['Noor Traders', 'Notice Angoor', `#${slip.slipNo}`, '8', '12 में से 8 बॉक्स दिए, 4 बाकी', expect.stringMatching(/^\d+ \w+, \d+:\d\d [ap]m$/)] }]);
+    expect(await notices.tick(later(90))).toMatchObject({ sent: 0, skipped: 0 });
+
+    // The last 4 boxes: a second message saying all of it has gone.
+    await http().post(`${base}/pickup`).set(web).send({ billId: slip.billId, qty: 4 }).expect(201);
+    expect(await notices.tick(later())).toMatchObject({ sent: 1 });
+    expect(sent[1].params.slice(3, 5)).toEqual(['4', 'पूरा माल दे दिया (12 बॉक्स)']);
+
+    // A broken box re-billed: the new slip carries the old scans over — that is not news.
+    await http().post(`${base}/breakages`).set(web).send({ billId: slip.billId, brandId: royal, truckId: sai, qty: 1 }).expect(201);
+    const brk = (await http().get(`${base}/breakages`).set(web).expect(200)).body.breakages[0].id;
+    await http().post(`${base}/breakages/${brk}/resolve`).set(web).send({ ratePaise: 50000 }).expect(201);
+    expect(await notices.tick(later())).toMatchObject({ sent: 0, skipped: 0 });
+
+    // Template still under review at Meta: the notice waits and goes out on a later try.
+    const other = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerId: g.id, lots: [{ truckId: sai, brandId: royal, qty: 3, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+    await http().post(`${base}/pickup`).set(web).send({ billId: other.billId, qty: 3 }).expect(201);
+    notices.sender = async () => { throw new TemplateUnavailable('132001 not approved'); };
+    expect(await notices.tick(later())).toMatchObject({ sent: 0, waiting: 1 });
+    notices.sender = async (to, params) => { sent.push({ to, params }); return 'wamid.late'; };
+    expect(await notices.tick(later(11 * 60))).toMatchObject({ sent: 1 });
+    expect(sent).toHaveLength(3);
+  });
+
   it('makes grapes slips and gaadis on the portal as the app does: several gaadis, APMC, udhaar labour, no count limit', async () => {
     const s = await login('9829200021');
     const res = await createApproved(s.accessToken, { name: 'Web Angoor', mandi: 'Azadpur', shopNo: 'C-30', role: 'owner', commodity: 'angoor' });
