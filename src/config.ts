@@ -33,6 +33,8 @@ const schema = z
     // Angoor: the slip to the grahak and the beejak to the party, as an image header (UTILITY, hi).
     // Empty until Meta approves them (pos_parchi_v1 / pos_beejak_v1); sends answer 409 till then.
     SLIP_TEMPLATE: z.string().default(''),
+    // Angoor: "maal de diya" to the grahak after a gaadi scan (UTILITY, hi). Empty switches it off.
+    PICKUP_TEMPLATE: z.string().default('pos_maal_diya_v1'),
     BEEJAK_TEMPLATE: z.string().default(''),
     /**
      * Grahak eKYC through ULIP's DigiLocker APIs (same account as the MandiPlus backend).
