@@ -276,7 +276,7 @@ export function GaadiPata({ shopId }: { shopId: string }) {
   )
 }
 
-// ================================================================ Supplier commission + beejak
+// ================================================================ Commission bikri + beejak
 
 const store = {
   get: (k: string, fallback: number) => { try { const raw = localStorage.getItem(k); const v = Number(raw); return raw !== null && Number.isFinite(v) ? v : fallback } catch { return fallback } },
@@ -308,7 +308,7 @@ export function Commission({ shopId }: { shopId: string }) {
   const rows = (data?.suppliers ?? []).flatMap((s) => s.gaadis.map((g, i) => ({ s, g, first: i === 0 })))
 
   useExport(data ? () => ({
-    style: 'book' as const, title: `${t('Supplier commission')} · ${bps / 100}%`, dateLine: dayRange(period.from, period.to), file: fileName('Commission', period.from, period.to),
+    style: 'book' as const, title: `${t('Commission bikri')} · ${bps / 100}%`, dateLine: dayRange(period.from, period.to), file: fileName('Commission', period.from, period.to),
     columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), wide: true }, { label: t('Box'), num: true }, { label: t('Bikri'), num: true }, { label: t('Commission'), num: true }, { label: t('Party ko'), num: true }],
     rows: rows.map(({ s, g, first }) => ({ cells: [first ? s.name : '', g.number, count(g.boxes), rs(g.salesPaise), rs(g.commissionPaise), rs(g.netPaise)] })),
     foot: [t('Kul'), '', count(data.suppliers.reduce((x, s) => x + s.boxes, 0)), rs(data.totals.salesPaise), rs(data.totals.commissionPaise), rs(data.totals.salesPaise - data.totals.commissionPaise)],
