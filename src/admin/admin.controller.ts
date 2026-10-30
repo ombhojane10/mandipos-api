@@ -15,6 +15,7 @@ import { EntriesService } from './entries.service';
 import { SettingsService } from './settings.service';
 import { BEEJAK_HEADS, InsightsService } from './insights.service';
 import { CreditorsService } from './creditors.service';
+import { MachinesService } from './machines.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -158,6 +159,16 @@ export const BeejakBody = z.object({
 });
 const SupplierPayBody = z.object({ supplier: z.string().trim().min(1).max(120), mode: z.enum(['cash', 'office', 'upi', 'bank']), amountPaise: paise.positive(), note: z.string().max(200).optional(), date: DayIso });
 
+const MachineBody = z.object({
+  serial: z.string().trim().min(3).max(40), model: z.string().trim().max(40).optional(), tid: z.string().trim().max(40).optional(), note: z.string().trim().max(200).optional(),
+});
+const GiveBody = z.object({
+  shopId: z.uuid().nullable().default(null), name: z.string().trim().max(80).default(''), phone: mobileOrBlank.default(''),
+  onDay: DayIso, deviceId: z.uuid().nullable().optional(), note: z.string().trim().max(200).optional(),
+});
+const BackBody = z.object({ status: z.enum(['stock', 'repair', 'lost']), onDay: DayIso, note: z.string().trim().max(200).optional() });
+const LinkBody = z.object({ deviceId: z.uuid().nullable() });
+
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 /** Sign-in: OTP to a MandiPlus admin number, or to the owner of an approved shop. */
@@ -200,7 +211,54 @@ export class AdminController {
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
+    private readonly machines: MachinesService,
   ) {}
+
+  // ---------------------------------------------------------------- machines MandiPlus hands out (admin only)
+
+  /** Every machine: serial, with whom since when, its app login; plus the logins it could be. */
+  @Get('machines')
+  machineList(@See() v: Viewer) {
+    adminOnly(v);
+    return this.machines.list();
+  }
+
+  @Get('machines/:mid/history')
+  machineHistory(@See() v: Viewer, @Param('mid') mid: string) {
+    adminOnly(v);
+    return this.machines.history(parse(Id, mid));
+  }
+
+  /** A new machine into the register (in stock). */
+  @Post('machines')
+  addMachine(@See() v: Viewer, @Body() body: unknown) {
+    adminOnly(v);
+    return this.machines.save(null, parse(MachineBody, body), v.phone);
+  }
+
+  @Post('machines/:mid')
+  editMachine(@See() v: Viewer, @Param('mid') mid: string, @Body() body: unknown) {
+    adminOnly(v);
+    return this.machines.save(parse(Id, mid), parse(MachineBody, body), v.phone);
+  }
+
+  @Post('machines/:mid/give')
+  giveMachine(@See() v: Viewer, @Param('mid') mid: string, @Body() body: unknown) {
+    adminOnly(v);
+    return this.machines.give(parse(Id, mid), parse(GiveBody, body), v.phone);
+  }
+
+  @Post('machines/:mid/back')
+  machineBack(@See() v: Viewer, @Param('mid') mid: string, @Body() body: unknown) {
+    adminOnly(v);
+    return this.machines.back(parse(Id, mid), parse(BackBody, body), v.phone);
+  }
+
+  @Post('machines/:mid/link')
+  linkMachine(@See() v: Viewer, @Param('mid') mid: string, @Body() body: unknown) {
+    adminOnly(v);
+    return this.machines.link(parse(Id, mid), parse(LinkBody, body).deviceId, v.phone);
+  }
 
   // ---------------------------------------------------------------- supplier creditors and laddan (angoor)
 

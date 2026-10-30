@@ -1,6 +1,6 @@
 /**
  * Hash routes, so a reload or a shared link lands on the same page. A shop's reports live under
- * #/s/<shop>/…, the market (admin only) under #/market, #/requests and #/shops.
+ * #/s/<shop>/…, the market (admin only) under #/market, #/requests, #/shops and #/machines.
  */
 export type Report = 'dashboard' | 'daybook' | 'cashbook' | 'outstanding' | 'ledger' | 'suppliers' | 'stock' | 'items' | 'team' | 'settings' | 'register' | 'munafa' | 'vasooli' | 'gaadis' | 'bhav' | 'nigrani'
   | 'dispatch' | 'pata' | 'commission' | 'beejak' | 'creditors' | 'laddan' | 'apmc' | 'mazdoori' | 'bolo'
@@ -13,6 +13,7 @@ export type Route =
   | { page: 'market' }
   | { page: 'person'; key: string }
   | { page: 'requests' }
+  | { page: 'machines' }
 
 const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani', 'dispatch', 'pata', 'commission', 'beejak', 'creditors', 'laddan', 'apmc', 'mazdoori', 'bolo']
 
@@ -26,6 +27,7 @@ export function parse(hash: string): Route {
   if (parts[0] === 'market') return parts[1] ? { page: 'person', key: parts[1] } : { page: 'market' }
   if (parts[0] === 'shops') return { page: 'shops' }
   if (parts[0] === 'requests') return { page: 'requests' }
+  if (parts[0] === 'machines') return { page: 'machines' }
   return { page: 'home' }
 }
 
@@ -38,6 +40,7 @@ export function href(r: Route): string {
     case 'market': return '#/market'
     case 'shops': return '#/shops'
     case 'requests': return '#/requests'
+    case 'machines': return '#/machines'
     default: return '#/'
   }
 }
