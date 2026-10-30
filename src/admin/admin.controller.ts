@@ -16,6 +16,7 @@ import { SettingsService } from './settings.service';
 import { BEEJAK_HEADS, InsightsService } from './insights.service';
 import { CreditorsService } from './creditors.service';
 import { MachinesService } from './machines.service';
+import { DepositsService, NOTES } from './deposits.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -111,6 +112,7 @@ const SettingsBody = z.object({
   bankAccounts: z.array(z.object({
     holder: z.string().trim().max(80).default(''), bank: z.string().trim().max(80).default(''),
     ifsc: z.string().trim().toUpperCase().max(11).default(''), account: z.string().trim().max(34).default(''),
+    branch: z.string().trim().max(80).default(''), phone: z.string().trim().max(15).default(''), pan: z.string().trim().toUpperCase().max(10).default(''),
   })).max(4),
   printerHost: z.string().trim().regex(/^(\d{1,3}(\.\d{1,3}){3})?$/, 'an IP like 192.168.1.50'),
   printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
@@ -138,7 +140,7 @@ const GrahakBody = z.object({
 });
 const GrahakPatchBody = z.object({
   name: z.string().trim().min(1).max(120).optional(), phone: z.string().trim().max(15).optional(), address: z.string().max(200).optional(),
-  destination: z.string().max(120).optional(), code: z.string().max(20).optional(), kind: z.enum(['', 'laddan']).optional(), ...LaddanCols,
+  destination: z.string().max(120).optional(), code: z.string().max(20).optional(), kind: z.enum(['', 'laddan']).optional(), hidden: z.boolean().optional(), ...LaddanCols,
 });
 const SupplierBody = z.object({
   id: z.uuid().optional(), name: z.string().trim().min(1).max(120), code: z.string().max(20).optional(), area: z.string().max(60).optional(),
@@ -168,6 +170,23 @@ const GiveBody = z.object({
 });
 const BackBody = z.object({ status: z.enum(['stock', 'repair', 'lost']), onDay: DayIso, note: z.string().trim().max(200).optional() });
 const LinkBody = z.object({ deviceId: z.uuid().nullable() });
+
+const DepositAccountBody = z.object({
+  holder: z.string().trim().max(120).default(''), bank: z.string().trim().max(80).default(''), branch: z.string().trim().max(80).default(''),
+  ifsc: z.string().trim().max(11).default(''), account: z.string().trim().min(4, 'Account number daalein').max(34),
+  phone: z.string().trim().max(15).default(''), pan: z.string().trim().max(10).default(''),
+});
+const DepositBody = z.object({
+  day: DayIso, account: DepositAccountBody, note: z.string().max(200).optional(), daybook: z.boolean().optional(), saveAccount: z.boolean().optional(),
+  notes: z.object(Object.fromEntries(NOTES.map((k) => [k, z.number().int().min(0).max(k === 'coins' ? 1_000_000_00 : 100_000).optional()]))).default({}),
+  cheques: z.array(z.object({
+    id: z.uuid().optional(), buyerId: z.uuid().nullable().optional(), drawer: z.string().max(120).optional(), bank: z.string().max(80).optional(),
+    branch: z.string().max(80).optional(), city: z.string().max(60).optional(), chequeNo: z.string().max(12).optional(),
+    chequeDate: z.iso.date().nullable().optional(), amountPaise: paise, raseed: z.union([z.literal('new'), z.uuid(), z.null()]).optional(),
+  })).max(30),
+});
+const ChequeStatusBody = z.object({ status: z.enum(['pending', 'cleared', 'bounced']), on: DayIso, reason: z.string().max(120).optional(), chargesPaise: paise.optional() });
+const ItemLinesQuery = Range.extend({ brand: z.string().max(80) });
 
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
@@ -211,8 +230,57 @@ export class AdminController {
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
-    private readonly machines: MachinesService,
+    private readonly machines: MachinesService, private readonly deposits: DepositsService,
   ) {}
+
+  // ---------------------------------------------------------------- bank jama parchi (deposit slips)
+
+  @Get('shops/:id/deposits')
+  depositList(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    return this.deposits.list(mine(v, id), r.from, r.to);
+  }
+
+  /** The cheque register: every cheque on a live slip, by status. */
+  @Get('shops/:id/deposits/cheques')
+  depositCheques(@See() v: Viewer, @Param('id') id: string, @Query('status') status?: string, @Query('q') q?: string) {
+    return this.deposits.cheques(mine(v, id), ['pending', 'cleared', 'bounced'].includes(status ?? '') ? status! : '', (q ?? '').slice(0, 60));
+  }
+
+  @Get('shops/:id/deposits/form')
+  depositForm(@See() v: Viewer, @Param('id') id: string) {
+    return this.deposits.form(mine(v, id));
+  }
+
+  @Get('shops/:id/deposits/grahak/:buyerId')
+  depositGrahak(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string) {
+    return this.deposits.grahak(mine(v, id), parse(Id, buyerId));
+  }
+
+  @Get('shops/:id/deposits/:slipId')
+  deposit(@See() v: Viewer, @Param('id') id: string, @Param('slipId') slipId: string) {
+    return this.deposits.one(mine(v, id), parse(Id, slipId));
+  }
+
+  @Post('shops/:id/deposits')
+  newDeposit(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.deposits.save(v.phone, mine(v, id), null, parse(DepositBody, body) as never);
+  }
+
+  @Post('shops/:id/deposits/:slipId')
+  editDeposit(@See() v: Viewer, @Param('id') id: string, @Param('slipId') slipId: string, @Body() body: unknown) {
+    return this.deposits.save(v.phone, mine(v, id), parse(Id, slipId), parse(DepositBody, body) as never);
+  }
+
+  @Post('shops/:id/deposits/:slipId/delete')
+  removeDeposit(@See() v: Viewer, @Param('id') id: string, @Param('slipId') slipId: string) {
+    return this.deposits.remove(v.phone, mine(v, id), parse(Id, slipId));
+  }
+
+  @Post('shops/:id/deposits/cheques/:chequeId/status')
+  chequeStatus(@See() v: Viewer, @Param('id') id: string, @Param('chequeId') chequeId: string, @Body() body: unknown) {
+    return this.deposits.status(v.phone, mine(v, id), parse(Id, chequeId), parse(ChequeStatusBody, body));
+  }
 
   // ---------------------------------------------------------------- machines MandiPlus hands out (admin only)
 
@@ -689,6 +757,13 @@ export class AdminController {
   @Post('shops/:id/collections/:cid/edit')
   editCollection(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown) {
     return this.entries.editCollection(v.phone, mine(v, id), parse(Id, cid), parse(VasooliBody.omit({ buyerId: true }), body));
+  }
+
+  /** Maal-wise Bikri, one maal opened: every line it was sold on — to whom, at what bhav. */
+  @Get('shops/:id/items/lines')
+  itemLines(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(ItemLinesQuery, query);
+    return this.reports.itemLines(mine(v, id), r.from, r.to, r.brand);
   }
 
   @Get('shops/:id/items')

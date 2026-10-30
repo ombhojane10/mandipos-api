@@ -104,6 +104,9 @@ export function Settings({ shopId }: { shopId: string }) {
               <input className="field" placeholder={t('Bank')} value={b.bank} maxLength={80} onChange={(e) => setBank(i, { bank: e.target.value })} />
               <input className="field" placeholder={t('Khata no.')} inputMode="numeric" value={b.account} maxLength={34} onChange={(e) => setBank(i, { account: e.target.value.replace(/\s/g, '') })} />
               <input className="field" placeholder="IFSC" value={b.ifsc} maxLength={11} onChange={(e) => setBank(i, { ifsc: e.target.value.toUpperCase() })} />
+              <input className="field" placeholder={t('Branch')} value={b.branch ?? ''} maxLength={80} onChange={(e) => setBank(i, { branch: e.target.value })} />
+              <input className="field" placeholder={t('Contact no.')} inputMode="tel" value={b.phone ?? ''} maxLength={10} onChange={(e) => setBank(i, { phone: e.target.value.replace(/\D/g, '') })} />
+              <input className="field" placeholder="PAN" value={b.pan ?? ''} maxLength={10} onChange={(e) => setBank(i, { pan: e.target.value.toUpperCase() })} />
             </div>
             {banks.length > 1 && <button type="button" className="btn ghost" onClick={() => set('bankAccounts', banks.filter((_, j) => j !== i))}>{t('Hatayein')}</button>}
           </div>

@@ -1250,3 +1250,7 @@ button.chip { border: 0; cursor: pointer; }
 .pick-list > button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; font: inherit; color: inherit; }
 .pick-list > button:hover { background: var(--accent-soft); }
 .pick-list .grow { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+
+/* Wide sheet (bank jama parchi: cheques, cash notes side by side). */
+.sheet.wide { max-width: 880px; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }

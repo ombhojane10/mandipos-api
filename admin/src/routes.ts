@@ -3,7 +3,7 @@
  * #/s/<shop>/…, the market (admin only) under #/market, #/requests, #/shops and #/machines.
  */
 export type Report = 'dashboard' | 'daybook' | 'cashbook' | 'outstanding' | 'ledger' | 'suppliers' | 'stock' | 'items' | 'team' | 'settings' | 'register' | 'munafa' | 'vasooli' | 'gaadis' | 'bhav' | 'nigrani'
-  | 'dispatch' | 'pata' | 'commission' | 'beejak' | 'creditors' | 'laddan' | 'apmc' | 'mazdoori' | 'bolo'
+  | 'dispatch' | 'pata' | 'commission' | 'beejak' | 'creditors' | 'laddan' | 'apmc' | 'mazdoori' | 'bolo' | 'bankjama'
 export type Route =
   | { page: 'home' }
   | { page: 'report'; shopId: string; report: Report }
@@ -15,7 +15,7 @@ export type Route =
   | { page: 'requests' }
   | { page: 'machines' }
 
-const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani', 'dispatch', 'pata', 'commission', 'beejak', 'creditors', 'laddan', 'apmc', 'mazdoori', 'bolo']
+const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani', 'dispatch', 'pata', 'commission', 'beejak', 'creditors', 'laddan', 'apmc', 'mazdoori', 'bolo', 'bankjama']
 
 export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean).map(decodeURIComponent)

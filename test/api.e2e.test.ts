@@ -1433,6 +1433,106 @@ describe('shop approval and the admin portal', () => {
     await http().get('/v1/admin/customers/nonsense').set(admin).expect(400);
   });
 
+  it('keeps bank jama parchis: cheques into the khata, cash into the Day Book, bounce, edit, delete; one maal opened by bhav', async () => {
+    const shop = await registerShop('9877700041', 'Cheque Traders');
+    const id = shop.me.shop.id as string;
+    const t = new Date().toISOString(), d = istDay();
+    const brandId = uuidv7(), truckId = uuidv7(), raju = uuidv7(), sonu = uuidv7();
+    await http().post('/v1/sync/push').set(auth(shop.accessToken)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Pollachi' } },
+      { table: 'buyers', row: { id: raju, created_at: t, updated_at: t, name: 'Raju Fruits', phone: '9876500041' } },
+      { table: 'buyers', row: { id: sonu, created_at: t, updated_at: t, name: 'Sonu Traders', phone: '' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'TN41', supplier: 'Mani', arrived_at: t } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 500, received_qty: 500, rate_paise: 2000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9877700041' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9877700041', code: OtpService.issuedForTests.get('9877700041') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const due = async (b: string) => ((await http().get(`${base}/outstanding`).set(web).expect(200)).body.rows.find((r: any) => r.buyerId === b)?.duePaise ?? 0);
+    // Raju owes ₹1,000 (40 nag at ₹25) and Sonu ₹600 (20 at ₹30), both udhaar.
+    await http().post(`${base}/entries/parchi`).set(web).send({ buyerId: raju, truckId, lines: [{ grade: '1', qty: 40, ratePaise: 2500 }], pay: 'credit', packing: 'loose' }).expect(201);
+    await http().post(`${base}/entries/parchi`).set(web).send({ buyerId: sonu, truckId, lines: [{ grade: '1', qty: 20, ratePaise: 3000 }], pay: 'credit', packing: 'loose' }).expect(201);
+    expect(await due(raju)).toBe(100000);
+
+    // Maal-wise Bikri, Pollachi opened: every line, and how much went at each bhav.
+    const lines = (await http().get(`${base}/items/lines?from=${d}&to=${d}&brand=Pollachi`).set(web).expect(200)).body;
+    expect(lines.lines.map((l: any) => [l.name, l.qty, l.ratePaise])).toEqual([['Sonu Traders', 20, 3000], ['Raju Fruits', 40, 2500]]);
+    expect(lines.rates).toEqual([{ ratePaise: 3000, qty: 20, amountPaise: 60000, slips: 1 }, { ratePaise: 2500, qty: 40, amountPaise: 100000, slips: 1 }]);
+
+    // No account saved yet: the form starts empty; the slip names one and it is remembered.
+    expect((await http().get(`${base}/deposits/form`).set(web).expect(200)).body).toMatchObject({ accounts: [], nextNo: 1 });
+    const account = { holder: 'cheque traders', bank: 'hdfc', branch: 'azadpur', ifsc: 'hdfc0000001', account: '5020 0035 7164 01', phone: '9877700041', pan: '' };
+    // Cash of ₹50,000 and above needs the PAN.
+    await http().post(`${base}/deposits`).set(web).send({ account, notes: { '500': 100 }, cheques: [] }).expect(400);
+    const slip = (await http().post(`${base}/deposits`).set(web).send({
+      day: d, account, saveAccount: true, notes: { '500': 4, '100': 3 },
+      cheques: [
+        { buyerId: raju, drawer: 'raju fruits', bank: 'sbi', branch: 'karnal', city: 'karnal', chequeNo: '000123', chequeDate: d, amountPaise: 70000, raseed: 'new' },
+        { buyerId: sonu, bank: 'pnb', chequeNo: '445566', amountPaise: 60000, raseed: null },
+      ],
+    }).expect(201)).body;
+    expect(slip.slipNo).toBe(1);
+    // Raju's cheque is in his khata as a bank raseed; Sonu's was only noted on the slip.
+    expect(await due(raju)).toBe(30000);
+    expect(await due(sonu)).toBe(60000);
+    const one = (await http().get(`${base}/deposits/${slip.id}`).set(web).expect(200)).body;
+    expect(one).toMatchObject({ slipNo: 1, cashPaise: 230000, chequePaise: 130000, totalPaise: 360000, daybook: true,
+      account: { holder: 'CHEQUE TRADERS', bank: 'HDFC', account: '50200035716401', ifsc: 'HDFC0000001' } });
+    expect(one.cheques.map((c: any) => [c.name, c.drawer, c.bank, c.chequeNo, c.amountPaise, c.madeRaseed, c.status])).toEqual([
+      ['Raju Fruits', 'RAJU FRUITS', 'SBI', '000123', 70000, true, 'pending'], ['Sonu Traders', '', 'PNB', '445566', 60000, false, 'pending']]);
+    expect(one.cheques[0].receiptNo).toBe(1);
+    // The cash left the galla for the bank: a Day Book 'bank_jama' line of ₹2,300.
+    const book = (await http().get(`${base}/daybook?from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(JSON.stringify(book)).toContain('230000');
+    // The account is now the shop's, and the next slip starts from it.
+    const form = (await http().get(`${base}/deposits/form`).set(web).expect(200)).body;
+    expect(form).toMatchObject({ nextNo: 2, accounts: [expect.objectContaining({ bank: 'HDFC', account: '50200035716401', branch: 'AZADPUR' })] });
+    expect(form.banks.map((b: any) => b.bank).sort()).toEqual(['PNB', 'SBI']);
+    // Typing Raju again on a cheque: his last bank fills in.
+    expect((await http().get(`${base}/deposits/grahak/${raju}`).set(web).expect(200)).body).toMatchObject({ balancePaise: 30000, last: { bank: 'SBI', branch: 'KARNAL', city: 'KARNAL' } });
+
+    // Edit: Raju's cheque was ₹80,000 — the raseed is written again for the new amount.
+    const edit = (body: any) => http().post(`${base}/deposits/${slip.id}`).set(web).send(body);
+    const chq = one.cheques;
+    await edit({ day: d, account: one.account, notes: one.notes, cheques: [
+      { id: chq[0].id, buyerId: raju, bank: 'sbi', branch: 'karnal', city: 'karnal', chequeNo: '000123', amountPaise: 80000, raseed: 'new' },
+      { id: chq[1].id, buyerId: sonu, bank: 'pnb', chequeNo: '445566', amountPaise: 60000, raseed: null },
+    ] }).expect(201);
+    expect(await due(raju)).toBe(20000);
+
+    // Raju's cheque bounces: the raseed comes out of his khata again; the reason and charges are kept.
+    await http().post(`${base}/deposits/cheques/${chq[0].id}/status`).set(web).send({ status: 'bounced', reason: 'Funds insufficient', chargesPaise: 35000 }).expect(201);
+    expect(await due(raju)).toBe(100000);
+    await http().post(`${base}/deposits/cheques/${chq[0].id}/status`).set(web).send({ status: 'cleared' }).expect(422);
+    await http().post(`${base}/deposits/cheques/${chq[1].id}/status`).set(web).send({ status: 'cleared' }).expect(201);
+    const reg = (await http().get(`${base}/deposits/cheques?status=bounced`).set(web).expect(200)).body.cheques;
+    expect(reg).toEqual([expect.objectContaining({ chequeNo: '000123', bounceReason: 'Funds insufficient', chargesPaise: 35000, amountPaise: 80000 })]);
+    const listed = (await http().get(`${base}/deposits?from=${d}&to=${d}`).set(web).expect(200)).body;
+    expect(listed.slips[0]).toMatchObject({ slipNo: 1, cheques: 2, cleared: 1, bounced: 1, pending: 0, totalPaise: 370000 });
+    // A bounced cheque's amount can't be changed afterwards.
+    await edit({ day: d, account: one.account, notes: one.notes, cheques: [{ id: chq[0].id, buyerId: raju, amountPaise: 90000, raseed: 'new' }] }).expect(422);
+
+    // A second slip linking a raseed taken earlier (UPI ₹200 from Sonu), then deleted: nothing it didn't write is touched.
+    const vas = (await http().post(`${base}/entries/vasooli`).set(web).send({ buyerId: sonu, cashPaise: 0, upiPaise: 20000, paymentRef: 'CHQ 777' }).expect(201)).body;
+    const g = (await http().get(`${base}/deposits/grahak/${sonu}`).set(web).expect(200)).body;
+    expect(g.raseeds).toEqual([expect.objectContaining({ receiptNo: vas.receiptNo, amountPaise: 20000 })]);
+    const s2 = (await http().post(`${base}/deposits`).set(web).send({ account: form.accounts[0], notes: {}, cheques: [
+      { buyerId: sonu, chequeNo: '777', amountPaise: 20000, raseed: g.raseeds[0].id },
+      { buyerId: raju, chequeNo: '888', amountPaise: 10000, raseed: 'new' },
+    ] }).expect(201)).body;
+    expect(s2.slipNo).toBe(2);
+    expect((await http().get(`${base}/deposits/grahak/${sonu}`).set(web).expect(200)).body.raseeds).toEqual([]);
+    expect(await due(raju)).toBe(90000);
+    await http().post(`${base}/deposits/${s2.id}/delete`).set(web).expect(201);
+    expect(await due(raju)).toBe(100000);
+    expect(await due(sonu)).toBe(40000);
+    expect((await http().get(`${base}/deposits/${s2.id}`).set(web).expect(200)).body.voided).toBe(true);
+
+    // Grahak name corrected on the website, then hidden.
+    expect((await http().post(`${base}/grahak/${sonu}`).set(web).send({ name: 'Sonu Fruit Co' }).expect(201)).body.name).toBe('Sonu Fruit Co');
+    await http().post(`${base}/grahak/${sonu}`).set(web).send({ hidden: true }).expect(201);
+  });
+
   it('makes entries on the website exactly as a terminal would, and the terminals pull them', async () => {
     const shop = await registerShop('9877700008', 'Web Entry Traders');
     const id = shop.me.shop.id as string;

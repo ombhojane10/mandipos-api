@@ -253,6 +253,26 @@ export class ReportsService {
     return this.db.withShop(shopId, (tx) => this.itemRows(tx, from, to));
   }
 
+  /** Every sale line of one maal in [from, to]: when, which parchi, which grahak, how many, at what bhav. */
+  async itemLines(shopId: string, from: string, to: string, brand: string) {
+    return this.db.withShop(shopId, async (tx) => {
+      const rows = (await tx.query<{ bill_id: string; slip_no: number | null; at: Date; day: string; buyer_id: string | null; name: string | null; qty: number; rate: number; amount: string }>(
+        `SELECT lb.id AS bill_id, lb.slip_no, lb.created_at AS at, lb.business_date::text AS day, lb.buyer_id, COALESCE(g.name, lb.buyer_name) AS name,
+                l.qty, l.rate_paise AS rate, l.qty::bigint * l.rate_paise AS amount
+         FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id LEFT JOIN brands br ON br.id = l.brand_id LEFT JOIN buyers g ON g.id = lb.buyer_id
+         WHERE lb.business_date BETWEEN $1 AND $2 AND COALESCE(br.name, 'Maal') = $3 AND l.qty > 0
+         ORDER BY lb.created_at DESC`, [from, to, brand])).rows;
+      const lines = rows.map((r) => ({ billId: r.bill_id, slipNo: r.slip_no, at: r.at.toISOString(), day: r.day, buyerId: r.buyer_id, name: r.name || 'Cash', qty: Number(r.qty), ratePaise: n(String(r.rate)), amountPaise: n(r.amount) }));
+      // By bhav: how much went at each price, highest first.
+      const by = new Map<number, { ratePaise: number; qty: number; amountPaise: number; slips: Set<string> }>();
+      for (const l of lines) {
+        const b = by.get(l.ratePaise) ?? { ratePaise: l.ratePaise, qty: 0, amountPaise: 0, slips: new Set<string>() };
+        b.qty += l.qty; b.amountPaise += l.amountPaise; b.slips.add(l.billId); by.set(l.ratePaise, b);
+      }
+      return { brand, lines, rates: [...by.values()].sort((a, b) => b.ratePaise - a.ratePaise).map((b) => ({ ratePaise: b.ratePaise, qty: b.qty, amountPaise: b.amountPaise, slips: b.slips.size })) };
+    });
+  }
+
   private async itemRows(tx: Tx, from: string, to: string) {
     return (await tx.query<{ brand: string | null; nags: string; amount: string; slips: string }>(
       `SELECT br.name AS brand, SUM(l.qty) AS nags, SUM(l.qty::bigint * l.rate_paise) AS amount, COUNT(DISTINCT l.bill_id) AS slips

@@ -4,12 +4,12 @@ import { phone, rupees } from '../format'
 import { t } from '../i18n'
 
 /** A sheet for one entry: title, the form, Save. Esc or the scrim closes it; Ctrl+Enter saves. */
-export function Sheet({ title, onClose, onSave, saving, error, saveLabel = t('Save'), children }: {
-  title: string; onClose: () => void; onSave: () => void; saving: boolean; error: string; saveLabel?: string; children: ReactNode
+export function Sheet({ title, onClose, onSave, saving, error, saveLabel = t('Save'), wide, children }: {
+  title: string; onClose: () => void; onSave: () => void; saving: boolean; error: string; saveLabel?: string; wide?: boolean; children: ReactNode
 }) {
   return (
     <div className="scrim sheet-scrim" onClick={() => !saving && onClose()}>
-      <form className="sheet" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}
+      <form className={`sheet${wide ? ' wide' : ''}`} role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onSave() } }}
         onSubmit={(e) => { e.preventDefault(); onSave() }}>
         <div className="sheet-hd"><h3>{title}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>

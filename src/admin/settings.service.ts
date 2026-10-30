@@ -7,7 +7,8 @@ import { Db } from '../db/db.service';
  * next /v1/me. Written here directly because the portal's viewer is an owner or a MandiPlus admin,
  * not a terminal of the shop.
  */
-export type BankAccount = { holder: string; bank: string; ifsc: string; account: string };
+/** branch, phone and pan are what a bank jama parchi needs besides the account itself. */
+export type BankAccount = { holder: string; bank: string; ifsc: string; account: string; branch?: string; phone?: string; pan?: string };
 export type ShopSettings = {
   name: string; mandi: string; shopNo: string; phad: string; gstin: string; commodity: string;
   phone: string; dispatchPhone: string; slipCode: string; slipLimitPaise: number; udhaarRates: boolean; udhaarAlerts: boolean;

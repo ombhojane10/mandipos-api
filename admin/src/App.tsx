@@ -20,6 +20,7 @@ import { Bhav, GaadiHisab, Munafa, Nigrani, SalesRegister, Vasooli } from './pag
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
+import { Deposits } from './pages/Deposits'
 import { Machines } from './pages/Machines'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
@@ -50,6 +51,7 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
   { group: t('Hisab-Kitab'), items: [
     { report: 'daybook', label: t('Day Book'), key: 'D', icon: I.IBook },
     { report: 'cashbook', label: t('Cash / Bank Book'), key: 'C', icon: I.ICash },
+    { report: 'bankjama', label: t('Bank Jama Parchi'), key: '', icon: I.IWallet },
     { report: 'register', label: t('Bikri Register'), key: 'R', icon: I.ILedger },
     { report: 'munafa', label: t('Munafa (P&L)'), key: 'M', icon: I.IRupee },
   ] },
@@ -338,6 +340,7 @@ export default function App() {
 function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
   switch (report) {
     case 'daybook': return <DayBook key={shopId} shopId={shopId} />
+    case 'bankjama': return <Deposits key={shopId} shopId={shopId} />
     case 'cashbook': return <CashBook key={shopId} shopId={shopId} />
     case 'outstanding': return <Outstanding key={shopId} shopId={shopId} />
     case 'ledger': return <GrahakList key={shopId} shopId={shopId} />

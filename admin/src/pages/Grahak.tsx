@@ -3,11 +3,12 @@ import { api, type BuyerDetail, type BuyerRow } from '../api'
 import { useSession } from '../App'
 import { count, phone, rupees, shortDate } from '../format'
 import { href } from '../routes'
-import { useLoad } from '../useLoad'
+import { booksChanged, useLoad } from '../useLoad'
 import { Bal, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
 import { openWhatsApp } from '../keys'
 import { balRs, dmy, fileName, rs, useExport } from '../export/doc'
+import { Field, Sheet } from '../entries/fields'
 
 /** Every grahak of the shop, searchable; biggest baaki first. Enter opens the khata. */
 export function GrahakList({ shopId }: { shopId: string }) {
@@ -56,6 +57,7 @@ export function GrahakList({ shopId }: { shopId: string }) {
 /** One grahak's khata at this shop — Tally's Ledger Vouchers for a party. */
 export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: string }) {
   const { me } = useSession()
+  const [editing, setEditing] = useState(false)
   const back = href({ page: 'report', shopId, report: 'ledger' })
   const { data, error } = useLoad(() => api<BuyerDetail>(`/v1/admin/shops/${shopId}/buyers/${buyerId}`), [shopId, buyerId])
   if (error) return <><Crumb to={back}>{t('Grahak Ledger')}</Crumb><p className="error">{error}</p></>
@@ -74,6 +76,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
           </div>
           {mobile && <a className="call" href={`tel:+91${b.phone}`}>☎ {phone(b.phone)}</a>}
           {mobile && tot.balancePaise > 0 && <button type="button" className="btn ghost wa-btn" onClick={() => openWhatsApp(shopId, buyerId)}>WhatsApp</button>}
+          <button type="button" className="btn ghost" onClick={() => setEditing(true)}>{t('Badlein')}</button>
         </div>
       </div>
       <div className="card sum">
@@ -88,6 +91,43 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         title: 'CUSTOMER LEDGER', banks: true,
         party: { code: b.code || b.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 6), description: [b.name, b.destination, mobile ? b.phone : ''].filter(Boolean).join(' '), address: b.address },
       }} />
+      {editing && <GrahakEdit shopId={shopId} b={b} balancePaise={tot.balancePaise} onClose={() => setEditing(false)} />}
     </div>
+  )
+}
+
+/** A grahak's details changed: name (in capitals for a grapes shop), code, mobile, pata. One owing nothing can be hidden. */
+function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: BuyerDetail['buyer']; balancePaise: number; onClose: () => void }) {
+  const { shops } = useSession()
+  const caps = shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
+  const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const send = async (body: object, then: () => void) => {
+    setSaving(true); setError('')
+    try { await api(`/v1/admin/shops/${shopId}/grahak/${b.id}`, { method: 'POST', body }); booksChanged(); then() }
+    catch (e) { setError((e as Error).message) } finally { setSaving(false) }
+  }
+  const save = () => {
+    if (!f.name.trim()) return setError(t('Naam daalein'))
+    if (f.phone && !/^[6-9]\d{9}$/.test(f.phone)) return setError(t('Mobile number 10 ank ka hona chahiye'))
+    void send({ name: caps ? f.name.toUpperCase() : f.name, code: f.code, phone: f.phone, address: f.address, destination: f.destination }, onClose)
+  }
+  const hide = () => {
+    if (!confirm(t('{name} ko list se hatayein?', { name: b.name }))) return
+    void send({ hidden: true }, () => { location.hash = href({ page: 'report', shopId, report: 'ledger' }) })
+  }
+  const up = caps ? { textTransform: 'uppercase' as const } : undefined
+  return (
+    <Sheet title={t('Grahak badlein')} onClose={onClose} onSave={save} saving={saving} error={error}>
+      <Field label={t('Naam')}><input className="field" style={up} autoFocus maxLength={120} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+      <div className="row2">
+        <Field label={t('Mobile')}><input className="field" inputMode="tel" maxLength={10} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
+        <Field label={t('Code')}><input className="field" maxLength={20} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
+      </div>
+      <Field label={t('Dukaan / pata')}><input className="field" style={up} maxLength={200} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+      <Field label={t('Kahan jata hai')}><input className="field" style={up} maxLength={120} value={f.destination} onChange={(e) => setF({ ...f, destination: e.target.value })} /></Field>
+      {balancePaise === 0 && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={hide}>{t('List se hatayein')}</button>}
+    </Sheet>
   )
 }

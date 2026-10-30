@@ -170,7 +170,7 @@ export type Stock = {
   rows: { truckId: string; number: string; supplier: string; brands: string; arrivedOn: string; closedOn: string | null; ageDays: number; stale: boolean; received: number; sold: number; spoiled: number; left: number; valuePaise: number }[]
 }
 
-export type BankAccount = { holder: string; bank: string; ifsc: string; account: string }
+export type BankAccount = { holder: string; bank: string; ifsc: string; account: string; branch?: string; phone?: string; pan?: string }
 export type ShopSettings = {
   name: string; mandi: string; shopNo: string; phad: string; gstin: string; commodity: string
   phone: string; dispatchPhone: string; slipCode: string; slipLimitPaise: number; udhaarRates: boolean; udhaarAlerts: boolean

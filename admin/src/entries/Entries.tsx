@@ -1,3 +1,4 @@
+import { useSession } from '../App'
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { rupees, count } from '../format'
@@ -496,14 +497,16 @@ function GaadiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?:
 
 function GrahakForm({ shopId, onClose, onDone }: FormProps) {
   const { saving, error, setError, save } = useSave(onDone)
+  const caps = useSession().shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
   const [f, setF] = useState({ name: '', phone: '', code: '', address: '', opening: 0 })
   return (
     <Sheet title={t('Naya Grahak')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
         if (!f.name.trim()) return setError(t('Naam daalein'))
-        void save(`/v1/admin/shops/${shopId}/entries/grahak`, { name: f.name, phone: f.phone, code: f.code, address: f.address, openingPaise: f.opening || undefined }, () => t('{name} ka khata khul gaya', { name: f.name }))
+        const name = caps ? f.name.trim().toUpperCase() : f.name
+        void save(`/v1/admin/shops/${shopId}/entries/grahak`, { name, phone: f.phone, code: f.code, address: f.address, openingPaise: f.opening || undefined }, () => t('{name} ka khata khul gaya', { name }))
       }}>
-      <Field label={t('Naam')}><input className="field" value={f.name} autoFocus maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+      <Field label={t('Naam')}><input className="field" style={caps ? { textTransform: 'uppercase' } : undefined} value={f.name} autoFocus maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <div className="row2">
         <Field label={t('Mobile')}><input className="field" inputMode="tel" value={f.phone} maxLength={10} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
         <Field label={t('Code')}><input className="field" value={f.code} maxLength={20} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>

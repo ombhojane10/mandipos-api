@@ -51,7 +51,7 @@ export type ParchiInput = {
   delivery?: { address: string; stand: string };
   staff?: string; slipNo?: number;
 };
-export type VasooliInput = { buyerId: string; cashPaise: number; upiPaise: number; upiBank?: string; paymentRef?: string };
+export type VasooliInput = { buyerId: string; cashPaise: number; upiPaise: number; upiBank?: string; paymentRef?: string; date?: string };
 export type DaybookInput = { direction: 'in' | 'out'; category: string; mode: 'cash' | 'office' | 'upi' | 'bank'; amountPaise: number; party?: string; note?: string; date?: string };
 export type UdhaarInput = { buyerId: string; amountPaise: number; note?: string; date?: string };
 export type LaddanFields = { city?: string; district?: string; state?: string; contactPerson?: string; email?: string; area?: string; bankDetails?: string };
@@ -387,7 +387,7 @@ export class EntriesService {
     const id = uuidv7();
     const results = await this.push(p, shopId, [{ table: 'collections', txn: uuidv7(), row: {
       id, created_at: new Date().toISOString(), buyer_id: input.buyerId, amount_paise: input.cashPaise + input.upiPaise,
-      pay_mode: payModeCode(input.cashPaise, input.upiPaise), payment_ref: (input.paymentRef ?? '').slice(0, 40), business_date: todayIst(),
+      pay_mode: payModeCode(input.cashPaise, input.upiPaise), payment_ref: (input.paymentRef ?? '').slice(0, 40), business_date: input.date ?? todayIst(),
       bill_id: null, receipt_no: receiptNo, cash_paise: input.cashPaise, upi_paise: input.upiPaise,
       upi_bank: input.upiPaise > 0 ? (input.upiBank ?? '') : '',
     } }]);
@@ -558,6 +558,17 @@ export class EntriesService {
     const known = await this.db.withShop(shopId, async (tx) => (await tx.query<{ s: string }>(
       `SELECT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows.find((r) => nameKey(r.s) === nameKey(input.supplier))?.s);
     return this.dayRow(p, shopId, { direction: 'out', category: 'supplier', mode: input.mode, amountPaise: input.amountPaise, party: known ?? input.supplier.trim(), note: input.note, date: input.date });
+  }
+
+  /** A Day Book line taken back (a deposit slip's cash changed or the slip was deleted): pushed again, hidden. */
+  async hideDaybook(phone: string, shopId: string, id: string) {
+    const p = await this.device(phone, shopId);
+    const r = await this.db.withShop(shopId, async (tx) => (await tx.query<Record<string, unknown>>(
+      `SELECT id, created_at, direction, mode, category, party_name, note, amount_paise, business_date::text AS business_date FROM daybook_entries WHERE id = $1`, [id])).rows[0]);
+    if (!r) return;
+    await this.push(p, shopId, [{ table: 'daybook_entries', txn: uuidv7(), row: {
+      ...r, created_at: (r.created_at as Date).toISOString(), amount_paise: n(r.amount_paise as string), updated_at: new Date().toISOString(), hidden: true,
+    } }]);
   }
 
   private async dayRow(p: Principal, shopId: string, input: DaybookInput) {
@@ -864,7 +875,7 @@ export class EntriesService {
    * WhatsApp can go): the whole row as it is with the change, a newer updated_at, pushed as a
    * terminal pushes it. code, card and market udhaar are left out unless changed, so they stay.
    */
-  async updateGrahak(phone: string, shopId: string, buyerId: string, patch: { phone?: string; address?: string; destination?: string; code?: string; name?: string; kind?: '' | 'laddan' } & LaddanFields) {
+  async updateGrahak(phone: string, shopId: string, buyerId: string, patch: { phone?: string; address?: string; destination?: string; code?: string; name?: string; kind?: '' | 'laddan'; hidden?: boolean } & LaddanFields) {
     const p = await this.device(phone, shopId);
     const g = await this.db.withShop(shopId, async (tx) => (await tx.query<{
       id: string; created_at: Date; name: string; phone: string; kind: string; credit_limit_paise: string; vehicle: string; address: string; destination: string; hidden: boolean
@@ -875,7 +886,7 @@ export class EntriesService {
       id: g.id, created_at: g.created_at.toISOString(), updated_at: new Date().toISOString(),
       name: patch.name !== undefined && (await this.capsNames(shopId)) ? patch.name.trim().toUpperCase() : (patch.name ?? g.name).trim(),
       phone: patch.phone ?? g.phone, kind: patch.kind ?? g.kind, credit_limit_paise: n(g.credit_limit_paise),
-      vehicle: g.vehicle, address: (patch.address ?? g.address).trim(), destination: (patch.destination ?? g.destination).trim(), hidden: g.hidden,
+      vehicle: g.vehicle, address: (patch.address ?? g.address).trim(), destination: (patch.destination ?? g.destination).trim(), hidden: patch.hidden ?? g.hidden,
       ...(patch.code !== undefined ? { code: patch.code.trim().toUpperCase() } : {}),
       ...laddanCols(patch),
     };
