@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Db } from '../db/db.service';
-import { BALANCES, CASH_PART, LIVE_BILLS, LIVE_COLS, UPI_PART } from '../admin/sql';
+import { BALANCES, BOUGHT, CASH_PART, LIVE_BILLS, LIVE_COLS, UPI_PART } from '../admin/sql';
 
 /**
  * Questions the fixed views cannot answer ("sabse kam udhaar kiska", "30 din se kisne paisa
@@ -54,7 +54,7 @@ gaadi AS (
            - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
          (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
          (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled,
-         (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id)
+         (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')})
            + t.freight_paise + t.labour_paise + t.commission_paise AS cost) s
 ),
 maal_stock AS (

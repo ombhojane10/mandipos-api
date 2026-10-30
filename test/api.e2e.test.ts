@@ -3245,6 +3245,92 @@ describe('reports (General Ledger, Trial Balance, Ledger Multiple, big transacti
     const led = (await http().get(`${base}/books/ledger?account=creditors&from=2026-04-01&to=${d}`).set(w).expect(200)).body;
     expect(led.closingPaise).toBe(-cr.totals.balancePaise);
   });
+
+  it('takes APMC as the slip printed it: an old slip with only labour on top collected no APMC', async () => {
+    const { w, base } = await web('9845700003', { name: 'TB Angoor Old', commodity: 'angoor' });
+    const d = istDay();
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh16', supplier: 'Sai', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    // 10 × ₹1,000 = ₹10,000 goods, ₹100 APMC, labour 10 × ₹12 = ₹120.
+    const slip = { buyerId: g.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit', labour: true, labourRatePaise: 1200 };
+    await http().post(`${base}/entries/parchi`).set(w).send(slip).expect(201);
+    const old = (await http().post(`${base}/entries/parchi`).set(w).send(slip).expect(201)).body;
+    // As the app wrote slips before APMC rode on the total: apmc_paise kept, chungi = labour only.
+    await owner(`UPDATE bills SET chungi_paise = labour_paise, total_paise = total_paise - apmc_paise WHERE id = '${old.billId}'`);
+
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    const row = (k: string) => tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === k);
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+    expect(row('sales')).toMatchObject({ cr: 2000000 });
+    expect(row('apmc')).toMatchObject({ cr: 10000 });
+    expect(row('labour')).toMatchObject({ cr: 24000 });
+    // Labour charged in full on both slips: no mazdoori out of the shop's pocket.
+    expect(row('mazdoori')).toBeUndefined();
+    expect(row(`g:${g.id}`)).toMatchObject({ dr: 1022000 + 1012000 });
+  });
+
+  it('counts a gaadi bought once: boxes a cold store puts back cost nothing more, everywhere', async () => {
+    const { w, base } = await web('9845700004', { name: 'TB Store' });
+    const d = istDay();
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA02', supplier: 'Pollachi Traders', freightPaise: 20000, lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const truckId = (await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0].truckId;
+    const brandId = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.brands.find((b: any) => b.name === 'Pollachi').id;
+    const store = (await http().post(`${base}/stores`).set(w).send({ name: 'jai cold' }).expect(201)).body;
+    await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'in', storeId: store.id, truckId, brandId, boxes: 30 }).expect(201);
+    await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'out', storeId: store.id, truckId, brandId, boxes: 10 }).expect(201);
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerName: 'Cash', truckId, lines: [{ grade: '1', qty: 10, ratePaise: 2000 }], pay: 'cash', packing: 'loose' }).expect(201);
+
+    // The supplier sent 100 boxes at ₹10 + ₹200 bhada: owed ₹1,200, not ₹1,300.
+    const sup = (await http().get(`${base}/suppliers`).set(w).expect(200)).body.rows[0];
+    expect(sup).toMatchObject({ purchasePaise: 120000, duePaise: 120000 });
+    const pu = (await http().get(`${base}/books/purcha?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(pu.gaadis[0]).toMatchObject({ boxes: 100, kharidPaise: 100000, totalPaise: 120000 });
+    const sp = (await http().get(`${base}/books/sale-purchase?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(sp.totals).toMatchObject({ kharidPaise: 120000, laagatPaise: 12000 });
+    expect(sp.qualities[0]).toMatchObject({ inQty: 100, inPaise: 100000 });
+    const m = (await http().get(`${base}/munafa?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(m.cogsPaise).toBe(12000);
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    expect(tb.groups.find((x: any) => x.key === 'creditors')).toMatchObject({ cr: 120000, dr: 0 });
+    expect(tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === 'purchase')).toMatchObject({ dr: 100000 });
+    // Stock: 100 came + 10 back − 30 to store − 10 sold = 70 on the gaadi, at ₹12 a box.
+    expect((await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0]).toMatchObject({ received: 110, left: 70, valuePaise: 84000 });
+    expect((await http().get(`${base}/gaadi-hisab`).set(w).expect(200)).body.rows[0]).toMatchObject({ costPaise: 120000, landedRatePaise: 1200, buyRatePaise: 1000 });
+  });
+
+  it('closes a P&L ledger each 1 April, nets each Trial Balance group, and backs up every book', async () => {
+    const { w, base } = await web('9845700005', { name: 'TB Years' });
+    const d = istDay();
+    const fy = Number(d.slice(5, 7)) >= 4 ? Number(d.slice(0, 4)) : Number(d.slice(0, 4)) - 1;
+    const lastYear = `${fy}-03-20`;
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'kharcha', mode: 'cash', amountPaise: 5000, date: lastYear }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'kharcha', mode: 'cash', amountPaise: 700, date: d }).expect(201);
+    const led = (await http().get(`${base}/books/ledger?account=b:kharcha&from=${fy}-03-01&to=${d}`).set(w).expect(200)).body;
+    expect(led.lines.map((l: any) => [l.kind, l.balancePaise])).toEqual([['daybook', 5000], ['fy', 0], ['daybook', 700]]);
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    const row = (k: string) => tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === k);
+    expect(led.closingPaise).toBe(row('b:kharcha').dr);
+    expect(row('capital')).toMatchObject({ dr: 5000 });
+
+    // A group closes on one side: two suppliers, one owed and one paid ahead, net.
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA03', supplier: 'Pollachi', lots: [{ brandName: 'Pollachi', grade: '1', qty: 10, ratePaise: 1000 }] }).expect(201);
+    await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'Venkat', mode: 'cash', amountPaise: 3000 }).expect(201);
+    const tb2 = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    const cred = tb2.groups.find((x: any) => x.key === 'creditors');
+    expect(cred).toMatchObject({ dr: 0, cr: 7000 });
+    expect(cred.rows.map((r: any) => [r.dr, r.cr]).sort()).toEqual([[0, 10000], [3000, 0]]);
+    expect(tb2.totals.dr).toBe(tb2.totals.cr);
+
+    // The backup: every book a sheet, the slip's gaadi and the grahak's GSTIN in it.
+    const bk = await http().get(`${base}/books/backup`).set(w).buffer(true).parse((res, cb) => {
+      const parts: Buffer[] = [];
+      res.on('data', (c: Buffer) => parts.push(c));
+      res.on('end', () => cb(null, Buffer.concat(parts)));
+    }).expect(200);
+    const book = unzip(bk.body as Buffer)['xl/workbook.xml'];
+    for (const s of ['Vasooli delete', 'Galla band', 'Card payment', 'Toote box', 'Delivery parchi', 'Laddan parchi', 'Maal liya']) expect(book).toContain(`name="${s}"`);
+  });
 });
 
 describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry)', () => {

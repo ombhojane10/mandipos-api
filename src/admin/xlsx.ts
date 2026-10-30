@@ -96,7 +96,8 @@ const cell = (v: Cell, bold = false) => {
   if (v === null || v === undefined || v === '') return '<c/>';
   if (typeof v === 'number' && Number.isFinite(v)) return `<c${bold ? ' s="1"' : ''}><v>${v}</v></c>`;
   if (typeof v === 'boolean') return `<c t="b"><v>${v ? 1 : 0}</v></c>`;
-  return `<c t="inlineStr"${bold ? ' s="1"' : ''}><is><t xml:space="preserve">${esc(String(v))}</t></is></c>`;
+  // Excel refuses to open a file with a cell over 32,767 characters.
+  return `<c t="inlineStr"${bold ? ' s="1"' : ''}><is><t xml:space="preserve">${esc(String(v).slice(0, 32_767))}</t></is></c>`;
 };
 
 /**
