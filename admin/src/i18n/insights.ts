@@ -651,4 +651,15 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'Cheque number daalein': ['Enter the cheque number', 'चेक नंबर डालें'],
   'PAN zaroori': ['PAN needed', 'PAN ज़रूरी'],
   'List mein wapas laayein': ['Bring back to the list', 'लिस्ट में वापस लाएं'],
+  // Masters / Crate & Store checks
+  'Firm ka naam daalein': ['Enter the firm name', 'फ़र्म का नाम डालें'],
+  'Email sahi likhein': ['Enter a valid email', 'ईमेल सही लिखें'],
+  'IP aise likhein: 192.168.1.50': ['Write the IP like 192.168.1.50', 'IP ऐसे लिखें: 192.168.1.50'],
+  'Laal wale khaane theek karein': ['Fix the boxes marked red', 'लाल वाले खाने ठीक करें'],
+  'Kitne din: 1 se 60': ['Days: 1 to 60', 'कितने दिन: 1 से 60'],
+  'Rakam sahi likhein': ['Enter a valid amount', 'रकम सही लिखें'],
+  'Rakam bahut badi hai': ['Amount is too big', 'रकम बहुत बड़ी है'],
+  'Aage ki tarikh nahi chalegi': ['A future date is not allowed', 'आगे की तारीख नहीं चलेगी'],
+  'Gaadi par sirf {n} box baaki': ['Only {n} boxes left on the truck', 'गाड़ी पर सिर्फ़ {n} बॉक्स बाकी'],
+  'Store mein sirf {n} box hain': ['Only {n} boxes in the store', 'स्टोर में सिर्फ़ {n} बॉक्स हैं'],
 }

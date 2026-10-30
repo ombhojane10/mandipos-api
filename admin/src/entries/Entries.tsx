@@ -8,6 +8,7 @@ import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type 
 import type { EditBill, EditGaadi, EditRaseed, EntryKind, Editing, VoiceDraft } from './kinds'
 import { AngoorGaadiForm, AngoorParchiForm, type AngoorOptions } from './Angoor'
 import { CnSheet, JvSheet } from '../pages/Vouchers'
+import { AreaDatalist } from '../pages/Masters'
 import { href, type Report } from '../routes'
 
 type Options = AngoorOptions & {
@@ -532,20 +533,25 @@ function GaadiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?:
 function GrahakForm({ shopId, onClose, onDone }: FormProps) {
   const { saving, error, setError, save } = useSave(onDone)
   const caps = useSession().shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
-  const [f, setF] = useState({ name: '', phone: '', code: '', address: '', opening: 0 })
+  const [f, setF] = useState({ name: '', phone: '', code: '', address: '', area: '', opening: 0 })
   return (
     <Sheet title={t('Naya Grahak')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
         if (!f.name.trim()) return setError(t('Naam daalein'))
+        if (f.phone && !/^[6-9]\d{9}$/.test(f.phone)) return setError(t('Mobile number 10 ank ka hona chahiye'))
         const name = caps ? f.name.trim().toUpperCase() : f.name
-        void save(`/v1/admin/shops/${shopId}/entries/grahak`, { name, phone: f.phone, code: f.code, address: f.address, openingPaise: f.opening || undefined }, () => t('{name} ka khata khul gaya', { name }))
+        void save(`/v1/admin/shops/${shopId}/entries/grahak`, { name, phone: f.phone, code: f.code, address: f.address, area: f.area.trim() || undefined, openingPaise: f.opening || undefined }, () => t('{name} ka khata khul gaya', { name }))
       }}>
       <Field label={t('Naam')}><input className="field" style={caps ? { textTransform: 'uppercase' } : undefined} value={f.name} autoFocus maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <div className="row2">
         <Field label={t('Mobile')}><input className="field" inputMode="tel" value={f.phone} maxLength={10} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
         <Field label={t('Code')}><input className="field" value={f.code} maxLength={20} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
       </div>
-      <Field label={t('Dukaan / pata')}><input className="field" value={f.address} maxLength={200} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+      <div className="row2">
+        <Field label={t('Dukaan / pata')}><input className="field" value={f.address} maxLength={200} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+        <Field label={t('Area')}><input className="field" style={{ textTransform: 'uppercase' }} list="new-grahak-areas" maxLength={60} value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })} /></Field>
+      </div>
+      <AreaDatalist shopId={shopId} id="new-grahak-areas" />
       <Field label={t('Purana udhaar (optional)')}><Money value={f.opening} onChange={(v) => setF({ ...f, opening: v })} /></Field>
     </Sheet>
   )

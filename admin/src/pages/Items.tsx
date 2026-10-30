@@ -32,9 +32,9 @@ export function Items({ shopId }: { shopId: string }) {
   const title = inGroup !== null && view === 'maal' ? `${t('Maal-wise Bikri')} · ${inGroup || t('Bina group')}` : view === 'group' ? `${t('Maal-wise Bikri')} · ${t('Group')}` : t('Maal-wise Bikri')
   useExport(data ? () => ({
     style: 'book' as const, title, dateLine: dayRange(period.from, period.to), file: fileName(title, period.from, period.to),
-    columns: [{ label: view === 'group' ? t('Group') : t('Maal'), wide: true }, { label: unit, num: true }, { label: t('Avg bhav'), num: true }, { label: t('Parchi'), num: true }, { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
-    rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), view === 'group' ? '' : count(r.slips), rs(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
-    foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', view === 'group' ? '' : count(data.reduce((s, r) => s + r.slips, 0)), rs(total), ''],
+    columns: [{ label: view === 'group' ? t('Group') : t('Maal'), wide: true }, { label: unit, num: true }, { label: t('Avg bhav'), num: true }, ...(view === 'group' ? [] : [{ label: t('Parchi'), num: true }]), { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
+    rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), ...(view === 'group' ? [] : [count(r.slips)]), rs(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
+    foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', ...(view === 'group' ? [] : [count(data.reduce((s, r) => s + r.slips, 0))]), rs(total), ''],
   }) : null, [data, open, view, inGroup])
   if (open) return <ItemLines shopId={shopId} brand={open} period={period} setPeriod={setPeriod} onBack={() => setOpen(null)} />
   const pick = (r: ItemRow) => { if (view === 'group') { setInGroup(r.group ?? ''); setView('maal') } else setOpen(r.brand) }
@@ -49,22 +49,21 @@ export function Items({ shopId }: { shopId: string }) {
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
           <table className="tbl fold">
-            <thead><tr><th>{view === 'group' ? t('Group') : t('Maal')}</th><th className="num">{unit}</th><th className="num">{t('Avg bhav')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th><th>{t('Hissa')}</th></tr></thead>
+            <thead><tr><th>{view === 'group' ? t('Group') : t('Maal')}</th><th className="num">{unit}</th><th className="num">{t('Avg bhav')}</th>{view !== 'group' && <th className="num">{t('Parchi')}</th>}<th className="num">{t('Rakam')}</th><th className="num">{t('Hissa')}</th></tr></thead>
             <tbody>
               {data.map((r) => (
                 <tr key={r.brand} data-row tabIndex={0} onClick={() => pick(r)} onKeyDown={(e) => { if (e.key === 'Enter') pick(r) }}>
                   <td className="main-col"><b>{r.brand}</b><small className="show-sm">{many(count(r.nags))} · {rate(r.ratePaise)}</small></td>
                   <td className="num opt-col money">{count(r.nags)}</td>
                   <td className="num opt-col money">{rate(r.ratePaise)}</td>
-                  <td className="num opt-col money">{view === 'group' ? '' : count(r.slips)}</td>
+                  {view !== 'group' && <td className="num opt-col money">{count(r.slips)}</td>}
                   <td className="num amt-col money b">{rupees(r.amountPaise)}</td>
-                  <td className="opt-col" style={{ width: 160 }}>
-                    <div className="agebar" style={{ margin: 0 }}><span className="a0" style={{ width: `${total ? (r.amountPaise / total) * 100 : 0}%`, background: 'var(--accent)' }} /></div>
-                  </td>
+                  {/* A number, as the export prints it: the Tally look draws no bars. */}
+                  <td className="num opt-col money muted">{total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''}</td>
                 </tr>
               ))}
             </tbody>
-            {data.length > 1 && <tfoot><tr><td className="main-col">{t('Kul')}</td><td className="num opt-col money">{count(data.reduce((s, r) => s + r.nags, 0))}</td><td className="opt-col" /><td className="opt-col" /><td className="num amt-col money">{rupees(total)}</td><td className="opt-col" /></tr></tfoot>}
+            {data.length > 1 && <tfoot><tr><td className="main-col">{t('Kul')}</td><td className="num opt-col money">{count(data.reduce((s, r) => s + r.nags, 0))}</td><td className="opt-col" />{view !== 'group' && <td className="opt-col" />}<td className="num amt-col money">{rupees(total)}</td><td className="opt-col" /></tr></tfoot>}
           </table>
           {data.length === 0 && <p className="empty">{t('Is period mein bikri nahi')}</p>}
         </div>

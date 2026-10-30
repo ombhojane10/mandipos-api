@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { z } from 'zod';
 import { Db } from '../db/db.service';
 
 /**
@@ -48,6 +49,9 @@ export class SettingsService {
 
   /** Only the fields sent change; a bank row with nothing typed in it is left out, as the app does. */
   async save(shopId: string, patch: Partial<Omit<ShopSettings, 'commodity'>>) {
+    if (patch.name !== undefined && !patch.name.trim()) throw new BadRequestException('Firm ka naam daalein');
+    if (patch.email && !z.email().safeParse(patch.email).success) throw new BadRequestException('Email sahi likhein');
+    if (patch.gstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(patch.gstin)) throw new BadRequestException('GSTIN 15 akshar ka hota hai (jaise 07ABCDE1234F1Z5)');
     const sets: string[] = [];
     const values: unknown[] = [shopId];
     for (const [key, col] of Object.entries(COLUMNS) as [keyof typeof COLUMNS, string][]) {

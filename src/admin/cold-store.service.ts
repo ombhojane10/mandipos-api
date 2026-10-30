@@ -27,8 +27,9 @@ type MoveRow = {
  * Boxes in a store are not at the shop, so they come off the gaadi's baaki everywhere — the app,
  * the counter and every report — exactly as the app's own Store button does: a synced spoilage
  * row of kind 'store'. Boxes taken out come back onto the gaadi as a lot line of the same quality
- * at its own bhav and box weight (as the app's addToTruck and the website's gaadi edit add boxes),
- * since a spoilage row is a fact that cannot be undone. Edits and deletes write only the
+ * and box weight, as free boxes (free_qty: bought once already, so no second kharid in the
+ * supplier's khata, the gaadi's cost or the Trial Balance), since a spoilage row is a fact that
+ * cannot be undone. Edits and deletes write only the
  * difference, so per gaadi and quality the rows written (store_sync) always come to the boxes in
  * stores now. The reports that show "aaye" and "store/off" leave the lines put back out of both
  * (STORE_BACK), so the gaadi still reads as it came. Website only, apart from those rows.
@@ -120,11 +121,13 @@ export class ColdStoreService {
   /** A Store In or Store Out, new or written again. */
   async save(phone: string, shopId: string, id: string | null, input: StoreMoveInput) {
     const day = input.day && /^\d{4}-\d{2}-\d{2}$/.test(input.day) ? input.day : istToday();
+    if (day > istToday()) throw new BadRequestException('Aage ki tarikh nahi chalegi');
     return this.apply(phone, shopId, async (tx) => {
       const old = id ? await this.locked(tx, id) : null;
       const store = (await tx.query<{ hidden: boolean }>(`SELECT hidden FROM stores WHERE id = $1`, [input.storeId])).rows[0];
       if (!store) throw new BadRequestException('Store chunein');
-      if (store.hidden && old?.store_id !== input.storeId) throw new BadRequestException('Yeh store chhupa hua hai');
+      // A hidden store takes nothing new in; what it still holds can always come out.
+      if (store.hidden && input.dir === 'in' && old?.store_id !== input.storeId) throw new BadRequestException('Yeh store chhupa hua hai');
       const lot = (await tx.query<{ grams: number }>(
         `SELECT MAX(box_grams) AS grams FROM truck_grades WHERE truck_id = $1 AND brand_id = $2 HAVING COUNT(*) > 0`, [input.truckId, input.brandId])).rows[0];
       if (!lot) throw new BadRequestException('Gaadi ka maal chunein');
@@ -197,8 +200,9 @@ export class ColdStoreService {
           } });
           sync.push({ id, truck: k.truck, brand: k.brand, kind: 'store', qty: diff });
         } else {
+          // Free boxes: already bought with the gaadi, so no kharid on them (billed × bhav stays as it came).
           items.push({ table: 'truck_grades', txn: uuidv7(), row: {
-            id, created_at: now, truck_id: k.truck, brand_id: k.brand, grade: g.grade ?? '1', billed_qty: -diff, free_qty: 0, received_qty: -diff,
+            id, created_at: now, truck_id: k.truck, brand_id: k.brand, grade: g.grade ?? '1', billed_qty: 0, free_qty: -diff, received_qty: -diff,
             rate_paise: n(g.rate), box_grams: g.grams ?? 0,
           } });
           sync.push({ id, truck: k.truck, brand: k.brand, kind: 'lot', qty: -diff });

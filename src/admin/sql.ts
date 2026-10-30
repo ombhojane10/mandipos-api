@@ -21,6 +21,9 @@ export const STORE_BACK = (truck: string, brand: string) =>
 
 export const IST_DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kolkata')::date`;
 
+/** A grahak's opening is the udhaar entries the app and website write as "Purana udhaar" (in any language). */
+export const OPENING_NOTES = ['Purana udhaar', 'पुराना उधार', 'Opening balance'];
+
 export const n = (v: unknown) => Number(v ?? 0);
 /** A grahak's mobile, the one thing that says two shops' buyers are the same person. */
 export const MOBILE = /^[6-9]\d{9}$/;

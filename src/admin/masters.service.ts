@@ -5,13 +5,14 @@ import type { PushItem } from '../sync/sync.service';
 import { fyOf, fyRange } from './creditors.service';
 import { EntriesService } from './entries.service';
 import { nameKey } from './reports.service';
-import { LIVE_BILLS, n } from './sql';
+import { LIVE_BILLS, LIVE_COLS, OPENING_NOTES, n, supplierJvs } from './sql';
 
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 const up = (s: string | undefined) => (s ?? '').trim().toUpperCase();
 const MOBILE_OR_BLANK = /^([6-9]\d{9})?$/;
 
 export type HeadType = 'expense' | 'income' | 'asset' | 'liability';
+const MODE_BOOK: Record<string, string> = { cash: 'Galla', office: 'Office', upi: 'Bank', bank: 'Bank' };
 
 /** The Day Book's own heads (the app's categories): listed read-only beside the shop's own. */
 export const BUILTIN_HEADS: { key: string; name: string; type: HeadType }[] = [
@@ -44,8 +45,7 @@ const headCategories = (type: HeadType) =>
 /** Debit-side heads carry their opening as +, credit-side as −. */
 const openingSign = (type: HeadType) => (type === 'expense' || type === 'asset' ? 1 : -1);
 
-/** A grahak's opening is the udhaar entries the app and website write as "Purana udhaar" (in any language). */
-export const OPENING_NOTES = ['Purana udhaar', 'पुराना उधार', 'Opening balance'];
+export { OPENING_NOTES };
 
 type CustomHead = { id: string; name: string; type: HeadType; opening_paise: string; opening_on: string | null; hidden: boolean };
 type DayLine = { id: string; direction: 'in' | 'out'; category: string; party: string; amount: string; day: string; note: string; mode: string };
@@ -287,9 +287,15 @@ export class MastersService {
     });
   }
 
-  /** Hidden, never deleted: store entries (round 2) will point at it. */
+  /** Hidden, never deleted: store entries point at it. One still holding boxes stays, so none get stuck. */
   async hideStore(shopId: string, id: string, hidden: boolean) {
     return this.db.withShop(shopId, async (tx) => {
+      if (hidden) {
+        const s = (await tx.query<{ name: string; boxes: string }>(
+          `SELECT s.name, (SELECT COALESCE(SUM(CASE WHEN m.dir = 'in' THEN m.boxes ELSE -m.boxes END), 0) FROM store_moves m
+                           WHERE m.store_id = s.id AND m.voided_at IS NULL) AS boxes FROM stores s WHERE s.id = $1`, [id])).rows[0];
+        if (s && n(s.boxes) > 0) throw new ConflictException(`${s.name} mein abhi ${n(s.boxes)} box hain: pehle Store Out karein`);
+      }
       if (!(await tx.query(`UPDATE stores SET hidden = $2, updated_at = now() WHERE id = $1`, [id, hidden])).rowCount) throw new NotFoundException('Store nahi mila');
       return { id, hidden };
     });
@@ -370,7 +376,9 @@ export class MastersService {
       const lines = [
         ...(openingOn && openingOn >= from && openingOn <= to && opening ? [{ id: 'opening', date: openingOn, title: 'Opening balance', detail: '', debitPaise: Math.max(0, opening), creditPaise: Math.max(0, -opening) }] : []),
         ...mine.filter((l) => l.day >= from).map((l) => ({
-          id: l.id, date: l.day, title: l.party || (BUILTIN_HEADS.find((b) => b.key === l.category)?.name ?? l.category), detail: [l.mode, l.note].filter(Boolean).join(' · '),
+          id: l.id, date: l.day, title: l.party || (BUILTIN_HEADS.find((b) => b.key === l.category)?.name ?? l.category),
+          // The book it came from, as the Cash/Bank Book names them; a note that only repeats the head is left out.
+          detail: [MODE_BOOK[l.mode] ?? l.mode, up(l.note) === l.party ? '' : l.note].filter(Boolean).join(' · '),
           debitPaise: l.direction === 'out' ? n(l.amount) : 0, creditPaise: l.direction === 'in' ? n(l.amount) : 0,
         })),
       ].sort((a, b) => a.date.localeCompare(b.date)).map((l) => ({ ...l, balancePaise: (bal += l.debitPaise - l.creditPaise) }));
@@ -443,9 +451,13 @@ export class MastersService {
          ORDER BY g.name`, [OPENING_NOTES])).rows;
       const suppliers = (await tx.query<{ id: string; code: string; name: string; area: string; opening_paise: string; opening_on: string | null }>(
         `SELECT id, code, name, area, opening_paise, opening_on::text AS opening_on FROM supplier_phones ORDER BY name`)).rows;
-      // Suppliers only on gaadis (no master row yet) are listed too; a saved opening makes their row.
+      // Suppliers known only from gaadis, beejaks or payments (no master row yet) are listed too, as
+      // on their khata; a saved opening makes their row.
       const known = new Set(suppliers.map((s) => nameKey(s.name)));
-      const onGaadis = (await tx.query<{ s: string }>(`SELECT DISTINCT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY 1`)).rows
+      const onGaadis = [...(await tx.query<{ s: string }>(
+        `SELECT DISTINCT s FROM (SELECT TRIM(supplier) AS s FROM trucks UNION ALL SELECT TRIM(party) FROM beejaks
+           UNION ALL SELECT TRIM(party_name) FROM daybook_entries WHERE category = 'supplier' AND direction = 'out' AND hidden = false) x
+         WHERE s <> '' ORDER BY 1`)).rows, ...(await supplierJvs(tx)).map((j) => ({ s: j.name.trim() }))]
         .filter((r) => { const k = nameKey(r.s); if (!k || known.has(k)) return false; known.add(k); return true; });
       const heads = await this.customHeads(tx);
       return {
@@ -461,18 +473,25 @@ export class MastersService {
 
   /**
    * A grahak's opening set to [paise]: udhaar entries can't be changed once synced, so the
-   * difference is added as one more "Purana udhaar" entry, on the date of their first one.
+   * difference is added as one more "Purana udhaar" entry (the khata shows them as one line), on
+   * the date of their first one — or, the first time, on the khata's first day, so it comes
+   * before everything the grahak bought or paid.
    */
   async setGrahakOpening(phone: string, shopId: string, buyerId: string, paise: number) {
     const cur = await this.db.withShop(shopId, async (tx) => {
       if (!(await tx.query(`SELECT 1 FROM buyers WHERE id = $1`, [buyerId])).rowCount) throw new NotFoundException('Grahak nahi mila');
-      return (await tx.query<{ s: string | null; d: string | null }>(
-        `SELECT SUM(amount_paise) AS s, MIN(business_date)::text AS d FROM udhaar_entries WHERE buyer_id = $1 AND note = ANY($2::text[])`, [buyerId, OPENING_NOTES])).rows[0];
+      return (await tx.query<{ s: string | null; d: string | null; first: string | null }>(
+        `SELECT SUM(amount_paise) FILTER (WHERE note = ANY($2::text[])) AS s, MIN(business_date) FILTER (WHERE note = ANY($2::text[]))::text AS d,
+                LEAST(MIN(business_date), (SELECT MIN(business_date) FROM ${LIVE_BILLS} lb WHERE lb.buyer_id = $1),
+                      (SELECT MIN(business_date) FROM ${LIVE_COLS} lc WHERE lc.buyer_id = $1))::text AS first
+         FROM udhaar_entries WHERE buyer_id = $1`, [buyerId, OPENING_NOTES])).rows[0];
     });
     const delta = paise - n(cur.s);
     if (delta) {
+      const today = istToday();
+      const day = cur.d ?? (cur.first && cur.first < today ? cur.first : today);
       await this.entries.pushAsWeb(phone, shopId, [{ table: 'udhaar_entries', txn: uuidv7(), row: {
-        id: uuidv7(), created_at: new Date().toISOString(), buyer_id: buyerId, amount_paise: delta, note: 'Purana udhaar', business_date: cur.d ?? istToday(),
+        id: uuidv7(), created_at: new Date().toISOString(), buyer_id: buyerId, amount_paise: delta, note: 'Purana udhaar', business_date: day,
       } }]);
     }
     return { id: buyerId, openingPaise: paise, changedPaise: delta };

@@ -9,7 +9,7 @@ import { Db, Tx } from '../db/db.service';
  *  - a grahak's baaki is their unpaid slips plus udhaar entries minus everything they paid.
  */
 
-import { BALANCES, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, MOBILE, UPI_PART, day, n } from './sql';
+import { BALANCES, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, MOBILE, OPENING_NOTES, UPI_PART, day, n } from './sql';
 
 type KhataRow = { id: string; at: string; date: string; kind: 'slip' | 'payment' | 'udhaar'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[] };
 
@@ -274,13 +274,32 @@ export class AdminService {
         nags: 0, debitPaise: 0, creditPaise: n(c.amount_paise),
       });
     }
+    // The opening (purana udhaar) is one line however many times it was set: the Opening balance
+    // page adds each change as a difference entry, since a synced entry can't be edited.
+    const openings = new Map<string, { id: string; at: string; date: string; paise: number }>();
     for (const e of entries) {
       const amt = n(e.amount_paise);
+      if (OPENING_NOTES.includes(e.note)) {
+        const o = openings.get(e.buyer_id);
+        const at = e.created_at.toISOString(), date = day(e.business_date);
+        if (!o) openings.set(e.buyer_id, { id: e.id, at, date, paise: amt });
+        else { o.paise += amt; if (date < o.date) o.date = date; if (at < o.at) { o.at = at; o.id = e.id; } }
+        continue;
+      }
       out.get(e.buyer_id)!.rows.push({
         id: e.id, at: e.created_at.toISOString(), date: day(e.business_date), kind: 'udhaar',
         title: e.note || (amt < 0 ? 'Jama' : 'Udhaar'), detail: amt < 0 ? 'Jama' : 'Udhaar',
         nags: 0, debitPaise: Math.max(0, amt), creditPaise: Math.max(0, -amt),
       });
+    }
+    for (const [buyerId, o] of openings) {
+      if (!o.paise) continue;
+      const rows = out.get(buyerId)!.rows;
+      // First on its day, ahead of whatever was entered before it (an opening set later, dated back).
+      const earlier = rows.filter((r) => r.date >= o.date).map((r) => r.at).sort()[0];
+      const at = earlier && earlier < o.at ? new Date(Date.parse(earlier) - 1).toISOString() : o.at;
+      rows.push({ id: o.id, at, date: o.date, kind: 'udhaar', title: 'Purana udhaar', detail: o.paise < 0 ? 'Jama' : 'Udhaar',
+        nags: 0, debitPaise: Math.max(0, o.paise), creditPaise: Math.max(0, -o.paise) });
     }
     for (const o of out.values()) o.rows.sort((a, b) => a.at.localeCompare(b.at));
     return out;

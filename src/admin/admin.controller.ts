@@ -109,7 +109,8 @@ const ParchiBody = z.object({
 });
 const mobileOrBlank = z.union([z.literal(''), phone]);
 const SettingsBody = z.object({
-  name: z.string().trim().min(1).max(120), mandi: z.string().trim().max(80), shopNo: z.string().trim().max(20),
+  // name, gstin and email are checked by SettingsService, so a wrong one reads as a sentence, not a schema error.
+  name: z.string().trim().max(120), mandi: z.string().trim().max(80), shopNo: z.string().trim().max(20),
   phad: z.string().trim().max(40), gstin: z.string().trim().toUpperCase().max(15),
   phone: mobileOrBlank, dispatchPhone: mobileOrBlank,
   slipCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9&]{0,6}$/, 'up to 6 letters or digits'),
@@ -123,7 +124,7 @@ const SettingsBody = z.object({
   printerHost: z.string().trim().regex(/^(\d{1,3}(\.\d{1,3}){3})?$/, 'an IP like 192.168.1.50'),
   printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
   licenceNo: z.string().trim().toUpperCase().max(40), companyCode: z.string().trim().toUpperCase().max(20),
-  contactPerson: z.string().trim().max(80), email: z.union([z.literal(''), z.email().max(120)]),
+  contactPerson: z.string().trim().max(80), email: z.string().trim().max(120),
 }).partial();
 const BhavBody = z.object({ date: DayIso, rates: z.array(z.object({ brandId: z.uuid(), grade: z.enum(['1', '2', '3']), ratePaise: paise })).min(1).max(300) });
 const VoidBody = z.object({ reason: z.enum(['deleted', 'refunded', 'advance']).default('deleted') });
