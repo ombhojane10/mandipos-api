@@ -274,7 +274,9 @@ export class EntriesService {
     // A new slip prints on the shop's print machine by itself, as one saved on a phone does;
     // an edit prints only when asked, as in the app.
     const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
-    return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, results };
+    // Said on the page: a website slip waits in the queue while no print machine is on.
+    const printOnline = printing && !!(await this.print.station(p).catch(() => null))?.online;
+    return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, printOnline, results };
   }
 
   /**
@@ -367,7 +369,9 @@ export class EntriesService {
     const bill = results.find((r) => r.id === billId)!;
     const no = bill.renumbered?.to ?? slipNo;
     const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
-    return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, results };
+    // Said on the page: a website slip waits in the queue while no print machine is on.
+    const printOnline = printing && !!(await this.print.station(p).catch(() => null))?.online;
+    return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, printOnline, results };
   }
 
   // ---------------------------------------------------------------- Vasooli
@@ -765,6 +769,27 @@ export class EntriesService {
       qty: brk.qty, note: brk.note, reported_by: brk.reported_by, status: 'rejected', rate_paise: 0, resolved_bill_id: null, resolved_by: 'Website',
     } }]);
     return { ok: true };
+  }
+
+  /**
+   * A live parchi sent to the shop's print machine again (the voucher's Print, Bolo's "parchi 37
+   * print karo"). Says whether a print machine is listening, so the page can tell the counter when
+   * it is off instead of leaving them waiting.
+   */
+  async reprint(phone: string, shopId: string, billId: string) {
+    const bill = await this.db.withShop(shopId, async (tx) => (await tx.query<{ slip_no: number }>(
+      `SELECT b.slip_no FROM ${LIVE_BILLS} b WHERE b.id = $1`, [billId])).rows[0]);
+    if (!bill) throw new NotFoundException('Yeh parchi nahi mili');
+    const p = await this.device(phone, shopId);
+    await this.print.queueBill(p, billId, `Order Parchi #${bill.slip_no}`);
+    const st = await this.print.station(p);
+    return { slipNo: bill.slip_no, station: st && st.online ? { name: st.name } : null };
+  }
+
+  /** Whether the shop's print machine is listening now, for the page to say so after a save. */
+  async printStation(phone: string, shopId: string) {
+    const st = await this.print.station(await this.accounts.webDevice(phone, shopId));
+    return { online: !!st?.online, name: st?.name ?? '', lastSeenAt: st?.lastSeenAt ?? null };
   }
 
   /** Where a gaadi stands, changed (Bolo's "9098 ki location C12 shed karo"): the truck row, with its new place. */
