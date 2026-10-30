@@ -9,7 +9,8 @@ import { uuidv7 } from '../src/common/uuid';
 // A throwaway database, migrated as the owner, with the API connecting as the
 // restricted runtime role — the same split as production.
 const ADMIN_URL = process.env.TEST_ADMIN_URL ?? 'postgres://localhost/postgres';
-const DB = 'mandipos_test';
+// E2E_DB lets parallel runs (separate worktrees) use their own database.
+const DB = process.env.E2E_DB ?? 'mandipos_test';
 const OWNER_URL = ADMIN_URL.replace(/\/[^/]*$/, `/${DB}`);
 
 let app: INestApplication;
