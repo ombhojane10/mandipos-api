@@ -2866,6 +2866,154 @@ describe('masters (company, products, groups, areas, stores, heads, openings)', 
   });
 });
 
+describe('crates and cold store (Crate In/Out, Store Entry)', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  async function web(phone: string, body: object) {
+    const s = await login(phone);
+    const res = await createApproved(s.accessToken, { mandi: 'Azadpur', shopNo: 'CS-1', role: 'owner', commodity: 'angoor', ...body });
+    await http().post('/v1/admin/auth/otp').send({ phone }).expect(204);
+    const w = auth((await http().post('/v1/admin/auth/verify').send({ phone, code: OtpService.issuedForTests.get(phone) }).expect(200)).body.token);
+    return { id: res.me.shop.id as string, term: auth(res.accessToken), w, base: `/v1/admin/shops/${res.me.shop.id}` };
+  }
+
+  it('keeps crates out and in per party: balances, khata, parchi link, edit and delete', async () => {
+    const { w, base } = await web('9845600001', { name: 'Crate Angoor' });
+    const plastic = (await http().post(`${base}/crate-types`).set(w).send({ name: 'plastic crate', depositPaise: 5000 }).expect(201)).body;
+    expect(plastic.name).toBe('PLASTIC CRATE');
+    await http().post(`${base}/crate-types`).set(w).send({ name: 'Plastic Crate' }).expect(409);
+    const wood = (await http().post(`${base}/crate-types`).set(w).send({ name: 'wooden' }).expect(201)).body;
+
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15', supplier: 'Sai', lots: [{ brandName: 'Royal', grade: '1', qty: 50, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const slip = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: g.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+
+    const d = istDay();
+    const out1 = (await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'out', buyerId: g.id, crateTypeId: plastic.id, qty: 10, slipNo: slip.slipNo, note: 'maal ke saath' }).expect(201)).body;
+    const sup = (await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'out', party: 'sai', crateTypeId: plastic.id, qty: 5 }).expect(201)).body;
+    const in1 = (await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'in', buyerId: g.id, crateTypeId: plastic.id, qty: 4 }).expect(201)).body;
+    // Only the parchi given: the crates are its grahak's.
+    await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'out', crateTypeId: wood.id, qty: 2, slipNo: slip.slipNo }).expect(201);
+    await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'out', crateTypeId: wood.id, qty: 2 }).expect(400);
+    await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'out', buyerId: g.id, crateTypeId: wood.id, qty: 2, slipNo: 999999 }).expect(400);
+    await http().post(`${base}/crates`).set(w).send({ day: d, dir: 'out', buyerId: g.id, crateTypeId: wood.id, qty: 0 }).expect(400);
+
+    let r = (await http().get(`${base}/crates?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(r.parties.map((p: any) => [p.name, p.out, p.in, p.balance, p.valuePaise])).toEqual([['RAMESH', 12, 4, 8, 30000], ['SAI', 5, 0, 5, 25000]]);
+    expect(r.totals).toMatchObject({ periodOut: 17, periodIn: 4, out: 17, in: 4, balance: 13, baakiParties: 2, valuePaise: 55000 });
+    expect(r.moves.find((m: any) => m.id === out1.id)).toMatchObject({ party: 'RAMESH', type: 'PLASTIC CRATE', slipNo: slip.slipNo, note: 'maal ke saath' });
+    expect(r.suppliers).toContain('SAI');
+    expect(r.types.find((t: any) => t.id === plastic.id)).toMatchObject({ out: 15, in: 4, balance: 11 });
+
+    let k = (await http().get(`${base}/crates/party?buyerId=${g.id}`).set(w).expect(200)).body;
+    expect(k).toMatchObject({ name: 'RAMESH', balance: 8, out: 12, in: 4, valuePaise: 30000 });
+    expect(k.lines.map((l: any) => [l.dir, l.qty, l.balance])).toEqual([['out', 2, 8], ['in', 4, 6], ['out', 10, 10]]);
+    expect(k.byType.map((t: any) => [t.name, t.balance])).toEqual([['PLASTIC CRATE', 6], ['WOODEN', 2]]);
+    expect((await http().get(`${base}/crates/party?name=Sai`).set(w).expect(200)).body).toMatchObject({ name: 'SAI', balance: 5 });
+
+    // Edit: 6 came back, not 4. Delete: the supplier's line.
+    await http().post(`${base}/crates/${in1.id}`).set(w).send({ day: d, dir: 'in', buyerId: g.id, crateTypeId: plastic.id, qty: 6 }).expect(200);
+    await http().post(`${base}/crates/${sup.id}/delete`).set(w).expect(200);
+    await http().post(`${base}/crates/${sup.id}/delete`).set(w).expect(404);
+    r = (await http().get(`${base}/crates?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(r.parties.map((p: any) => [p.name, p.balance])).toEqual([['RAMESH', 6]]);
+    k = (await http().get(`${base}/crates/party?buyerId=${g.id}`).set(w).expect(200)).body;
+    expect(k.balance).toBe(6);
+
+    // A crate type in use is hidden, an unused one deleted.
+    expect((await http().post(`${base}/crate-types/${plastic.id}/delete`).set(w).send({}).expect(200)).body).toMatchObject({ hidden: true });
+    const spare = (await http().post(`${base}/crate-types`).set(w).send({ name: 'spare' }).expect(201)).body;
+    expect((await http().post(`${base}/crate-types/${spare.id}/delete`).set(w).send({}).expect(200)).body).toMatchObject({ deleted: true });
+    expect((await http().get(`${base}/crate-types`).set(w).expect(200)).body.types.map((t: any) => [t.name, t.hidden])).toEqual([['WOODEN', false], ['PLASTIC CRATE', true]]);
+
+    // Another shop sees none of it.
+    const other = await web('9845600002', { name: 'Other Crates' });
+    await http().get(`${base}/crates?from=${d}&to=${d}`).set(other.w).expect(403);
+    expect((await http().get(`${other.base}/crates?from=${d}&to=${d}`).set(other.w).expect(200)).body.moves).toEqual([]);
+  });
+
+  it('puts boxes into a cold store and takes them out: the gaadi\'s baaki agrees in the app and every report', async () => {
+    const { w, term, base } = await web('9845600003', { name: 'Store Angoor' });
+    const jai = (await http().post(`${base}/stores`).set(w).send({ name: 'jai cold' }).expect(201)).body;
+    const om = (await http().post(`${base}/stores`).set(w).send({ name: 'om cold' }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15ab1', supplier: 'Sai', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const { truckId, brandId } = lot;
+    await http().post(`${base}/entries/parchi`).set(w).send({ lots: [{ truckId, brandId, qty: 10, ratePaise: 100000 }], pay: 'cash' }).expect(201);
+    const d = istDay();
+    const desk = async () => (await http().get(`${base}/angoor?from=${d}&to=${d}`).set(w).expect(200)).body.gaadis.find((x: any) => x.truckId === truckId).qualities[0];
+    const left = async () => (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots.find((l: any) => l.truckId === truckId).left;
+    const pulled = async () => (await http().get('/v1/sync/pull?after=0&limit=500').set(term).expect(200)).body.changes;
+
+    // Store In 30: off the gaadi, as the app's own Store button writes it.
+    const in1 = (await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'in', storeId: jai.id, truckId, brandId, boxes: 30, rentPaise: 1000 }).expect(201)).body;
+    let sp = (await pulled()).filter((c: any) => c.table === 'spoilage').map((c: any) => c.row);
+    expect(sp).toEqual([expect.objectContaining({ truck_id: truckId, brand_id: brandId, kind: 'store', qty: 30, note: 'JAI COLD', business_date: d })]);
+    expect(await desk()).toMatchObject({ received: 100, sold: 10, off: 30, left: 60 });
+    expect(await left()).toBe(60);
+    let st = (await http().get(`${base}/store-stock`).set(w).expect(200)).body;
+    expect(st.stock).toEqual([expect.objectContaining({ store: 'JAI COLD', number: 'MH15AB1', quality: 'Royal', in: 30, out: 0, boxes: 30, kg: 300, rentPaise: 30000 })]);
+    expect(st.totals).toMatchObject({ boxes: 30, kg: 300 });
+
+    // More than the gaadi has, or out more than the store has: refused, nothing written.
+    await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'in', storeId: om.id, truckId, brandId, boxes: 61 }).expect(422);
+    await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'out', storeId: om.id, truckId, brandId, boxes: 1 }).expect(422);
+    await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'out', storeId: jai.id, truckId, brandId, boxes: 31 }).expect(422);
+    await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'in', storeId: jai.id, truckId: uuidv7(), brandId, boxes: 1 }).expect(400);
+
+    // Store Out 10: back on the gaadi as a lot line; the report still shows 100 came.
+    const out1 = (await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'out', storeId: jai.id, truckId, brandId, boxes: 10 }).expect(201)).body;
+    const lots = (await pulled()).filter((c: any) => c.table === 'truck_grades').map((c: any) => c.row);
+    expect(lots.map((l: any) => [l.received_qty, l.box_grams])).toEqual([[100, 10000], [10, 10000]]);
+    expect(await desk()).toMatchObject({ received: 100, sold: 10, off: 20, left: 70 });
+    expect(await left()).toBe(70);
+    let bj = (await http().get(`${base}/beejak/${truckId}`).set(w).expect(200)).body;
+    expect(bj).toMatchObject({ received: 100, sold: 10, off: 20, left: 70 });
+
+    // Edit the In to 15 (5 stay in store): the 15 boxes go back on the gaadi.
+    await http().post(`${base}/store-moves/${in1.id}`).set(w).send({ day: d, dir: 'in', storeId: jai.id, truckId, brandId, boxes: 15 }).expect(200);
+    expect(await desk()).toMatchObject({ received: 100, off: 5, left: 85 });
+    // Deleting the In would leave the store at −10: refused.
+    await http().post(`${base}/store-moves/${in1.id}/delete`).set(w).expect(422);
+    // Deleting the Out: those 10 go back into store, off the gaadi.
+    await http().post(`${base}/store-moves/${out1.id}/delete`).set(w).expect(200);
+    await http().post(`${base}/store-moves/${out1.id}/delete`).set(w).expect(422);
+    expect(await desk()).toMatchObject({ received: 100, off: 15, left: 75 });
+    expect(await left()).toBe(75);
+    bj = (await http().get(`${base}/beejak/${truckId}`).set(w).expect(200)).body;
+    expect(bj).toMatchObject({ received: 100, off: 15, left: 75 });
+    // Moved to the other store, same lot: no change on the gaadi.
+    const before = (await pulled()).length;
+    await http().post(`${base}/store-moves/${in1.id}`).set(w).send({ day: d, dir: 'in', storeId: om.id, truckId, brandId, boxes: 15, kg: 140.5 }).expect(200);
+    expect((await pulled()).length).toBe(before);
+
+    // A gaadi edit sees 100 boxes, not 100 + what came back from store, and writes nothing for it.
+    const stockRows = async () => (await pulled()).filter((c: any) => c.table === 'truck_grades' || c.table === 'spoilage').length;
+    const rowsBefore = await stockRows();
+    await http().post(`${base}/gaadi/${truckId}`).set(w).send({ number: 'MH15AB1', supplier: 'SAI', lots: [{ brandId, grade: '1', qty: 100, ratePaise: 0 }] }).expect(201);
+    expect(await stockRows()).toBe(rowsBefore);
+    expect(await desk()).toMatchObject({ received: 100, off: 15, left: 75 });
+
+    // The register and each store's khata; removed entries stay, struck out.
+    const reg = (await http().get(`${base}/store-moves?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(reg.lines.map((l: any) => [l.dir, l.store, l.boxes, l.voided])).toEqual([['out', 'JAI COLD', 10, true], ['in', 'OM COLD', 15, false]]);
+    const kh = (await http().get(`${base}/store-moves?from=${d}&to=${d}&store=${om.id}`).set(w).expect(200)).body;
+    expect(kh).toMatchObject({ store: { name: 'OM COLD' }, opening: 0 });
+    expect(kh.lines.map((l: any) => [l.boxes, l.kg, l.balance])).toEqual([[15, 140.5, 15]]);
+    st = (await http().get(`${base}/store-stock`).set(w).expect(200)).body;
+    expect(st.stock.map((x: any) => [x.store, x.boxes])).toEqual([['OM COLD', 15]]);
+    expect(st.stores.map((x: any) => [x.name, x.boxes])).toEqual([['JAI COLD', 0], ['OM COLD', 15]]);
+
+    // The app's own Store button (no store named) is listed too.
+    const t = new Date().toISOString();
+    await http().post('/v1/sync/push').set(term).send({ items: [{ table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 3, business_date: d, kind: 'store', note: 'bay 4' } }] }).expect(200);
+    st = (await http().get(`${base}/store-stock`).set(w).expect(200)).body;
+    expect(st.app).toEqual([expect.objectContaining({ number: 'MH15AB1', boxes: 3, note: 'bay 4' })]);
+    expect(st.totals.appBoxes).toBe(3);
+    expect(await desk()).toMatchObject({ received: 100, off: 18, left: 72 });
+  });
+});
+
 describe('voice (Bolo)', () => {
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
   const rows = async (sql: string) => {

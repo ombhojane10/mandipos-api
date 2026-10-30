@@ -24,6 +24,7 @@ import { Deposits } from './pages/Deposits'
 import { Machines } from './pages/Machines'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from './pages/Masters'
+import { Crates, StoreEntry } from './pages/CrateStore'
 import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
 import { openEntry } from './entries/kinds'
@@ -67,6 +68,10 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
     { report: 'gaadis', label: t('Gaadi Hisab'), key: 'A', icon: I.ITruck },
     { report: 'items', label: t('Maal-wise Bikri'), key: 'I', icon: I.ITag },
     { report: 'bhav', label: t('Aaj ka Bhav'), key: 'B', icon: I.ITag },
+  ] },
+  { group: t('Crate & Store'), items: [
+    { report: 'crates', label: t('Crate In / Out'), key: '', icon: I.IBox },
+    { report: 'coldstore', label: t('Store Entry'), key: '', icon: I.IStore },
   ] },
   { group: t('Dukaan'), items: [
     { report: 'nigrani', label: t('Nigrani'), key: 'X', icon: I.IInbox },
@@ -380,6 +385,8 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'stores': return <Stores key={shopId} shopId={shopId} />
     case 'heads': return <Heads key={shopId} shopId={shopId} />
     case 'openings': return <Openings key={shopId} shopId={shopId} />
+    case 'crates': return <Crates key={shopId} shopId={shopId} />
+    case 'coldstore': return <StoreEntry key={shopId} shopId={shopId} />
     case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }

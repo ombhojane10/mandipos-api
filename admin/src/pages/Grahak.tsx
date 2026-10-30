@@ -10,6 +10,7 @@ import { openWhatsApp } from '../keys'
 import { balRs, dmy, fileName, rs, useExport } from '../export/doc'
 import { Field, Sheet } from '../entries/fields'
 import { AreaDatalist } from './Masters'
+import { GrahakCrates } from './CrateStore'
 
 /** Every grahak of the shop, searchable; biggest baaki first. Enter opens the khata. */
 export function GrahakList({ shopId }: { shopId: string }) {
@@ -98,6 +99,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         <div><span className="lb">{t('Diya')}</span><span className="v">{rupees(tot.paidPaise)}</span></div>
         <div><span className="lb">{t('Parchi')}</span><span className="v">{count(tot.slips)} · {t('{n} nag', { n: count(tot.nags) })}</span></div>
         {b.creditLimitPaise > 0 && <div><span className="lb">{t('Limit')}</span><span className="v">{rupees(b.creditLimitPaise)}</span></div>}
+        <GrahakCrates shopId={shopId} buyerId={buyerId} />
         {me?.admin && mobile && <div><span className="lb">{t('Poora market')}</span><a className="v call" href={href({ page: 'person', key: b.phone })}>{t('Dekhein')} ›</a></div>}
       </div>
       <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} exportAs={{

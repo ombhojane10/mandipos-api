@@ -1,5 +1,5 @@
 import {
-  Body, CanActivate, Controller, Delete, ExecutionContext, ForbiddenException, Get, HttpCode, Injectable, Param, Post, Query, Res,
+  BadRequestException, Body, CanActivate, Controller, Delete, ExecutionContext, ForbiddenException, Get, HttpCode, Injectable, Param, Post, Query, Res,
   UnauthorizedException, UseGuards, createParamDecorator,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -18,6 +18,8 @@ import { CreditorsService } from './creditors.service';
 import { MachinesService } from './machines.service';
 import { DepositsService, NOTES } from './deposits.service';
 import { MastersService } from './masters.service';
+import { CratesService } from './crates.service';
+import { ColdStoreService } from './cold-store.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -214,6 +216,20 @@ const HeadKey = z.union([z.uuid(), z.string().regex(/^b:[a-z_]{1,30}$/)]);
 const HiddenBody = z.object({ hidden: z.boolean().default(true) });
 const SupplierOpeningBody = z.object({ id: z.uuid().nullable(), name: z.string().trim().min(1).max(120), openingPaise: signedPaise, openingOn: z.iso.date().nullable().optional() });
 
+// Crate In / Crate Out and Store Entry.
+const CrateTypeBody = z.object({ id: z.uuid().optional(), name: z.string().trim().min(1).max(60), depositPaise: paise.optional() });
+const CrateMoveBody = z.object({
+  day: DayIso, dir: z.enum(['out', 'in']), buyerId: z.uuid().nullable().optional(), party: z.string().trim().max(120).optional(),
+  crateTypeId: z.uuid(), qty: z.number().int().positive().max(1_000_000), slipNo: z.number().int().positive().max(9_999_999).nullable().optional(),
+  note: z.string().max(200).optional(),
+});
+const CratePartyQuery = z.union([z.object({ buyerId: z.uuid() }), z.object({ name: z.string().trim().min(1).max(120) })]);
+const StoreMoveBody = z.object({
+  day: DayIso, dir: z.enum(['in', 'out']), storeId: z.uuid(), truckId: z.uuid(), brandId: z.uuid(), boxes: z.number().int().positive().max(1_000_000),
+  kg: z.number().min(0).max(100_000_000).nullable().optional(), rentPaise: paise.optional(), note: z.string().max(200).optional(),
+});
+const StoreMovesQuery = Range.extend({ store: z.uuid().optional() });
+
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 /** Sign-in: OTP to a MandiPlus admin number, or to the owner of an approved shop. */
@@ -257,7 +273,97 @@ export class AdminController {
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
     private readonly machines: MachinesService, private readonly deposits: DepositsService, private readonly masters: MastersService,
+    private readonly crates: CratesService, private readonly coldStore: ColdStoreService,
   ) {}
+
+  // ---------------------------------------------------------------- Crate In / Crate Out
+
+  @Get('shops/:id/crate-types')
+  crateTypes(@See() v: Viewer, @Param('id') id: string) {
+    return this.crates.types(mine(v, id));
+  }
+
+  @Post('shops/:id/crate-types')
+  saveCrateType(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.crates.saveType(mine(v, id), parse(CrateTypeBody, body));
+  }
+
+  /** Hides a crate type with entries (deletes an unused one); { hidden: false } brings it back. */
+  @Post('shops/:id/crate-types/:tid/delete')
+  @HttpCode(200)
+  deleteCrateType(@See() v: Viewer, @Param('id') id: string, @Param('tid') tid: string, @Body() body: unknown) {
+    return this.crates.deleteType(mine(v, id), parse(Id, tid), parse(HiddenBody, body ?? {}).hidden);
+  }
+
+  @Get('shops/:id/crates')
+  crateRegister(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    if (r.from > r.to) throw new BadRequestException('from is after to');
+    return this.crates.register(mine(v, id), r.from, r.to);
+  }
+
+  @Get('shops/:id/crates/party')
+  crateParty(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    return this.crates.party(mine(v, id), parse(CratePartyQuery, query));
+  }
+
+  @Get('shops/:id/crates/:mid')
+  crateMove(@See() v: Viewer, @Param('id') id: string, @Param('mid') mid: string) {
+    return this.crates.one(mine(v, id), parse(Id, mid));
+  }
+
+  @Post('shops/:id/crates')
+  newCrateMove(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.crates.save(v.phone, mine(v, id), null, parse(CrateMoveBody, body));
+  }
+
+  @Post('shops/:id/crates/:mid')
+  @HttpCode(200)
+  editCrateMove(@See() v: Viewer, @Param('id') id: string, @Param('mid') mid: string, @Body() body: unknown) {
+    return this.crates.save(v.phone, mine(v, id), parse(Id, mid), parse(CrateMoveBody, body));
+  }
+
+  @Post('shops/:id/crates/:mid/delete')
+  @HttpCode(200)
+  removeCrateMove(@See() v: Viewer, @Param('id') id: string, @Param('mid') mid: string) {
+    return this.crates.remove(mine(v, id), parse(Id, mid));
+  }
+
+  // ---------------------------------------------------------------- Store Entry (cold store in/out)
+
+  @Get('shops/:id/store-stock')
+  storeStock(@See() v: Viewer, @Param('id') id: string) {
+    return this.coldStore.stock(mine(v, id));
+  }
+
+  @Get('shops/:id/store-moves')
+  storeMoves(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(StoreMovesQuery, query);
+    if (r.from > r.to) throw new BadRequestException('from is after to');
+    return this.coldStore.moves(mine(v, id), r.from, r.to, r.store);
+  }
+
+  @Get('shops/:id/store-moves/:mid')
+  storeMove(@See() v: Viewer, @Param('id') id: string, @Param('mid') mid: string) {
+    return this.coldStore.one(mine(v, id), parse(Id, mid));
+  }
+
+  @Post('shops/:id/store-moves')
+  newStoreMove(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.coldStore.save(v.phone, mine(v, id), null, parse(StoreMoveBody, body));
+  }
+
+  @Post('shops/:id/store-moves/:mid')
+  @HttpCode(200)
+  editStoreMove(@See() v: Viewer, @Param('id') id: string, @Param('mid') mid: string, @Body() body: unknown) {
+    return this.coldStore.save(v.phone, mine(v, id), parse(Id, mid), parse(StoreMoveBody, body));
+  }
+
+  @Post('shops/:id/store-moves/:mid/delete')
+  @HttpCode(200)
+  removeStoreMove(@See() v: Viewer, @Param('id') id: string, @Param('mid') mid: string) {
+    return this.coldStore.remove(v.phone, mine(v, id), parse(Id, mid));
+  }
 
   // ---------------------------------------------------------------- Masters: products, groups, areas, stores, heads, openings
 

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Db } from '../db/db.service';
-import { BALANCES, IST_DAY, LIVE_BILLS, n } from './sql';
+import { BALANCES, IST_DAY, LIVE_BILLS, STORE_BACK, n } from './sql';
 import { nameKey } from './reports.service';
 import { uuidv7 } from '../common/uuid';
 
@@ -187,7 +187,7 @@ export class InsightsService {
 
       // Each open gaadi's qualities, a box count added later or taken off as a correction folded in.
       const today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
-      const lots = (await tx.query<{ truck_id: string; number: string; supplier: string; location: string; arrived: string; freight: string; brand_id: string | null; quality: string | null; box_grams: number; rate: string; received: string; corrected: string; sold: string; sold_now: string; off: string }>(
+      const lots = (await tx.query<{ truck_id: string; number: string; supplier: string; location: string; arrived: string; freight: string; brand_id: string | null; quality: string | null; box_grams: number; rate: string; received: string; corrected: string; sold: string; sold_now: string; off: string; back: string }>(
         `SELECT t.id AS truck_id, t.number, TRIM(t.supplier) AS supplier, t.location, ${IST_DAY('t.arrived_at')}::text AS arrived, t.freight_paise AS freight,
                 g.brand_id, br.name AS quality, g.box_grams, g.rate, g.received,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.brand_id IS NOT DISTINCT FROM g.brand_id AND s.kind = 'correction') AS corrected,
@@ -195,7 +195,8 @@ export class InsightsService {
                  WHERE l.truck_id = t.id AND l.brand_id IS NOT DISTINCT FROM g.brand_id) AS sold,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id
                  WHERE l.truck_id = t.id AND l.brand_id IS NOT DISTINCT FROM g.brand_id AND lb.business_date = $1) AS sold_now,
-                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.brand_id IS NOT DISTINCT FROM g.brand_id AND s.kind <> 'correction') AS off
+                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.brand_id IS NOT DISTINCT FROM g.brand_id AND s.kind <> 'correction') AS off,
+                ${STORE_BACK('t.id', 'g.brand_id')} AS back
          FROM trucks t
          JOIN (SELECT truck_id, brand_id, SUM(received_qty) AS received, MAX(box_grams) AS box_grams,
                       (array_agg(rate_paise ORDER BY created_at DESC))[1] AS rate, MIN(created_at) AS first_at
@@ -207,7 +208,8 @@ export class InsightsService {
       for (const r of lots) {
         const g = gaadis.get(r.truck_id) ?? { truckId: r.truck_id, number: r.number, supplier: r.supplier, supplierKey: nameKey(r.supplier), location: r.location, arrivedOn: r.arrived,
           freightPaise: n(r.freight), received: 0, sold: 0, soldNow: 0, left: 0, over: 0, waiting: waiting.get(r.truck_id) ?? 0, qualities: [] };
-        const received = Math.max(0, n(r.received) - n(r.corrected)), sold = n(r.sold), off = n(r.off);
+        // Boxes back from a cold store came in as a lot line; they are not more maal, so out of both.
+        const received = Math.max(0, n(r.received) - n(r.corrected) - n(r.back)), sold = n(r.sold), off = Math.max(0, n(r.off) - n(r.back));
         // Grapes never refuses a sale on the count: more sold than came shows as "over", never as a minus.
         const left = Math.max(0, received - sold - off), over = Math.max(0, sold + off - received);
         g.qualities.push({ brandId: r.brand_id, name: r.quality ?? '', kg: r.box_grams / 1000, ratePaise: n(r.rate), received, sold, off, left, over });
@@ -292,11 +294,13 @@ export class InsightsService {
          FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id LEFT JOIN brands br ON br.id = l.brand_id
          WHERE l.truck_id = $1 GROUP BY br.name ORDER BY MIN(lb.created_at)`, [truckId])).rows
         .map((r) => ({ quality: r.quality ?? '', qty: n(r.qty), amountPaise: n(r.amount), first: r.first, last: r.last }));
-      const came = (await tx.query<{ received: string; corrected: string; off: string }>(
+      const came = (await tx.query<{ received: string; corrected: string; off: string; back: string }>(
         `SELECT (SELECT COALESCE(SUM(received_qty), 0) FROM truck_grades WHERE truck_id = $1) AS received,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage WHERE truck_id = $1 AND kind = 'correction') AS corrected,
-                (SELECT COALESCE(SUM(qty), 0) FROM spoilage WHERE truck_id = $1 AND kind <> 'correction') AS off`, [truckId])).rows[0];
-      const received = Math.max(0, n(came.received) - n(came.corrected));
+                (SELECT COALESCE(SUM(qty), 0) FROM spoilage WHERE truck_id = $1 AND kind <> 'correction') AS off,
+                (SELECT COALESCE(SUM(qty), 0) FROM store_sync WHERE truck_id = $1 AND kind = 'lot') AS back`, [truckId])).rows[0];
+      came.off = String(n(came.off) - n(came.back));
+      const received = Math.max(0, n(came.received) - n(came.corrected) - n(came.back));
       const sold = groups.reduce((s, g) => s + g.qty, 0);
       const saved = (await tx.query<BeejakRow>(`SELECT * FROM beejaks WHERE truck_id = $1`, [truckId])).rows[0];
       return {

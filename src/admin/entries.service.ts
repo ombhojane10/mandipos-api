@@ -6,7 +6,7 @@ import { Db, Tx } from '../db/db.service';
 import { PrintService } from '../print/print.service';
 import { SyncHub } from '../sync/sync.hub';
 import { PushItem, PushResult, SyncService } from '../sync/sync.service';
-import { CASH_PART, LIVE_BILLS, LIVE_COLS, UPI_PART, n } from './sql';
+import { CASH_PART, LIVE_BILLS, LIVE_COLS, STORE_BACK, UPI_PART, n } from './sql';
 import { nameKey } from './reports.service';
 
 /**
@@ -833,7 +833,8 @@ export class EntriesService {
         `SELECT id, created_at, arrived_at, labour_paise, commission_paise, closed_at FROM trucks WHERE id = $1`, [truckId])).rows[0];
       if (!truck) throw new NotFoundException('Gaadi nahi mili');
       const have = (await tx.query<{ brand_id: string; qty: string; rate: string; box_grams: number }>(
-        `SELECT g.brand_id, SUM(g.received_qty) - COALESCE((SELECT SUM(qty) FROM spoilage s WHERE s.truck_id = $1 AND s.brand_id = g.brand_id AND s.kind = 'correction'), 0) AS qty,
+        `SELECT g.brand_id, SUM(g.received_qty) - COALESCE((SELECT SUM(qty) FROM spoilage s WHERE s.truck_id = $1 AND s.brand_id = g.brand_id AND s.kind = 'correction'), 0)
+                  - ${STORE_BACK('$1', 'g.brand_id')} AS qty,
                 (array_agg(g.rate_paise ORDER BY g.created_at DESC))[1] AS rate, MAX(g.box_grams) AS box_grams
          FROM truck_grades g WHERE g.truck_id = $1 GROUP BY g.brand_id`, [truckId])).rows;
       const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;
