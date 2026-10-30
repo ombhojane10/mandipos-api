@@ -3413,8 +3413,8 @@ describe('reports (General Ledger, Trial Balance, Ledger Multiple, big transacti
     const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
     expect(tb.groups.find((x: any) => x.key === 'creditors')).toMatchObject({ cr: 120000, dr: 0 });
     expect(tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === 'purchase')).toMatchObject({ dr: 100000 });
-    // Stock: 100 came + 10 back − 30 to store − 10 sold = 70 on the gaadi, at ₹12 a box.
-    expect((await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0]).toMatchObject({ received: 110, left: 70, valuePaise: 84000 });
+    // Stock: 100 came; 30 to store, 10 back (20 in store); 10 sold → 70 on the gaadi, at ₹12 a box.
+    expect((await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0]).toMatchObject({ received: 100, stored: 20, left: 70, valuePaise: 84000 });
     expect((await http().get(`${base}/gaadi-hisab`).set(w).expect(200)).body.rows[0]).toMatchObject({ costPaise: 120000, landedRatePaise: 1200, buyRatePaise: 1000 });
   });
 

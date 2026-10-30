@@ -165,7 +165,7 @@ export class ReportsService {
       // A count entered too high comes off at the gaadi's own average bhav.
       const goodsNet = Math.max(0, billed > 0 && corrected > 0 ? goods - Math.round((goods * corrected) / billed) : goods);
       return { truckId: r.id, number: r.number, supplier: r.supplier, arrivedAt: r.arrived_at, closed: r.closed, brands: r.brands ?? '',
-        dana: n(r.received) - corrected - back, sold: n(r.sold), spoiled: n(r.spoiled) - back, goodsPaise: goodsNet, freightPaise: n(r.freight), purchasePaise: goodsNet + n(r.freight) };
+        dana: n(r.received) - corrected, sold: n(r.sold), spoiled: n(r.spoiled) - back, goodsPaise: goodsNet, freightPaise: n(r.freight), purchasePaise: goodsNet + n(r.freight) };
     });
     const payments = (await tx.query<{ id: string; party: string; amount: string; mode: string; note: string; day: string; at: Date }>(
       `SELECT id, TRIM(party_name) AS party, amount_paise AS amount, mode, note, business_date::text AS day, created_at AS at FROM daybook_entries
@@ -176,7 +176,7 @@ export class ReportsService {
     const openings = (await tx.query<{ name: string; paise: string; day: string | null; at: Date }>(
       `SELECT name, opening_paise AS paise, opening_on::text AS day, created_at AS at FROM supplier_phones WHERE opening_paise <> 0`)).rows;
     const names = new Map<string, string>();
-    for (const o of openings) if (!names.has(nameKey(o.name))) names.set(nameKey(o.name), o.name);
+    // The name as the gaadis spell it; a master row (opening) only names one with no gaadi.
     for (const g of gaadis) if (!names.has(nameKey(g.supplier))) names.set(nameKey(g.supplier), g.supplier);
     for (const o of openings) if (!names.has(nameKey(o.name))) names.set(nameKey(o.name), o.name);
     for (const p of payments) if (!names.has(nameKey(p.party))) names.set(nameKey(p.party), p.party);

@@ -27,7 +27,7 @@ export type InvoiceDoc = {
   goodsPaise: number; chargesPaise: number; taxRate: number; taxPaise: number; taxNote: string; totalPaise: number; words: string
 };
 
-type Bill = { id: string; slip_no: number | null; number: string; day: string; buyer_id: string | null; buyer_name: string; total_paise: string; apmc_paise: string; chungi_paise: string; pay_mode: string };
+type Bill = { id: string; slip_no: number | null; number: string; day: string; buyer_id: string | null; buyer_name: string; total_paise: string; apmc_paise: string; chungi_paise: string; labour_paise: string; pay_mode: string };
 
 /**
  * Generate Invoices (the old software's tax invoice): one per parchi, or one for many of a
@@ -98,7 +98,7 @@ export class InvoicesService {
       // One issuer at a time per shop, so two clicks never take the same number.
       await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended('tax_invoices:' || $1, 0))`, [shopId]);
       const bills = (await tx.query<Bill>(
-        `SELECT lb.id, lb.slip_no, lb.number, lb.business_date::text AS day, lb.buyer_id, lb.buyer_name, lb.total_paise, lb.apmc_paise, lb.chungi_paise, lb.pay_mode
+        `SELECT lb.id, lb.slip_no, lb.number, lb.business_date::text AS day, lb.buyer_id, lb.buyer_name, lb.total_paise, lb.apmc_paise, lb.chungi_paise, lb.labour_paise, lb.pay_mode
          FROM ${LIVE_BILLS} lb WHERE lb.id = ANY($1::uuid[]) ORDER BY lb.business_date, lb.slip_no NULLS LAST, lb.created_at`, [ids])).rows;
       if (bills.length !== ids.length) throw new BadRequestException('Koi parchi hat gayi ya badal gayi hai, list dobara kholein');
       const taken = (await tx.query<{ number: string; slip_no: number | null }>(
@@ -174,8 +174,11 @@ export class InvoicesService {
     const goods = out.reduce((t, l) => t + l.amountPaise, 0);
     const total = bills.reduce((t, b) => t + n(b.total_paise), 0);
     // What rides on the slip besides the goods: APMC, and the rest of chungi_paise (grapes: mazdoori; amrud: chungi).
-    const apmc = bills.reduce((t, b) => t + Math.min(n(b.apmc_paise), n(b.chungi_paise)), 0);
-    const rest = bills.reduce((t, b) => t + Math.max(0, n(b.chungi_paise) - n(b.apmc_paise)), 0);
+    // APMC as the slip prints it (chungi less labour — the Trial Balance's rule): an old slip whose
+    // chungi was labour only collected no APMC, whatever apmc_paise says.
+    const apmcOf = (b: Bill) => Math.min(n(b.apmc_paise), Math.max(0, n(b.chungi_paise) - n(b.labour_paise)))
+    const apmc = bills.reduce((t, b) => t + apmcOf(b), 0);
+    const rest = bills.reduce((t, b) => t + Math.max(0, n(b.chungi_paise) - apmcOf(b)), 0);
     const charges = [
       ...(apmc ? [{ label: 'APMC (mandi fee)', amountPaise: apmc }] : []),
       ...(rest ? [{ label: s.commodity === 'angoor' ? 'Mazdoori (labour)' : 'Chungi', amountPaise: rest }] : []),
