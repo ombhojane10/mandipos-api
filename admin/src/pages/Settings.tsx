@@ -4,6 +4,7 @@ import { Money, Seg } from '../entries/fields'
 import { LANGS, lang, setLang, t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { Skeleton } from '../ui'
+import { settingsProblems } from '../settingsCheck'
 
 const DOTS = [{ key: '384', label: t('2 inch') }, { key: '576', label: t('3 inch') }, { key: '832', label: t('4 inch') }] as const
 const blankBank: BankAccount = { holder: '', bank: '', ifsc: '', account: '' }
@@ -23,6 +24,7 @@ export function Settings({ shopId }: { shopId: string }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
+  const [tried, setTried] = useState(false)
   const [labour, setLabour] = useState(() => Number(local('mp.labourRate', '30')) || 30)
   const [staff, setStaff] = useState(() => local('mp.staff', ''))
 
@@ -36,13 +38,17 @@ export function Settings({ shopId }: { shopId: string }) {
   const banks = f.bankAccounts.length ? f.bankAccounts : [blankBank]
   const setBank = (i: number, patch: Partial<BankAccount>) => set('bankAccounts', banks.map((b, j) => (j === i ? { ...b, ...patch } : b)))
 
+  const problems = settingsProblems(f)
+  const bad = (k: keyof ShopSettings) => (tried ? problems[k] : undefined)
   async function save() {
     if (!f) return
+    setTried(true)
+    if (Object.keys(problems).length) return
     setBusy(true); setError('')
     try {
       const patch = Object.fromEntries(changed.filter((k) => k !== 'commodity').map((k) => [k, f[k]]))
       const s = await api<ShopSettings>(`/v1/admin/shops/${shopId}/settings`, { method: 'POST', body: patch })
-      setSaved(s); setF(s); setDone(true); booksChanged()
+      setSaved(s); setF(s); setDone(true); setTried(false); booksChanged()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -51,11 +57,17 @@ export function Settings({ shopId }: { shopId: string }) {
   }
 
   const text = (k: 'name' | 'mandi' | 'shopNo' | 'phad' | 'gstin' | 'address' | 'printerHost' | 'licenceNo' | 'companyCode' | 'contactPerson' | 'email', max: number, extra?: { placeholder?: string; upper?: boolean }) => (
-    <input className="field" value={f[k]} maxLength={max} placeholder={extra?.placeholder}
-      onChange={(e) => set(k, extra?.upper ? e.target.value.toUpperCase() : e.target.value)} />
+    <>
+      <input className="field" value={f[k]} maxLength={max} placeholder={extra?.placeholder} aria-invalid={!!bad(k)}
+        onChange={(e) => set(k, extra?.upper ? e.target.value.toUpperCase() : e.target.value)} />
+      {bad(k) && <small className="fld-err">{bad(k)}</small>}
+    </>
   )
   const mobile = (k: 'phone' | 'dispatchPhone') => (
-    <input className="field" inputMode="tel" value={f[k]} maxLength={10} onChange={(e) => set(k, e.target.value.replace(/\D/g, ''))} />
+    <>
+      <input className="field" inputMode="tel" value={f[k]} maxLength={10} aria-invalid={!!bad(k)} onChange={(e) => set(k, e.target.value.replace(/\D/g, ''))} />
+      {bad(k) && <small className="fld-err">{bad(k)}</small>}
+    </>
   )
   const toggle = (k: 'udhaarRates' | 'udhaarAlerts') => (
     <Seg value={f[k] ? 'on' : 'off'} onChange={(v) => set(k, v === 'on')} options={[{ key: 'on', label: t('Haan') }, { key: 'off', label: t('Nahi') }]} />
@@ -145,8 +157,9 @@ export function Settings({ shopId }: { shopId: string }) {
       {(changed.length > 0 || done || error) && <div className="set-bar">
         {error && <span className="error">{error}</span>}
         {done && !changed.length && <span className="jama">{t('Save ho gaya')}</span>}
+        {tried && Object.keys(problems).length > 0 && <span className="error">{t('Laal wale khaane theek karein')}</span>}
         <span className="grow" />
-        {changed.length > 0 && <button type="button" className="btn ghost" disabled={busy} onClick={() => setF(saved)}>{t('Rehne dein')}</button>}
+        {changed.length > 0 && <button type="button" className="btn ghost" disabled={busy} onClick={() => { setF(saved); setTried(false) }}>{t('Rehne dein')}</button>}
         <button type="button" className="btn primary" disabled={busy || !changed.length} onClick={save}>{busy ? '…' : t('Save')}</button>
       </div>}
     </div>

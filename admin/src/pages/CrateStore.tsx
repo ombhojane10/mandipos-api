@@ -291,12 +291,14 @@ function CrateSheet({ shopId, draft, types, suppliers, onClose }: { shopId: stri
   }, [shopId, start?.buyerId, start?.name])
   const save = () => {
     const n = Number(qty)
-    if (!Number.isInteger(n) || n <= 0) return setError(t('Kitne crate, woh likhein'))
-    if (!typeId) return setError(t('Crate chunein'))
     const slipNo = slip.trim() ? Number(slip) : null
-    if (slipNo !== null && (!Number.isInteger(slipNo) || slipNo <= 0)) return setError(t('Parchi number sahi likhein'))
     const party = who === 'grahak' ? { buyerId: buyer?.id ?? null } : { buyerId: null, party: supplier.trim() }
+    // Top to bottom, as the form reads.
     if (!party.buyerId && !('party' in party && party.party) && !slipNo) return setError(t('Party chunein'))
+    if (!typeId) return setError(t('Crate chunein'))
+    if (!Number.isInteger(n) || n <= 0) return setError(t('Kitne crate, woh likhein'))
+    if (day > todayIst()) return setError(t('Aage ki tarikh nahi chalegi'))
+    if (slipNo !== null && (!Number.isInteger(slipNo) || slipNo <= 0)) return setError(t('Parchi number sahi likhein'))
     const body = { day, dir, ...party, crateTypeId: typeId, qty: n, slipNo, note }
     void run(() => api(`/v1/admin/shops/${shopId}/crates${m ? `/${m.id}` : ''}`, { method: 'POST', body }))
   }
@@ -322,7 +324,7 @@ function CrateSheet({ shopId, draft, types, suppliers, onClose }: { shopId: stri
             {live.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </select>
         </Field>
-        <Field label={t('Kitne crate')}><input className="field" inputMode="numeric" maxLength={7} value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ''))} /></Field>
+        <Field label={t('Kitne crate')}><input className="field" inputMode="numeric" maxLength={6} value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ''))} /></Field>
       </div>
       <div className="row2">
         <Field label={t('Tarikh')}><input className="field" type="date" max={todayIst()} value={day} onChange={(e) => setDay(e.target.value)} /></Field>
@@ -606,7 +608,8 @@ function StoreKhata({ shopId, stores, storeId, onStore, onEdit }: { shopId: stri
 function StoreSheet({ shopId, draft, data, onClose }: { shopId: string; draft: StoreDraft; data: StoreStock; onClose: () => void }) {
   const m = draft.move
   const [dir, setDir] = useState<'in' | 'out'>(m?.dir ?? draft.dir)
-  const stores = data.stores.filter((s) => !s.hidden || s.id === m?.storeId)
+  // A hidden store takes nothing in, but what it still holds can come out.
+  const stores = data.stores.filter((s) => !s.hidden || s.id === m?.storeId || (dir === 'out' && s.boxes > 0))
   const [storeId, setStoreId] = useState(m?.storeId ?? draft.storeId ?? stores[0]?.id ?? '')
   const [lotKey, setLotKey] = useState(m ? `${m.truckId}:${m.brandId}` : draft.truckId ? `${draft.truckId}:${draft.brandId}` : '')
   const [boxes, setBoxes] = useState(m ? String(m.boxes) : '')
@@ -617,22 +620,27 @@ function StoreSheet({ shopId, draft, data, onClose }: { shopId: string; draft: S
   const { saving, error, setError, run } = useSaver(onClose)
 
   // In: the open gaadis' qualities, with what is left on each. Out: what this store holds.
-  type Opt = { key: string; truckId: string; brandId: string; label: string; boxGrams: number }
+  type Opt = { key: string; truckId: string; brandId: string; label: string; boxGrams: number; max: number; none?: boolean }
   const grams = new Map(data.lots.map((l) => [`${l.truckId}:${l.brandId}`, l.boxGrams]))
+  // In: lots with boxes left first; one with none left is listed (nothing hidden) but can't be picked.
   const opts: Opt[] = dir === 'in'
-    ? data.lots.map((l) => ({ key: `${l.truckId}:${l.brandId}`, truckId: l.truckId, brandId: l.brandId, label: `${lotName(l)} — ${signed(l.left)} ${t('baaki')}`, boxGrams: l.boxGrams }))
+    ? [...data.lots].sort((a, b) => Number(b.left > 0) - Number(a.left > 0)).map((l) => ({ key: `${l.truckId}:${l.brandId}`, truckId: l.truckId, brandId: l.brandId,
+      label: `${lotName(l)} — ${signed(l.left)} ${t('baaki')}`, boxGrams: l.boxGrams, max: l.left, none: l.left <= 0 && !(m && `${m.truckId}:${m.brandId}` === `${l.truckId}:${l.brandId}`) }))
     : data.stock.filter((r) => r.storeId === storeId && r.boxes > 0).map((r) => ({ key: `${r.truckId}:${r.brandId}`, truckId: r.truckId, brandId: r.brandId,
-      label: `${lotName(r)} — ${count(r.boxes)} ${t('store mein')}`, boxGrams: grams.get(`${r.truckId}:${r.brandId}`) ?? (r.in ? Math.round((r.kg * 1000) / Math.max(1, r.boxes)) : 0) }))
-  if (m && !opts.some((o) => o.key === lotKey)) opts.unshift({ key: lotKey, truckId: m.truckId, brandId: m.brandId, label: lotName(m), boxGrams: grams.get(lotKey) ?? 0 })
+      label: `${lotName(r)} — ${count(r.boxes)} ${t('store mein')}`, boxGrams: grams.get(`${r.truckId}:${r.brandId}`) ?? (r.in ? Math.round((r.kg * 1000) / Math.max(1, r.boxes)) : 0), max: r.boxes }))
+  if (m && !opts.some((o) => o.key === lotKey)) opts.unshift({ key: lotKey, truckId: m.truckId, brandId: m.brandId, label: lotName(m), boxGrams: grams.get(lotKey) ?? 0, max: Infinity })
   const lot = opts.find((o) => o.key === lotKey) ?? null
   const n = Number(boxes) || 0
   const autoKg = lot?.boxGrams ? (n * lot.boxGrams) / 1000 : 0
-  useEffect(() => { if (!opts.some((o) => o.key === lotKey)) setLotKey(opts[0]?.key ?? '') }, [dir, storeId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!opts.some((o) => o.key === lotKey && !o.none)) setLotKey(opts.find((o) => !o.none)?.key ?? '') }, [dir, storeId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = () => {
     if (!storeId) return setError(t('Store chunein'))
-    if (!lot) return setError(t('Gaadi ka maal chunein'))
+    if (!lot || lot.none) return setError(t('Gaadi ka maal chunein'))
     if (!Number.isInteger(n) || n <= 0) return setError(t('Kitne box, woh likhein'))
+    // A new entry can't take more than is there; an edit is checked by the server (it gives back its own boxes first).
+    if (!m && n > lot.max) return setError(dir === 'in' ? t('Gaadi par sirf {n} box baaki', { n: count(Math.max(0, lot.max)) }) : t('Store mein sirf {n} box hain', { n: count(lot.max) }))
+    if (day > todayIst()) return setError(t('Aage ki tarikh nahi chalegi'))
     const kgNum = kg === null || kg.trim() === '' ? null : Number(kg)
     if (kgNum !== null && !(kgNum >= 0)) return setError(t('Kg sahi likhein'))
     const body = { day, dir, storeId, truckId: lot.truckId, brandId: lot.brandId, boxes: n, kg: kgNum, rentPaise: dir === 'in' ? rent : 0, note }
@@ -655,12 +663,12 @@ function StoreSheet({ shopId, draft, data, onClose }: { shopId: string; draft: S
       </div>
       <Field label={t('Gaadi · maal')}>
         <select className="field" value={lotKey} onChange={(e) => setLotKey(e.target.value)}>
-          {opts.length === 0 && <option value="">{dir === 'in' ? t('Koi khuli gaadi nahi') : t('Is store mein koi maal nahi')}</option>}
-          {opts.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          {!opts.some((o) => !o.none) && <option value="">{dir === 'in' ? t('Koi khuli gaadi nahi') : t('Is store mein koi maal nahi')}</option>}
+          {opts.map((o) => <option key={o.key} value={o.key} disabled={o.none}>{o.label}</option>)}
         </select>
       </Field>
       <div className="row2">
-        <Field label={t('Box')}><input className="field" inputMode="numeric" autoFocus maxLength={7} value={boxes} onChange={(e) => setBoxes(e.target.value.replace(/\D/g, ''))} /></Field>
+        <Field label={t('Box')}><input className="field" inputMode="numeric" autoFocus maxLength={6} value={boxes} onChange={(e) => setBoxes(e.target.value.replace(/\D/g, ''))} /></Field>
         <Field label="Kg"><input className="field" inputMode="decimal" maxLength={10} placeholder={autoKg ? kgText(autoKg) : '0'} value={kg ?? ''}
           onChange={(e) => setKg(e.target.value.replace(/[^\d.]/g, ''))} /></Field>
       </div>

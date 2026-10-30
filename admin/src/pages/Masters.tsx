@@ -8,6 +8,7 @@ import { booksChanged, useLoad } from '../useLoad'
 import { Skeleton } from '../ui'
 import { fileName, rs, useExport } from '../export/doc'
 import { Field, Money, Seg, Sheet } from '../entries/fields'
+import { settingsProblems } from '../settingsCheck'
 
 /** Grapes shops write every name in capitals; the inputs show it as typed. */
 function useCaps(shopId: string) {
@@ -59,14 +60,18 @@ export function Company({ shopId }: { shopId: string }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
+  const [tried, setTried] = useState(false)
   useEffect(() => { api<ShopSettings>(`/v1/admin/shops/${shopId}/settings`).then((s) => { setSaved(s); setF(s) }).catch((e: Error) => setError(e.message)) }, [shopId])
   if (!f || !saved) return error ? <p className="error">{error}</p> : <Skeleton rows={6} />
   const changed = COMPANY.filter((c) => f[c.key] !== saved[c.key])
+  const problems = settingsProblems(f)
   const save = async () => {
+    setTried(true)
+    if (COMPANY.some((c) => problems[c.key])) return
     setBusy(true); setError('')
     try {
       const s = await api<ShopSettings>(`/v1/admin/shops/${shopId}/settings`, { method: 'POST', body: Object.fromEntries(changed.map((c) => [c.key, f[c.key]])) })
-      setSaved(s); setF(s); setDone(true); booksChanged()
+      setSaved(s); setF(s); setDone(true); setTried(false); booksChanged()
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return (
@@ -76,8 +81,10 @@ export function Company({ shopId }: { shopId: string }) {
           <div key={c.key} className="set-row">
             <span className="set-lb">{t(c.label)}</span>
             <span className="set-ctl">
-              <input className="field" maxLength={c.max} inputMode={c.tel ? 'tel' : undefined} style={c.caps ? CAPS : undefined} value={String(f[c.key] ?? '')}
-                onChange={(e) => { setDone(false); setF({ ...f, [c.key]: c.tel ? e.target.value.replace(/\D/g, '') : e.target.value }) }} />
+              <input className="field" maxLength={c.max} inputMode={c.tel ? 'tel' : c.key === 'email' ? 'email' : undefined} style={c.caps ? CAPS : undefined} value={String(f[c.key] ?? '')}
+                aria-invalid={tried && !!problems[c.key]}
+                onChange={(e) => { setDone(false); setF({ ...f, [c.key]: c.tel ? e.target.value.replace(/\D/g, '') : c.caps ? e.target.value.toUpperCase() : e.target.value }) }} />
+              {tried && problems[c.key] && <small className="fld-err">{problems[c.key]}</small>}
             </span>
           </div>
         ))}
@@ -87,7 +94,7 @@ export function Company({ shopId }: { shopId: string }) {
         {error && <span className="error">{error}</span>}
         {done && !changed.length && <span className="jama">{t('Save ho gaya')}</span>}
         <span className="grow" />
-        {changed.length > 0 && <button type="button" className="btn ghost" disabled={busy} onClick={() => setF(saved)}>{t('Rehne dein')}</button>}
+        {changed.length > 0 && <button type="button" className="btn ghost" disabled={busy} onClick={() => { setF(saved); setTried(false) }}>{t('Rehne dein')}</button>}
         <button type="submit" className="btn primary" disabled={busy || !changed.length}>{busy ? '…' : t('Save')}</button>
       </div>
     </form>
@@ -169,8 +176,14 @@ function ProductSheet({ shopId, p, groups, onClose }: { shopId: string; p: Produ
   const [groupId, setGroupId] = useState(p?.groupId ?? '')
   const [shelf, setShelf] = useState(String(p?.shelfDays ?? 7))
   const { saving, error, setError, run } = useSaver(onClose)
-  const body = (extra: object = {}) => ({ ...(p ? { id: p.id } : {}), name, groupId: groupId || null, shelfDays: Math.min(60, Math.max(1, Number(shelf) || 7)), ...extra })
-  const save = () => { if (!name.trim()) return setError(t('Naam daalein')); void run(() => api(`/v1/admin/shops/${shopId}/products`, { method: 'POST', body: body() })) }
+  const days = Number(shelf)
+  const daysBad = !Number.isInteger(days) || days < 1 || days > 60
+  const body = (extra: object = {}) => ({ ...(p ? { id: p.id } : {}), name, groupId: groupId || null, ...(daysBad ? {} : { shelfDays: days }), ...extra })
+  const save = () => {
+    if (!name.trim()) return setError(t('Naam daalein'))
+    if (daysBad) return setError(t('Kitne din: 1 se 60'))
+    void run(() => api(`/v1/admin/shops/${shopId}/products`, { method: 'POST', body: body() }))
+  }
   return (
     <Sheet title={p ? t('Maal badlein') : t('Naya maal')} onClose={onClose} onSave={save} saving={saving} error={error}>
       <Field label={t('Naam')}><input className="field" style={caps ? CAPS : undefined} autoFocus maxLength={60} value={name} onChange={(e) => setName(e.target.value)} /></Field>
@@ -181,7 +194,7 @@ function ProductSheet({ shopId, p, groups, onClose }: { shopId: string; p: Produ
             {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </Field>
-        <Field label={t('Kitne din chalta')}><input className="field" inputMode="numeric" maxLength={2} value={shelf} onChange={(e) => setShelf(e.target.value.replace(/\D/g, ''))} /></Field>
+        <Field label={t('Kitne din chalta')}><input className="field" inputMode="numeric" maxLength={2} value={shelf} aria-invalid={!!error && daysBad} onChange={(e) => setShelf(e.target.value.replace(/\D/g, ''))} /></Field>
       </div>
       {p && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving}
         onClick={() => void run(() => api(`/v1/admin/shops/${shopId}/products`, { method: 'POST', body: body({ hidden: !p.hidden }) }))}>{p.hidden ? t('Wapas dikhayein') : t('Chhupayein')}</button>}
@@ -582,25 +595,51 @@ type Openings = {
 }
 type Tab = 'grahak' | 'suppliers' | 'heads'
 
-/** Rupees in and out, with a minus allowed (jama / they owe us). Saves on Enter or leaving the box. */
+/** The biggest opening the books take: ₹100 crore. */
+const MAX_OPENING = 1_000_000_000_00
+
+/** Rupees in and out, with a minus allowed (jama / they owe us). Saves on Enter or leaving the box; Esc puts it back. */
 function OpeningInput({ paise, onSave, signed = true }: { paise: number; onSave: (p: number) => Promise<void>; signed?: boolean }) {
   const shown = (p: number) => (p ? String(p / 100) : '')
   const [text, setText] = useState(shown(paise))
-  const [state, setState] = useState<'' | 'saving' | 'saved' | 'error'>('')
+  const [state, setState] = useState<'' | 'saving' | 'saved'>('')
+  const [error, setError] = useState('')
   useEffect(() => { setText(shown(paise)) }, [paise])
   const commit = async () => {
+    if (text === '-' || text === '.') { setText(shown(paise)); return }
     const p = Math.round(Number(text || 0) * 100)
-    if (!Number.isFinite(p) || p === paise) return
-    setState('saving')
-    try { await onSave(p); setState('saved') } catch (e) { setState('error'); alert((e as Error).message); setText(shown(paise)) }
+    if (!Number.isFinite(p)) return setError(t('Rakam sahi likhein'))
+    if (Math.abs(p) > MAX_OPENING) return setError(t('Rakam bahut badi hai'))
+    if (p === paise) { setError(''); return }
+    setState('saving'); setError('')
+    try { await onSave(p); setState('saved') } catch (e) { setState(''); setError((e as Error).message) }
   }
   return (
-    <span className="money-in" style={{ minWidth: 120 }}>
-      <span>₹</span>
-      <input className="field num" inputMode="decimal" value={text} placeholder="0" aria-invalid={state === 'error'}
-        style={state === 'saved' ? { borderColor: 'var(--accent)' } : undefined}
-        onChange={(e) => { setState(''); setText(e.target.value.replace(signed ? /[^\d.-]/g : /[^\d.]/g, '').replace(/(?!^)-/g, '').replace(/(\..*)\./g, '$1')) }}
-        onBlur={() => void commit()} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur() } }} />
+    <span style={{ display: 'inline-block', minWidth: 120 }}>
+      <span className="money-in">
+        <span>₹</span>
+        <input className="field num" inputMode="decimal" value={text} placeholder="0" aria-invalid={!!error} disabled={state === 'saving'}
+          style={state === 'saved' ? { borderColor: 'var(--accent)' } : undefined}
+          onChange={(e) => { setState(''); setError(''); setText(e.target.value.replace(signed ? /[^\d.-]/g : /[^\d.]/g, '').replace(/(?!^)-/g, '').replace(/(\..*)\./g, '$1')) }}
+          onBlur={() => void commit()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur() }
+            if (e.key === 'Escape') { e.preventDefault(); setText(shown(paise)); setError('') }
+          }} />
+      </span>
+      {error && <small className="fld-err" role="alert">{error}</small>}
+    </span>
+  )
+}
+
+/** An opening's date: saved when picked; a refusal shows under it and the old date comes back. */
+function OpeningDate({ value, onSave }: { value: string | null; onSave: (d: string) => Promise<void> }) {
+  const [error, setError] = useState('')
+  return (
+    <span style={{ display: 'inline-block' }}>
+      <input className="field" type="date" value={value ?? ''} max={todayIst()} style={{ maxWidth: 150 }} aria-invalid={!!error}
+        onChange={(e) => { const d = e.target.value; if (!d) return; setError(''); onSave(d).catch((x: Error) => setError(x.message)) }} />
+      {error && <small className="fld-err" role="alert">{error}</small>}
     </span>
   )
 }
@@ -628,9 +667,7 @@ export function Openings({ shopId }: { shopId: string }) {
     }
   } : null, [data, tab, q])
 
-  const dateCell = (value: string | null, onSave: (d: string) => void) => (
-    <input className="field" type="date" value={value ?? ''} style={{ maxWidth: 150 }} onChange={(e) => e.target.value && onSave(e.target.value)} />
-  )
+  const dateCell = (value: string | null, onSave: (d: string) => Promise<void>) => <OpeningDate value={value} onSave={onSave} />
 
   return (
     <>
@@ -659,7 +696,7 @@ export function Openings({ shopId }: { shopId: string }) {
                   <td className="main-col"><b>{r.name}</b><small className="show-sm">{[r.code, r.area, r.openingOn ? shortDate(r.openingOn) : ''].filter(Boolean).join(' · ')}</small></td>
                   <td className="opt-col">{r.area}</td>
                   <td className="num"><OpeningInput paise={r.openingPaise} onSave={(p) => post('supplier', { id: r.id, name: r.name, openingPaise: p, openingOn: r.openingOn ?? `${fyNow()}-04-01` })} /></td>
-                  <td className="opt-col">{r.openingPaise ? dateCell(r.openingOn, (d) => void post('supplier', { id: r.id, name: r.name, openingPaise: r.openingPaise, openingOn: d }).catch((e: Error) => alert(e.message))) : ''}</td>
+                  <td className="opt-col">{r.openingPaise ? dateCell(r.openingOn, (d) => post('supplier', { id: r.id, name: r.name, openingPaise: r.openingPaise, openingOn: d })) : ''}</td>
                 </tr>
               ))}
               {tab === 'heads' && h.map((r) => (
@@ -668,7 +705,7 @@ export function Openings({ shopId }: { shopId: string }) {
                   <td className="main-col"><b>{r.name}</b><small className="show-sm">{typeLabel(r.type)}</small></td>
                   <td className="opt-col">{typeLabel(r.type)}</td>
                   <td className="num"><OpeningInput signed={false} paise={r.openingPaise} onSave={(p) => post(`head/${r.id}`, { openingPaise: p, openingOn: r.openingOn ?? `${fyNow()}-04-01` })} /></td>
-                  <td className="opt-col">{r.openingPaise ? dateCell(r.openingOn, (d) => void post(`head/${r.id}`, { openingPaise: r.openingPaise, openingOn: d }).catch((e: Error) => alert(e.message))) : ''}</td>
+                  <td className="opt-col">{r.openingPaise ? dateCell(r.openingOn, (d) => post(`head/${r.id}`, { openingPaise: r.openingPaise, openingOn: d })) : ''}</td>
                 </tr>
               ))}
             </tbody>

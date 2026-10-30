@@ -161,6 +161,7 @@ export class CratesService {
   /** A new entry, or [id] written again. */
   async save(phone: string, shopId: string, id: string | null, input: CrateMoveInput) {
     const day = input.day && /^\d{4}-\d{2}-\d{2}$/.test(input.day) ? input.day : istToday();
+    if (day > istToday()) throw new BadRequestException('Aage ki tarikh nahi chalegi');
     const caps = await this.entries.capsNames(shopId);
     let party = (input.party ?? '').trim().slice(0, 120);
     if (caps) party = party.toUpperCase();
@@ -170,12 +171,14 @@ export class CratesService {
       let buyerId = input.buyerId ?? null;
       let billId: string | null = null;
       if (input.slipNo) {
-        const b = (await tx.query<{ id: string; buyer_id: string | null }>(
-          `SELECT id, buyer_id FROM ${LIVE_BILLS} lb WHERE slip_no = $1 ORDER BY created_at DESC LIMIT 1`, [input.slipNo])).rows[0];
+        const b = (await tx.query<{ id: string; buyer_id: string | null; name: string | null }>(
+          `SELECT lb.id, lb.buyer_id, g.name FROM ${LIVE_BILLS} lb LEFT JOIN buyers g ON g.id = lb.buyer_id WHERE lb.slip_no = $1 ORDER BY lb.created_at DESC LIMIT 1`,
+          [input.slipNo])).rows[0];
         if (!b) throw new BadRequestException(`Parchi ${input.slipNo} nahi mili`);
         billId = b.id;
-        // Only the parchi given: the crates are its grahak's.
+        // Only the parchi given: the crates are its grahak's. Another grahak's parchi is refused.
         if (!buyerId && !party && b.buyer_id) buyerId = b.buyer_id;
+        else if (buyerId && b.buyer_id && b.buyer_id !== buyerId) throw new BadRequestException(`Parchi ${input.slipNo} ${b.name ?? 'doosre grahak'} ki hai`);
       }
       if (buyerId) {
         const b = (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE id = $1`, [buyerId])).rows[0];

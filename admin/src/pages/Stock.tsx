@@ -19,7 +19,9 @@ export function Stock({ shopId }: { shopId: string }) {
   const { data, error, loading } = useLoad(() => api<S>(`/v1/admin/shops/${shopId}/stock?view=${view}`), [shopId, view])
   const pick = (v: View) => { setView(v); setHashQuery({ ...Object.fromEntries(hashQuery()), v }) }
   const past = view === 'past'
-  const sum = (k: 'received' | 'sold' | 'spoiled') => (data?.rows ?? []).reduce((s, r) => s + r[k], 0)
+  const sum = (k: 'received' | 'sold' | 'spoiled' | 'stored') => (data?.rows ?? []).reduce((s, r) => s + r[k], 0)
+  // Boxes in a cold store (Store Entry, the app's Store button): their own column, not phoota.
+  const store = (data?.rows ?? []).some((r) => r.stored !== 0)
 
   useExport(data ? () => ({
     style: 'book' as const, title: `${t('Stock Summary')} · ${VIEWS.find((v) => v.key === view)!.label}`, file: fileName(t('Stock Summary'), view, new Date().toISOString().slice(0, 10)),
@@ -27,11 +29,11 @@ export function Stock({ shopId }: { shopId: string }) {
       ? [[t('Gaadi'), count(data.rows.length)], [t('Aaya'), count(sum('received'))], [t('Gaya'), count(sum('sold'))]]
       : [[t('Baaki maal'), t('{n} nag', { n: count(data.totals.left) })], [t('Kharid bhav par'), rs(data.totals.valuePaise)], [t('Khuli gaadi'), count(data.totals.gaadis)]],
     columns: [{ label: t('Gaadi'), wide: true }, { label: t('Aayi') }, ...(past ? [{ label: t('Band hui') }] : []), { label: t('Aaya'), num: true }, { label: t('Gaya'), num: true },
-      { label: t('Phoota'), num: true }, { label: t('Baaki'), num: true }, ...(past ? [] : [{ label: t('Keemat'), num: true }])],
+      { label: t('Phoota'), num: true }, ...(store ? [{ label: t('Store'), num: true }] : []), { label: t('Baaki'), num: true }, ...(past ? [] : [{ label: t('Keemat'), num: true }])],
     rows: data.rows.map((r) => ({ cells: [[r.number, r.supplier, r.brands].filter(Boolean).join(' · '), dmy(r.arrivedOn), ...(past ? [r.closedOn ? dmy(r.closedOn) : ''] : []),
-      count(r.received), count(r.sold), r.spoiled ? count(r.spoiled) : '', count(r.left), ...(past ? [] : [rs(r.valuePaise)])] })),
-    foot: [t('Kul'), '', ...(past ? [''] : []), count(sum('received')), count(sum('sold')), count(sum('spoiled')), count(data.totals.left), ...(past ? [] : [rs(data.totals.valuePaise)])],
-  }) : null, [data, view])
+      count(r.received), count(r.sold), r.spoiled ? count(r.spoiled) : '', ...(store ? [r.stored ? count(r.stored) : ''] : []), count(r.left), ...(past ? [] : [rs(r.valuePaise)])] })),
+    foot: [t('Kul'), '', ...(past ? [''] : []), count(sum('received')), count(sum('sold')), count(sum('spoiled')), ...(store ? [count(sum('stored'))] : []), count(data.totals.left), ...(past ? [] : [rs(data.totals.valuePaise)])],
+  }) : null, [data, view, store])
 
   const tot = data?.totals
   return (
@@ -65,7 +67,7 @@ export function Stock({ shopId }: { shopId: string }) {
             <table className="tbl fold">
               <thead><tr>
                 <th>{t('Gaadi')}</th><th>{t('Aayi')}</th>{past && <th>{t('Band hui')}</th>}<th className="num">{t('Aaya')}</th><th className="num">{t('Gaya')}</th>
-                <th className="num">{t('Phoota')}</th><th className="num">{t('Baaki')}</th>{!past && <th className="num">{t('Keemat')}</th>}
+                <th className="num">{t('Phoota')}</th>{store && <th className="num">{t('Store')}</th>}<th className="num">{t('Baaki')}</th>{!past && <th className="num">{t('Keemat')}</th>}
               </tr></thead>
               <tbody>
                 {data.rows.map((r) => (
@@ -79,6 +81,7 @@ export function Stock({ shopId }: { shopId: string }) {
                     <td className="num opt-col money">{count(r.received)}</td>
                     <td className="num opt-col money">{count(r.sold)}</td>
                     <td className="num opt-col money muted">{r.spoiled ? count(r.spoiled) : ''}</td>
+                    {store && <td className="num opt-col money muted">{r.stored ? count(r.stored) : ''}</td>}
                     <td className="num amt-col money b">{count(r.left)} <small className="inline">{t('nag')}</small>{!past && <span className="sm-block muted" style={{ fontWeight: 400 }}>{rupees(r.valuePaise)}</span>}</td>
                     {!past && <td className="num opt-col money">{rupees(r.valuePaise)}</td>}
                   </tr>
@@ -90,6 +93,7 @@ export function Stock({ shopId }: { shopId: string }) {
                   <td className="num opt-col money">{count(sum('received'))}</td>
                   <td className="num opt-col money">{count(sum('sold'))}</td>
                   <td className="num opt-col money">{count(sum('spoiled'))}</td>
+                  {store && <td className="num opt-col money">{count(sum('stored'))}</td>}
                   <td className="num amt-col money">{count(tot.left)}</td>
                   {!past && <td className="num opt-col money">{rupees(tot.valuePaise)}</td>}
                 </tr></tfoot>

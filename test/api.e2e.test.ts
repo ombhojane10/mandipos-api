@@ -2865,6 +2865,73 @@ describe('masters (company, products, groups, areas, stores, heads, openings)', 
     expect(o.suppliers).toEqual([{ id: sp.id, code: '', name: 'Pollachi Traders', area: '', openingPaise: -2500, openingOn: '2026-04-01' }]);
     expect(o.heads).toEqual([expect.objectContaining({ id: head.id, openingPaise: 9900000, openingOn: '2026-04-01' })]);
   });
+
+  it('refuses a wrong firm name, email or GSTIN with a sentence, not a schema error', async () => {
+    const { w, base } = await web('9845500007', { name: 'Company Checks' });
+    const msg = async (body: object) => (await http().post(`${base}/settings`).set(w).send(body).expect(400)).body.message;
+    expect(await msg({ email: 'abc@' })).toBe('Email sahi likhein');
+    expect(await msg({ gstin: '123' })).toMatch(/^GSTIN 15 akshar/);
+    expect(await msg({ name: '  ' })).toBe('Firm ka naam daalein');
+    const s = (await http().post(`${base}/settings`).set(w).send({ gstin: '07abcde1234f1z5', email: '' }).expect(200)).body;
+    expect(s).toMatchObject({ gstin: '07ABCDE1234F1Z5', email: '', name: 'Company Checks' });
+  });
+
+  it('a grahak\'s opening set again and again is one Purana udhaar line, dated before their first entry, counted once', async () => {
+    const { w, term, base } = await web('9845500008', { name: 'Opening Twice' });
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Mohan' }).expect(201)).body;
+    // Their khata began a month back (an udhaar entry from the app).
+    const first = new Date(Date.now() + 330 * 60_000 - 30 * 86_400_000).toISOString().slice(0, 10);
+    await http().post('/v1/sync/push').set(term).send({ items: [{ table: 'udhaar_entries', row: { id: uuidv7(), created_at: now(), buyer_id: g.id, amount_paise: 1000, note: 'Udhaar', business_date: first } }] }).expect(200);
+    for (const p of [500000, 300000, 300000, 350000]) await http().post(`${base}/openings/grahak/${g.id}`).set(w).send({ openingPaise: p }).expect(200);
+
+    const k = (await http().get(`${base}/buyers/${g.id}`).set(w).expect(200)).body;
+    expect(k.totals.balancePaise).toBe(351000);
+    const opening = k.history.filter((h: any) => h.title === 'Purana udhaar');
+    expect(opening).toEqual([expect.objectContaining({ date: first, debitPaise: 350000, creditPaise: 0 })]);
+    // The oldest line on the khata (history is newest first), so the running baaki starts from it.
+    expect(k.history.at(-1)).toMatchObject({ title: 'Purana udhaar', balancePaise: 350000 });
+    expect(k.history[0]).toMatchObject({ balancePaise: 351000 });
+    const o = (await http().get(`${base}/openings`).set(w).expect(200)).body.grahak.find((x: any) => x.id === g.id);
+    expect(o).toMatchObject({ openingPaise: 350000, openingOn: first });
+    expect((await http().get(`${base}/outstanding`).set(w).expect(200)).body.rows.find((r: any) => r.buyerId === g.id).duePaise).toBe(351000);
+    // Back to nothing: no opening line at all.
+    await http().post(`${base}/openings/grahak/${g.id}`).set(w).send({ openingPaise: 0 }).expect(200);
+    const z = (await http().get(`${base}/buyers/${g.id}`).set(w).expect(200)).body;
+    expect(z.history.filter((h: any) => h.title === 'Purana udhaar')).toEqual([]);
+    expect(z.totals.balancePaise).toBe(1000);
+  });
+
+  it('a supplier opening on a coconut shop shows on Supplier Khata and the Trial Balance; payment-only suppliers can take one', async () => {
+    const { w, base } = await web('9845500009', { name: 'Supplier Opening' });
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA09', supplier: 'Pollachi', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'Pollachi', mode: 'cash', amountPaise: 30000 }).expect(201);
+    await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'Raju Transport', mode: 'cash', amountPaise: 5000 }).expect(201);
+    const on = new Date(Date.now() + 330 * 60_000 - 10 * 86_400_000).toISOString().slice(0, 10);
+
+    let o = (await http().get(`${base}/openings`).set(w).expect(200)).body;
+    expect(o.suppliers.map((s: any) => s.name)).toEqual(['Pollachi', 'Raju Transport']);
+    await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'Pollachi', openingPaise: 50000, openingOn: on }).expect(200);
+    // Set twice: replaced, not added.
+    await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'Pollachi', openingPaise: 50000, openingOn: on }).expect(200);
+    o = (await http().get(`${base}/openings`).set(w).expect(200)).body;
+    expect(o.suppliers.find((s: any) => s.name === 'Pollachi')).toMatchObject({ openingPaise: 50000, openingOn: on });
+
+    const list = (await http().get(`${base}/suppliers`).set(w).expect(200)).body.rows.find((r: any) => r.key === 'pollachi');
+    expect(list).toMatchObject({ openingPaise: 50000, purchasePaise: 100000, paidPaise: 30000, duePaise: 120000 });
+    const kh = (await http().get(`${base}/suppliers/pollachi`).set(w).expect(200)).body;
+    expect(kh.totals).toMatchObject({ openingPaise: 50000, duePaise: 120000 });
+    expect(kh.history.at(-1)).toMatchObject({ kind: 'opening', date: on, creditPaise: 50000, balancePaise: 50000 });
+
+    const tb = (await http().get(`${base}/books/trial-balance?on=${istDay()}`).set(w).expect(200)).body;
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+    const rows = tb.groups.flatMap((x: any) => x.rows);
+    expect(rows.find((r: any) => r.key === 's:pollachi')).toMatchObject({ cr: 120000 });
+    expect(rows.find((r: any) => r.key === 'diff:opening_supplier')).toMatchObject({ dr: 50000 });
+    expect(rows.find((r: any) => r.key === 'diff:other')).toBeUndefined();
+    // Before its date the opening isn't there yet.
+    const early = (await http().get(`${base}/books/trial-balance?on=2020-01-01`).set(w).expect(200)).body;
+    expect(early.totals).toEqual({ dr: 0, cr: 0 });
+  });
 });
 
 describe('crates and cold store (Crate In/Out, Store Entry)', () => {
@@ -2965,7 +3032,7 @@ describe('crates and cold store (Crate In/Out, Store Entry)', () => {
     // Store Out 10: back on the gaadi as a lot line; the report still shows 100 came.
     const out1 = (await http().post(`${base}/store-moves`).set(w).send({ day: d, dir: 'out', storeId: jai.id, truckId, brandId, boxes: 10 }).expect(201)).body;
     const lots = (await pulled()).filter((c: any) => c.table === 'truck_grades').map((c: any) => c.row);
-    expect(lots.map((l: any) => [l.received_qty, l.box_grams])).toEqual([[100, 10000], [10, 10000]]);
+    expect(lots.map((l: any) => [l.received_qty, l.billed_qty, l.free_qty, l.box_grams])).toEqual([[100, 100, 0, 10000], [10, 0, 10, 10000]]);
     expect(await desk()).toMatchObject({ received: 100, sold: 10, off: 20, left: 70 });
     expect(await left()).toBe(70);
     let bj = (await http().get(`${base}/beejak/${truckId}`).set(w).expect(200)).body;
@@ -3012,6 +3079,56 @@ describe('crates and cold store (Crate In/Out, Store Entry)', () => {
     expect(st.app).toEqual([expect.objectContaining({ number: 'MH15AB1', boxes: 3, note: 'bay 4' })]);
     expect(st.totals.appBoxes).toBe(3);
     expect(await desk()).toMatchObject({ received: 100, off: 18, left: 72 });
+  });
+  it('links crates only to the grahak\'s own parchi, and never to a day not come yet', async () => {
+    const { w, base } = await web('9845600004', { name: 'Crate Checks' });
+    const plastic = (await http().post(`${base}/crate-types`).set(w).send({ name: 'plastic' }).expect(201)).body;
+    const ramesh = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    const suresh = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Suresh' }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15', supplier: 'Sai', lots: [{ brandName: 'Royal', grade: '1', qty: 50, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const slip = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: ramesh.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 2, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+    const res = await http().post(`${base}/crates`).set(w).send({ dir: 'out', buyerId: suresh.id, crateTypeId: plastic.id, qty: 2, slipNo: slip.slipNo }).expect(400);
+    expect(res.body.message).toBe(`Parchi ${slip.slipNo} RAMESH ki hai`);
+    await http().post(`${base}/crates`).set(w).send({ dir: 'out', buyerId: ramesh.id, crateTypeId: plastic.id, qty: 2, slipNo: slip.slipNo }).expect(201);
+    const tomorrow = new Date(Date.now() + 330 * 60_000 + 86_400_000).toISOString().slice(0, 10);
+    expect((await http().post(`${base}/crates`).set(w).send({ day: tomorrow, dir: 'in', buyerId: ramesh.id, crateTypeId: plastic.id, qty: 1 }).expect(400)).body.message).toBe('Aage ki tarikh nahi chalegi');
+  });
+
+  it('a Store Out gives boxes back free: no second kharid in the supplier khata or Trial Balance; Stock Summary counts them as store, not phoota', async () => {
+    const { w, base } = await web('9845600005', { name: 'Coconut Store', commodity: 'nariyal' });
+    const store = (await http().post(`${base}/stores`).set(w).send({ name: 'Ganga Cold' }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA05', supplier: 'Pollachi', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const lot = (await http().get(`${base}/store-stock`).set(w).expect(200)).body.lots[0];
+    const { truckId, brandId } = lot;
+    const due = async () => (await http().get(`${base}/suppliers`).set(w).expect(200)).body.rows[0];
+    const stock = async () => (await http().get(`${base}/stock`).set(w).expect(200)).body.rows.find((r: any) => r.truckId === truckId);
+    expect(await due()).toMatchObject({ purchasePaise: 100000, duePaise: 100000 });
+
+    await http().post(`${base}/store-moves`).set(w).send({ dir: 'in', storeId: store.id, truckId, brandId, boxes: 40 }).expect(201);
+    expect(await stock()).toMatchObject({ received: 100, spoiled: 0, stored: 40, left: 60 });
+    // Hiding a store that still holds boxes would strand them.
+    expect((await http().post(`${base}/stores/${store.id}/hide`).set(w).send({ hidden: true }).expect(409)).body.message).toBe('Ganga Cold mein abhi 40 box hain: pehle Store Out karein');
+    await http().post(`${base}/store-moves`).set(w).send({ dir: 'out', storeId: store.id, truckId, brandId, boxes: 15 }).expect(201);
+
+    expect(await stock()).toMatchObject({ received: 100, stored: 25, left: 75 });
+    expect(await due()).toMatchObject({ purchasePaise: 100000, duePaise: 100000 });
+    const kh = (await http().get(`${base}/suppliers/pollachi`).set(w).expect(200)).body;
+    expect(kh.totals).toMatchObject({ purchasePaise: 100000, dana: 100 });
+    expect(kh.history.find((h: any) => h.kind === 'gaadi')).toMatchObject({ nags: 100, left: 75 });
+    const tb = (await http().get(`${base}/books/trial-balance?on=${istDay()}`).set(w).expect(200)).body;
+    const rows = tb.groups.flatMap((x: any) => x.rows);
+    expect(rows.find((r: any) => r.key === 'purchase')).toMatchObject({ dr: 100000 });
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+
+    // A store hidden while holding boxes (before this check): nothing new goes in, but its boxes come out.
+    await owner(`UPDATE stores SET hidden = true WHERE id = '${store.id}'`);
+    await http().post(`${base}/store-moves`).set(w).send({ dir: 'in', storeId: store.id, truckId, brandId, boxes: 1 }).expect(400);
+    await http().post(`${base}/store-moves`).set(w).send({ dir: 'out', storeId: store.id, truckId, brandId, boxes: 25 }).expect(201);
+    expect(await stock()).toMatchObject({ received: 100, stored: 0, left: 100 });
+    await http().post(`${base}/stores/${store.id}/hide`).set(w).send({ hidden: true }).expect(200);
+    const tomorrow = new Date(Date.now() + 330 * 60_000 + 86_400_000).toISOString().slice(0, 10);
+    await http().post(`${base}/store-moves`).set(w).send({ day: tomorrow, dir: 'in', storeId: store.id, truckId, brandId, boxes: 1 }).expect(400);
   });
 });
 
