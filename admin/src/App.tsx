@@ -20,6 +20,7 @@ import { Bhav, GaadiHisab, Munafa, Nigrani, SalesRegister, Vasooli } from './pag
 import { AllShops } from './pages/AllShops'
 import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
+import { Machines } from './pages/Machines'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
@@ -264,6 +265,7 @@ export default function App() {
                 <a href="#/shops" aria-current={route.page === 'shops' ? 'page' : undefined}><I.IStore />{t('Sab Dukaan')}</a>
                 <a href="#/market" aria-current={route.page === 'market' || route.page === 'person' ? 'page' : undefined}><I.IPeople />{t('Market Grahak')}</a>
                 <a href="#/requests" aria-current={route.page === 'requests' ? 'page' : undefined}><I.IInbox />{t('Requests')}{pending > 0 && <span className="badge">{pending}</span>}</a>
+                <a href="#/machines" aria-current={route.page === 'machines' ? 'page' : undefined}><I.IMachine />{t('Machines')}</a>
               </>
             )}
           </nav>
@@ -307,6 +309,7 @@ export default function App() {
           {route.page === 'market' && <Market />}
           {route.page === 'person' && <Person key={route.key} personKey={route.key} />}
           {route.page === 'requests' && <Requests />}
+          {route.page === 'machines' && me?.admin && <Machines />}
         </main>
 
         {shopId && (
@@ -371,6 +374,7 @@ function titleOf(r: Route): string {
     case 'market': return t('Market Grahak')
     case 'person': return t('Market Khata')
     case 'requests': return t('Requests')
+    case 'machines': return t('Machines')
     default: return 'MandiPlus'
   }
 }

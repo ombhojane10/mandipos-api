@@ -1291,6 +1291,41 @@ describe('shop approval and the admin portal', () => {
     await http().post(`/v1/admin/shops/${id}/reject`).set(admin).send({}).expect(409);
   });
 
+  it('keeps the register of machines MandiPlus hands out: serial, whom, since when, its login, and the history', async () => {
+    const shop = await registerShop('9877700031', 'Machine Wali Dukaan');
+    const deviceId = shop.me.device.id as string;
+    const shopId = shop.me.shop.id as string;
+    const admin = await adminLogin();
+
+    const m = (await http().post('/v1/admin/machines').set(admin).send({ serial: 'wphk00261700099', model: 'Pine P5' }).expect(201)).body;
+    await http().post('/v1/admin/machines').set(admin).send({ serial: 'WPHK00261700099' }).expect(409);
+    // Owners never see the register.
+    await http().post('/v1/admin/auth/otp').send({ phone: '9877700031' }).expect(204);
+    const owner = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9877700031', code: OtpService.issuedForTests.get('9877700031') }).expect(200)).body.token);
+    await http().get('/v1/admin/machines').set(owner).expect(403);
+
+    // Given to the shop's owner, its app login linked; the login offered for linking is the shop's terminal.
+    let list = (await http().get('/v1/admin/machines').set(admin).expect(200)).body;
+    expect(list.devices.find((d: any) => d.id === deviceId)).toMatchObject({ shopName: 'Machine Wali Dukaan', machineId: null });
+    await http().post(`/v1/admin/machines/${m.id}/give`).set(admin).send({ shopId, name: 'ramesh', phone: '9877700031', onDay: '2026-10-30', deviceId }).expect(201);
+    list = (await http().get('/v1/admin/machines').set(admin).expect(200)).body;
+    expect(list.machines.find((x: any) => x.id === m.id)).toMatchObject({
+      serial: 'WPHK00261700099', status: 'given', shopName: 'Machine Wali Dukaan', holderName: 'RAMESH', holderPhone: '9877700031', givenOn: '2026-10-30',
+      device: { id: deviceId, label: 'test terminal' },
+    });
+    // One login runs on one machine.
+    const other = (await http().post('/v1/admin/machines').set(admin).send({ serial: 'WPHK00261700100' }).expect(201)).body;
+    await http().post(`/v1/admin/machines/${other.id}/link`).set(admin).send({ deviceId }).expect(409);
+
+    // Back from the shop: with nobody, and the history still says who had it.
+    await http().post(`/v1/admin/machines/${m.id}/back`).set(admin).send({ status: 'stock', onDay: '2026-11-02', note: 'screen toota' }).expect(201);
+    list = (await http().get('/v1/admin/machines').set(admin).expect(200)).body;
+    expect(list.machines.find((x: any) => x.id === m.id)).toMatchObject({ status: 'stock', shopName: null, holderName: '', device: null });
+    const h = (await http().get(`/v1/admin/machines/${m.id}/history`).set(admin).expect(200)).body.events;
+    expect(h.map((e: any) => e.action)).toEqual(['returned', 'given', 'added']);
+    expect(h[0]).toMatchObject({ shopName: 'Machine Wali Dukaan', holderName: 'RAMESH', onDay: '2026-11-02', note: 'screen toota' });
+  });
+
   it('lets an owner ask for a second shop, and move a phone between them keeping each shop’s code', async () => {
     const first = await registerShop('9877700004', 'Pehli Dukaan');
     const phoneA = first.me.device.id as string;
