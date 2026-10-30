@@ -50,7 +50,7 @@ export function Settings({ shopId }: { shopId: string }) {
     }
   }
 
-  const text = (k: 'name' | 'mandi' | 'shopNo' | 'phad' | 'gstin' | 'address' | 'printerHost', max: number, extra?: { placeholder?: string; upper?: boolean }) => (
+  const text = (k: 'name' | 'mandi' | 'shopNo' | 'phad' | 'gstin' | 'address' | 'printerHost' | 'licenceNo' | 'companyCode' | 'contactPerson' | 'email', max: number, extra?: { placeholder?: string; upper?: boolean }) => (
     <input className="field" value={f[k]} maxLength={max} placeholder={extra?.placeholder}
       onChange={(e) => set(k, extra?.upper ? e.target.value.toUpperCase() : e.target.value)} />
   )
@@ -77,6 +77,14 @@ export function Settings({ shopId }: { shopId: string }) {
           <Row label={t('Phad')}>{text('phad', 40, { placeholder: 'B-142' })}</Row>
         </>
         <Row label="GSTIN">{text('gstin', 15, { upper: true })}</Row>
+        <>
+          <Row label={t('Licence no.')}>{text('licenceNo', 40, { upper: true })}</Row>
+          <Row label={t('Code')}>{text('companyCode', 20, { upper: true })}</Row>
+        </>
+        <>
+          <Row label={t('Contact person')}>{text('contactPerson', 80)}</Row>
+          <Row label={t('Email')}>{text('email', 120)}</Row>
+        </>
         <Row label={t('Maal')}><span className="set-static">{f.commodity === 'amrud' ? t('Amrud') : f.commodity === 'angoor' ? t('Angoor') : t('Nariyal')}</span></Row>
       </Section>
 

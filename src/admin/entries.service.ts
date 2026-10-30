@@ -904,7 +904,7 @@ export class EntriesService {
   }
 
   /** Grapes shops write every name in capitals, as their books always have. */
-  private async capsNames(shopId: string): Promise<boolean> {
+  async capsNames(shopId: string): Promise<boolean> {
     const r = await this.db.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId]);
     return r[0]?.commodity === 'angoor';
   }
@@ -1068,6 +1068,12 @@ export class EntriesService {
     const last = (await tx.query<{ m: string | null }>(
       `SELECT MAX(substring(number FROM '([0-9]+)$')::int) AS m FROM bills WHERE number LIKE $1`, [`${prefix}%`])).rows[0].m;
     return `${prefix}${String(n(last) + 1).padStart(6, '0')}`;
+  }
+
+  /** Rows built elsewhere (the Masters pages: products, area renames, openings), pushed as the website's terminal. */
+  async pushAsWeb(phone: string, shopId: string, items: PushItem[]): Promise<PushResult[]> {
+    if (!items.length) return [];
+    return this.push(await this.device(phone, shopId), shopId, items);
   }
 
   /** Pushes like a terminal, wakes the shop's terminals, and refuses loudly if any row was refused. */

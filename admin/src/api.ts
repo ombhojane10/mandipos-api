@@ -94,7 +94,7 @@ export type Summary = {
 }
 
 export type BuyerRow = {
-  id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; address?: string; destination?: string
+  id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; address?: string; destination?: string; area?: string
   balancePaise: number; lastSlipOn: string | null; boughtPaise: number
 }
 
@@ -105,7 +105,7 @@ export type HistoryRow = {
 }
 
 export type BuyerDetail = {
-  buyer: { id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; vehicle: string; creditLimitPaise: number; marketPaise: number | null; since: string }
+  buyer: { id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; vehicle: string; creditLimitPaise: number; marketPaise: number | null; since: string }
   totals: { balancePaise: number; boughtPaise: number; nags: number; slips: number; paidPaise: number; lastSlipOn: string | null }
   history: HistoryRow[]
 }
@@ -147,7 +147,7 @@ export type Dashboard = {
   cash: { galla: number; office: number; bank: number }
   items: ItemRow[]
 }
-export type ItemRow = { brand: string; nags: number; amountPaise: number; slips: number; ratePaise: number }
+export type ItemRow = { brand: string; group?: string; nags: number; amountPaise: number; slips: number; ratePaise: number }
 export type CashBook = {
   pot: 'galla' | 'office' | 'bank'; from: string; to: string; openingPaise: number; inPaise: number; outPaise: number; closingPaise: number
   lines: { id: string; date: string; at: string; kind: 'bikri' | 'vasooli' | 'in' | 'out'; title: string; party: string; note: string; inPaise: number; outPaise: number; auto: boolean; balancePaise: number }[]
@@ -175,4 +175,5 @@ export type ShopSettings = {
   name: string; mandi: string; shopNo: string; phad: string; gstin: string; commodity: string
   phone: string; dispatchPhone: string; slipCode: string; slipLimitPaise: number; udhaarRates: boolean; udhaarAlerts: boolean
   address: string; bankAccounts: BankAccount[]; printerHost: string; printerDots: number
+  licenceNo: string; companyCode: string; contactPerson: string; email: string
 }

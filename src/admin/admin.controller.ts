@@ -17,6 +17,7 @@ import { BEEJAK_HEADS, InsightsService } from './insights.service';
 import { CreditorsService } from './creditors.service';
 import { MachinesService } from './machines.service';
 import { DepositsService, NOTES } from './deposits.service';
+import { MastersService } from './masters.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -116,6 +117,8 @@ const SettingsBody = z.object({
   })).max(4),
   printerHost: z.string().trim().regex(/^(\d{1,3}(\.\d{1,3}){3})?$/, 'an IP like 192.168.1.50'),
   printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
+  licenceNo: z.string().trim().toUpperCase().max(40), companyCode: z.string().trim().toUpperCase().max(20),
+  contactPerson: z.string().trim().max(80), email: z.union([z.literal(''), z.email().max(120)]),
 }).partial();
 const BhavBody = z.object({ date: DayIso, rates: z.array(z.object({ brandId: z.uuid(), grade: z.enum(['1', '2', '3']), ratePaise: paise })).min(1).max(300) });
 const VoidBody = z.object({ reason: z.enum(['deleted', 'refunded', 'advance']).default('deleted') });
@@ -125,6 +128,8 @@ const IN_HEADS = ['udhaar_wapas', 'committee_mili', 'aur_aaya'] as const;
 const DaybookBody = z.object({
   direction: z.enum(['in', 'out']), category: z.enum([...OUT_HEADS, ...IN_HEADS]), mode: z.enum(['cash', 'office', 'upi', 'bank']),
   amountPaise: paise.positive(), party: z.string().max(120).optional(), note: z.string().max(200).optional(), date: DayIso,
+  // A head from the General Ledger master: written as its nearest category, the head's name as party.
+  headId: z.uuid().optional(),
 }).refine((b) => (b.direction === 'out' ? (OUT_HEADS as readonly string[]) : (IN_HEADS as readonly string[])).includes(b.category), { message: 'yeh head is taraf ka nahi', path: ['category'] });
 const UdhaarBody = z.object({ buyerId: z.uuid(), amountPaise: z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00).refine((v) => v !== 0, 'zero'), note: z.string().max(200).optional(), date: DayIso });
 const LaddanCols = {
@@ -188,6 +193,27 @@ const DepositBody = z.object({
 const ChequeStatusBody = z.object({ status: z.enum(['pending', 'cleared', 'bounced']), on: DayIso, reason: z.string().max(120).optional(), chargesPaise: paise.optional() });
 const ItemLinesQuery = Range.extend({ brand: z.string().max(80) });
 
+// Masters (the old software's Company and Masters menus).
+const signedPaise = z.number().int().min(-1_000_000_000_00).max(1_000_000_000_00);
+const ProductBody = z.object({
+  // name may be left out on a change (only the group, say), so the name stays exactly as it is.
+  id: z.uuid().optional(), name: z.string().trim().min(1).max(60).optional(), hidden: z.boolean().optional(),
+  shelfDays: z.number().int().min(1).max(60).optional(), groupId: z.uuid().nullable().optional(),
+});
+const NameBody = z.object({ id: z.uuid().optional(), name: z.string().trim().min(1).max(60) });
+const AreaBody = z.object({ id: z.uuid().optional(), name: z.string().trim().min(1).max(60), code: z.string().trim().max(20).optional(), from: z.string().trim().max(60).optional() });
+const StoreBody = z.object({
+  id: z.uuid().optional(), name: z.string().trim().min(1).max(120), address: z.string().trim().max(200).optional(),
+  contactPerson: z.string().trim().max(80).optional(), phone: z.string().trim().max(15).optional(),
+});
+const HeadBody = z.object({
+  id: z.uuid().optional(), name: z.string().trim().min(1).max(120), type: z.enum(['expense', 'income', 'asset', 'liability']),
+  openingPaise: paise.optional(), openingOn: z.iso.date().nullable().optional(),
+});
+const HeadKey = z.union([z.uuid(), z.string().regex(/^b:[a-z_]{1,30}$/)]);
+const HiddenBody = z.object({ hidden: z.boolean().default(true) });
+const SupplierOpeningBody = z.object({ id: z.uuid().nullable(), name: z.string().trim().min(1).max(120), openingPaise: signedPaise, openingOn: z.iso.date().nullable().optional() });
+
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 /** Sign-in: OTP to a MandiPlus admin number, or to the owner of an approved shop. */
@@ -230,8 +256,118 @@ export class AdminController {
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
-    private readonly machines: MachinesService, private readonly deposits: DepositsService,
+    private readonly machines: MachinesService, private readonly deposits: DepositsService, private readonly masters: MastersService,
   ) {}
+
+  // ---------------------------------------------------------------- Masters: products, groups, areas, stores, heads, openings
+
+  @Get('shops/:id/products')
+  products(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    return this.masters.products(mine(v, id), parse(FyQuery, query).fy);
+  }
+
+  @Post('shops/:id/products')
+  saveProduct(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.masters.saveProduct(v.phone, mine(v, id), parse(ProductBody, body));
+  }
+
+  /** The products in their new order, top first. */
+  @Post('shops/:id/products/order')
+  @HttpCode(200)
+  orderProducts(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.masters.orderProducts(v.phone, mine(v, id), parse(z.object({ ids: z.array(z.uuid()).min(1).max(500) }), body).ids);
+  }
+
+  @Post('shops/:id/product-groups')
+  saveGroup(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.masters.saveGroup(mine(v, id), parse(NameBody, body));
+  }
+
+  @Post('shops/:id/product-groups/:gid/delete')
+  @HttpCode(200)
+  deleteGroup(@See() v: Viewer, @Param('id') id: string, @Param('gid') gid: string) {
+    return this.masters.deleteGroup(mine(v, id), parse(Id, gid));
+  }
+
+  @Get('shops/:id/areas')
+  areas(@See() v: Viewer, @Param('id') id: string) {
+    return this.masters.areas(mine(v, id));
+  }
+
+  /** Adds or renames an area; a rename rewrites it on every grahak and supplier in it. */
+  @Post('shops/:id/areas')
+  saveArea(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.masters.saveArea(v.phone, mine(v, id), parse(AreaBody, body));
+  }
+
+  @Post('shops/:id/areas/:aid/delete')
+  @HttpCode(200)
+  deleteArea(@See() v: Viewer, @Param('id') id: string, @Param('aid') aid: string) {
+    return this.masters.deleteArea(mine(v, id), parse(Id, aid));
+  }
+
+  @Get('shops/:id/stores')
+  stores(@See() v: Viewer, @Param('id') id: string) {
+    return this.masters.stores(mine(v, id));
+  }
+
+  @Post('shops/:id/stores')
+  saveStore(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.masters.saveStore(mine(v, id), parse(StoreBody, body));
+  }
+
+  @Post('shops/:id/stores/:sid/hide')
+  @HttpCode(200)
+  hideStore(@See() v: Viewer, @Param('id') id: string, @Param('sid') sid: string, @Body() body: unknown) {
+    return this.masters.hideStore(mine(v, id), parse(Id, sid), parse(HiddenBody, body ?? {}).hidden);
+  }
+
+  @Get('shops/:id/heads')
+  heads(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    return this.masters.heads(mine(v, id), parse(FyQuery, query).fy);
+  }
+
+  @Get('shops/:id/heads/:key')
+  headLedger(@See() v: Viewer, @Param('id') id: string, @Param('key') key: string, @Query() query: unknown) {
+    return this.masters.headLedger(mine(v, id), parse(HeadKey, key), parse(FyQuery, query).fy);
+  }
+
+  @Post('shops/:id/heads')
+  saveHead(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.masters.saveHead(mine(v, id), parse(HeadBody, body));
+  }
+
+  /** Hides a head with entries (deletes an unused one); { hidden: false } brings it back. */
+  @Post('shops/:id/heads/:hid/delete')
+  @HttpCode(200)
+  deleteHead(@See() v: Viewer, @Param('id') id: string, @Param('hid') hid: string, @Body() body: unknown) {
+    return this.masters.deleteHead(mine(v, id), parse(Id, hid), parse(HiddenBody, body ?? {}).hidden);
+  }
+
+  @Get('shops/:id/openings')
+  openings(@See() v: Viewer, @Param('id') id: string) {
+    return this.masters.openings(mine(v, id));
+  }
+
+  @Post('shops/:id/openings/grahak/:buyerId')
+  @HttpCode(200)
+  grahakOpening(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string, @Body() body: unknown) {
+    return this.masters.setGrahakOpening(v.phone, mine(v, id), parse(Id, buyerId), parse(z.object({ openingPaise: signedPaise }), body).openingPaise);
+  }
+
+  @Post('shops/:id/openings/supplier')
+  @HttpCode(200)
+  supplierOpening(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    const b = parse(SupplierOpeningBody, body);
+    return this.masters.setSupplierOpening(v.phone, mine(v, id), { ...b, openingOn: b.openingOn ?? null });
+  }
+
+  @Post('shops/:id/openings/head/:hid')
+  @HttpCode(200)
+  headOpening(@See() v: Viewer, @Param('id') id: string, @Param('hid') hid: string, @Body() body: unknown) {
+    const b = parse(z.object({ openingPaise: paise, openingOn: z.iso.date().nullable().optional() }), body);
+    return this.masters.setHeadOpening(mine(v, id), parse(Id, hid), b.openingPaise, b.openingOn ?? null);
+  }
 
   // ---------------------------------------------------------------- bank jama parchi (deposit slips)
 
@@ -594,8 +730,8 @@ export class AdminController {
   }
 
   @Get('shops/:id/buyers')
-  async buyers(@See() v: Viewer, @Param('id') id: string, @Query('q') q?: string) {
-    return { buyers: await this.admin.buyers(mine(v, id), (q ?? '').trim().slice(0, 60)) };
+  async buyers(@See() v: Viewer, @Param('id') id: string, @Query('q') q?: string, @Query('area') area?: string) {
+    return { buyers: await this.admin.buyers(mine(v, id), (q ?? '').trim().slice(0, 60), (area ?? '').slice(0, 60)) };
   }
 
   @Get('shops/:id/buyers/:buyerId')
@@ -703,8 +839,12 @@ export class AdminController {
   }
 
   @Post('shops/:id/entries/daybook')
-  daybookEntry(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
-    return this.entries.daybook(v.phone, mine(v, id), parse(DaybookBody, body));
+  async daybookEntry(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    const shopId = mine(v, id);
+    const { headId, ...b } = parse(DaybookBody, body);
+    if (!headId) return this.entries.daybook(v.phone, shopId, b);
+    const h = await this.masters.headEntry(shopId, headId, b.direction);
+    return this.entries.daybook(v.phone, shopId, { ...b, category: h.category, party: h.party, note: b.note?.trim() || h.party });
   }
 
   @Post('shops/:id/entries/udhaar')

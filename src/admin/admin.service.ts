@@ -174,19 +174,20 @@ export class AdminService {
   }
 
   /** Grahak matching [q] by name, phone or A/C code; biggest baaki first. */
-  async buyers(shopId: string, q: string) {
+  async buyers(shopId: string, q: string, area = '') {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
       const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-      const rows = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; address: string; destination: string; bal: string | null; last_at: string | null; bought: string }>(
-        `SELECT g.id, g.name, g.phone, g.code, g.kind, g.hidden, g.address, g.destination, x.bal,
+      const rows = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; hidden: boolean; address: string; destination: string; area: string; bal: string | null; last_at: string | null; bought: string }>(
+        `SELECT g.id, g.name, g.phone, g.code, g.kind, g.hidden, g.address, g.destination, g.area, x.bal,
                 (SELECT MAX(business_date)::text FROM ${LIVE_BILLS} lb WHERE lb.buyer_id = g.id) AS last_at,
                 (SELECT COALESCE(SUM(total_paise),0) FROM ${LIVE_BILLS} lb WHERE lb.buyer_id = g.id) AS bought
          FROM buyers g LEFT JOIN (${BALANCES}) x ON x.buyer_id = g.id
          WHERE ($1 = '' OR g.name ILIKE $2 OR g.phone LIKE $2 OR g.code ILIKE $2)
-         ORDER BY g.hidden, GREATEST(COALESCE(x.bal, 0), 0) DESC, g.name LIMIT 60`, [q, like])).rows;
+           AND ($3 = '' OR upper(trim(g.area)) = upper($3))
+         ORDER BY g.hidden, GREATEST(COALESCE(x.bal, 0), 0) DESC, g.name LIMIT ${area ? 1000 : 60}`, [q, like, area.trim()])).rows;
       return rows.map((r) => ({
-        id: r.id, name: r.name, phone: r.phone, code: r.code, kind: r.kind, hidden: r.hidden, address: r.address, destination: r.destination,
+        id: r.id, name: r.name, phone: r.phone, code: r.code, kind: r.kind, hidden: r.hidden, address: r.address, destination: r.destination, area: r.area,
         balancePaise: n(r.bal), lastSlipOn: r.last_at ? day(r.last_at) : null, boughtPaise: n(r.bought),
       }));
     });
@@ -196,8 +197,8 @@ export class AdminService {
   async buyer(shopId: string, buyerId: string) {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
-      const g = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; vehicle: string; credit_limit_paise: string; market_paise: string | null; created_at: Date }>(
-        `SELECT id, name, phone, code, kind, address, destination, vehicle, credit_limit_paise, market_paise, created_at FROM buyers WHERE id = $1`, [buyerId])).rows[0];
+      const g = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; vehicle: string; credit_limit_paise: string; market_paise: string | null; created_at: Date }>(
+        `SELECT id, name, phone, code, kind, address, destination, area, vehicle, credit_limit_paise, market_paise, created_at FROM buyers WHERE id = $1`, [buyerId])).rows[0];
       if (!g) throw new NotFoundException('Grahak nahi mila');
 
       const bills = (await tx.query<{ id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string }>(
@@ -251,7 +252,7 @@ export class AdminService {
       const history = rows.map((r) => ({ ...r, balancePaise: (bal += r.debitPaise - r.creditPaise) })).reverse();
       return {
         buyer: {
-          id: g.id, name: g.name, phone: g.phone, code: g.code, kind: g.kind, address: g.address, destination: g.destination,
+          id: g.id, name: g.name, phone: g.phone, code: g.code, kind: g.kind, address: g.address, destination: g.destination, area: g.area,
           vehicle: g.vehicle, creditLimitPaise: n(g.credit_limit_paise), marketPaise: g.market_paise === null ? null : n(g.market_paise),
           since: g.created_at.toISOString(),
         },

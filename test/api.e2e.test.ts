@@ -1907,7 +1907,7 @@ describe('shop approval and the admin portal', () => {
     expect(dash.cash).toEqual({ galla: 30000, office: 0, bank: 40000 });
     expect(dash.trend).toHaveLength(7);
     expect(dash.trend.at(-1)).toEqual({ date: d, salesPaise: 130000, purchasePaise: 2000000 });
-    expect(dash.items).toEqual([{ brand: 'Pollachi', nags: 52, amountPaise: 130000, slips: 2, ratePaise: 2500 }]);
+    expect(dash.items).toEqual([{ brand: 'Pollachi', group: '', nags: 52, amountPaise: 130000, slips: 2, ratePaise: 2500 }]);
 
     const galla = (await http().get(`/v1/admin/shops/${id}/cashbook?pot=galla&from=${d}&to=${d}`).set(admin).expect(200)).body;
     expect(galla).toMatchObject({ openingPaise: 0, inPaise: 30000, outPaise: 0, closingPaise: 30000 });
@@ -2715,6 +2715,154 @@ describe('live sync', () => {
     const stale = await push(b.accessToken, slip(uuidv7(), uuidv7(), 9, truckId), { resetSeen: 0 }).expect(409);
     expect(stale.body.code).toBe('reset');
     await push(b.accessToken, slip(uuidv7(), uuidv7(), 9, truckId), { resetSeen: after.resetSeq }).expect(200);
+  });
+});
+
+describe('masters (company, products, groups, areas, stores, heads, openings)', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  async function web(phone: string, body: object) {
+    const s = await login(phone);
+    const res = await createApproved(s.accessToken, { mandi: 'Azadpur', shopNo: 'M-1', role: 'owner', ...body });
+    await http().post('/v1/admin/auth/otp').send({ phone }).expect(204);
+    const w = auth((await http().post('/v1/admin/auth/verify').send({ phone, code: OtpService.issuedForTests.get(phone) }).expect(200)).body.token);
+    return { id: res.me.shop.id as string, term: auth(res.accessToken), w, base: `/v1/admin/shops/${res.me.shop.id}` };
+  }
+
+  it('keeps the company details beside the shop settings', async () => {
+    const { w, base } = await web('9845500001', { name: 'Company Shop' });
+    const s = (await http().post(`${base}/settings`).set(w).send({ licenceNo: 'apmc/123', companyCode: 'gfa1', contactPerson: 'Sanju', email: 'a@b.in' }).expect(200)).body;
+    expect(s).toMatchObject({ licenceNo: 'APMC/123', companyCode: 'GFA1', contactPerson: 'Sanju', email: 'a@b.in', name: 'Company Shop' });
+    await http().post(`${base}/settings`).set(w).send({ email: 'not-an-email' }).expect(400);
+    expect((await http().get(`${base}/settings`).set(w).expect(200)).body.licenceNo).toBe('APMC/123');
+  });
+
+  it('adds, renames, groups, hides and reorders products (synced as brands), and totals the year by group', async () => {
+    const { w, term, base } = await web('9845500002', { name: 'Product Angoor', commodity: 'angoor' });
+    const royal = (await http().post(`${base}/products`).set(w).send({ name: 'royal' }).expect(201)).body;
+    expect(royal.name).toBe('ROYAL');
+    await http().post(`${base}/products`).set(w).send({ name: 'Royal.' }).expect(409);
+    const tiger = (await http().post(`${base}/products`).set(w).send({ name: 'tiger' }).expect(201)).body;
+    const thompson = (await http().post(`${base}/product-groups`).set(w).send({ name: 'thompson' }).expect(201)).body;
+    expect(thompson.name).toBe('THOMPSON');
+    await http().post(`${base}/product-groups`).set(w).send({ name: 'THOMPSON' }).expect(409);
+    await http().post(`${base}/products`).set(w).send({ id: royal.id, name: 'royal gold', groupId: thompson.id, shelfDays: 5 }).expect(201);
+    await http().post(`${base}/products`).set(w).send({ id: tiger.id, groupId: thompson.id }).expect(201);
+    await http().post(`${base}/products`).set(w).send({ groupId: thompson.id }).expect(400);
+    await http().post(`${base}/products/order`).set(w).send({ ids: [tiger.id, royal.id] }).expect(200);
+
+    // Sold: a gaadi of Royal Gold, 10 boxes at ₹1,000.
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15', supplier: 'Sai', lots: [{ brandId: royal.id, grade: '1', qty: 20, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const opts = (await http().get(`${base}/entry-options`).set(w).expect(200)).body;
+    const lot = opts.lots.find((l: any) => l.brandId === royal.id);
+    await http().post(`${base}/entries/parchi`).set(w).send({ lots: [{ truckId: lot.truckId, brandId: royal.id, qty: 10, ratePaise: 100000 }], pay: 'cash' }).expect(201);
+
+    const p = (await http().get(`${base}/products`).set(w).expect(200)).body;
+    expect(p.products.map((x: any) => [x.name, x.sortOrder])).toEqual([['TIGER', 1], ['ROYAL GOLD', 2]]);
+    expect(p.products.find((x: any) => x.id === royal.id)).toMatchObject({ groupId: thompson.id, shelfDays: 5, nags: 10, amountPaise: 1000000 });
+    expect(p.groups).toEqual([expect.objectContaining({ name: 'THOMPSON', products: 2, nags: 10, amountPaise: 1000000 })]);
+    const items = (await http().get(`${base}/items?from=${istDay()}&to=${istDay()}`).set(w).expect(200)).body;
+    expect(items[0]).toMatchObject({ brand: 'ROYAL GOLD', group: 'THOMPSON', nags: 10 });
+
+    // Hidden, and the terminal pulls the rename and the hide.
+    await http().post(`${base}/products`).set(w).send({ id: tiger.id, name: 'tiger', hidden: true }).expect(201);
+    const pulled = (await http().get('/v1/sync/pull?after=0&limit=500').set(term).expect(200)).body.changes.filter((c: any) => c.table === 'brands');
+    const last = (bid: string) => pulled.filter((c: any) => c.row.id === bid).pop().row;
+    expect(last(royal.id)).toMatchObject({ name: 'ROYAL GOLD', shelf_days: 5, sort_order: 2 });
+    expect(last(tiger.id)).toMatchObject({ hidden: true, sort_order: 1 });
+    // A group deleted: its products stay, ungrouped.
+    await http().post(`${base}/product-groups/${thompson.id}/delete`).set(w).expect(200);
+    expect((await http().get(`${base}/products`).set(w).expect(200)).body.products.find((x: any) => x.id === royal.id).groupId).toBeNull();
+  });
+
+  it('lists areas with their grahak and suppliers, renames an area on every row, and refuses to delete one in use', async () => {
+    const { w, base } = await web('9845500003', { name: 'Area Shop' });
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh', area: 'nashik' }).expect(201)).body;
+    await http().post(`${base}/creditors`).set(w).send({ name: 'Sai', area: 'Nashik', code: 'S1', openingPaise: 100, openingOn: '2026-04-01' }).expect(201);
+    let a = (await http().get(`${base}/areas`).set(w).expect(200)).body.areas;
+    expect(a).toEqual([{ id: null, name: 'NASHIK', code: '', grahak: 1, suppliers: 1 }]);
+
+    const nasik = (await http().post(`${base}/areas`).set(w).send({ name: 'nasik', code: 'n1', from: 'NASHIK' }).expect(201)).body;
+    expect(nasik).toMatchObject({ name: 'NASIK', code: 'N1', renamed: 2 });
+    a = (await http().get(`${base}/areas`).set(w).expect(200)).body.areas;
+    expect(a).toEqual([{ id: nasik.id, name: 'NASIK', code: 'N1', grahak: 1, suppliers: 1 }]);
+    const inArea = (await http().get(`${base}/buyers?area=nasik`).set(w).expect(200)).body.buyers;
+    expect(inArea.map((b: any) => [b.id, b.area])).toEqual([[g.id, 'NASIK']]);
+    // The supplier's code and opening stay; only the area moved.
+    const sup = (await http().get(`${base}/creditors`).set(w).expect(200)).body.rows[0];
+    expect(sup).toMatchObject({ code: 'S1', area: 'NASIK', masterOpeningPaise: 100 });
+
+    await http().post(`${base}/areas`).set(w).send({ name: 'Pune', code: 'N1' }).expect(409);
+    await http().post(`${base}/areas/${nasik.id}/delete`).set(w).expect(409);
+    const pune = (await http().post(`${base}/areas`).set(w).send({ name: 'pune' }).expect(201)).body;
+    await http().post(`${base}/areas/${pune.id}/delete`).set(w).expect(200);
+    // Renamed again by its master id.
+    await http().post(`${base}/areas`).set(w).send({ id: nasik.id, name: 'Nashik', code: 'N1' }).expect(201);
+    expect((await http().get(`${base}/buyers/${g.id}`).set(w).expect(200)).body.buyer.area).toBe('NASHIK');
+  });
+
+  it('keeps cold stores: add, edit, hide', async () => {
+    const { w, base } = await web('9845500004', { name: 'Store Angoor', commodity: 'angoor' });
+    const s = (await http().post(`${base}/stores`).set(w).send({ name: 'jai cold', address: 'pimpalgaon', contactPerson: 'raju', phone: '9845500099' }).expect(201)).body;
+    expect(s.name).toBe('JAI COLD');
+    await http().post(`${base}/stores`).set(w).send({ name: 'Jai Cold' }).expect(409);
+    await http().post(`${base}/stores`).set(w).send({ name: 'x', phone: '12345' }).expect(400);
+    await http().post(`${base}/stores`).set(w).send({ id: s.id, name: 'jai cold storage', address: 'pimpalgaon', phone: '' }).expect(201);
+    await http().post(`${base}/stores/${s.id}/hide`).set(w).send({}).expect(200);
+    expect((await http().get(`${base}/stores`).set(w).expect(200)).body.stores).toEqual([{ id: s.id, name: 'JAI COLD STORAGE', address: 'PIMPALGAON', contactPerson: '', phone: '', hidden: true }]);
+  });
+
+  it('keeps the shop\'s own ledger heads: a Day Book line for one is written as the nearest category with the head as party', async () => {
+    const { w, term, base } = await web('9845500005', { name: 'Heads Shop' });
+    const fy = new Date(Date.now() + 330 * 60_000).getUTCMonth() >= 3 ? new Date().getUTCFullYear() : new Date().getUTCFullYear() - 1;
+    const diesel = (await http().post(`${base}/heads`).set(w).send({ name: 'Diesel', type: 'expense', openingPaise: 50000, openingOn: `${fy}-04-01` }).expect(201)).body;
+    const loan = (await http().post(`${base}/heads`).set(w).send({ name: 'Bank Loan', type: 'liability' }).expect(201)).body;
+    await http().post(`${base}/heads`).set(w).send({ name: 'kharcha', type: 'expense' }).expect(409);
+
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'kharcha', mode: 'cash', amountPaise: 20000, headId: diesel.id }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'kharcha', mode: 'cash', amountPaise: 7000, note: 'chai' }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'in', category: 'aur_aaya', mode: 'bank', amountPaise: 1000000, headId: loan.id }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'in', category: 'aur_aaya', mode: 'cash', amountPaise: 100, headId: diesel.id }).expect(400);
+
+    // What the terminal gets: an ordinary kharcha with the head's name.
+    const rows = (await http().get('/v1/sync/pull?after=0&limit=500').set(term).expect(200)).body.changes.filter((c: any) => c.table === 'daybook_entries').map((c: any) => c.row);
+    expect(rows.find((r: any) => r.amount_paise === 20000)).toMatchObject({ category: 'kharcha', party_name: 'Diesel', note: 'Diesel', direction: 'out' });
+    expect(rows.find((r: any) => r.amount_paise === 1000000)).toMatchObject({ category: 'aur_aaya', party_name: 'Bank Loan', direction: 'in' });
+
+    const h = (await http().get(`${base}/heads?fy=${fy}`).set(w).expect(200)).body.heads;
+    expect(h.find((x: any) => x.key === 'b:kharcha')).toMatchObject({ builtin: true, debitPaise: 7000, closingPaise: 7000 });
+    expect(h.find((x: any) => x.id === diesel.id)).toMatchObject({ builtin: false, type: 'expense', openingPaise: 0, debitPaise: 70000, closingPaise: 70000 });
+    expect(h.find((x: any) => x.id === loan.id)).toMatchObject({ creditPaise: 1000000, closingPaise: -1000000 });
+    const led = (await http().get(`${base}/heads/${diesel.id}?fy=${fy}`).set(w).expect(200)).body;
+    expect(led.lines.map((l: any) => [l.title, l.debitPaise, l.balancePaise])).toEqual([['Opening balance', 50000, 50000], ['DIESEL', 20000, 70000]]);
+    expect((await http().get(`${base}/heads/b:kharcha?fy=${fy}`).set(w).expect(200)).body.closingPaise).toBe(7000);
+
+    // In use: name and type stay, opening can change; "delete" hides it.
+    await http().post(`${base}/heads`).set(w).send({ id: diesel.id, name: 'Petrol', type: 'expense' }).expect(409);
+    await http().post(`${base}/heads`).set(w).send({ id: diesel.id, name: 'Diesel', type: 'expense', openingPaise: 0 }).expect(201);
+    expect((await http().post(`${base}/heads/${diesel.id}/delete`).set(w).send({}).expect(200)).body).toMatchObject({ hidden: true });
+    const unused = (await http().post(`${base}/heads`).set(w).send({ name: 'Rent deposit', type: 'asset' }).expect(201)).body;
+    expect((await http().post(`${base}/heads/${unused.id}/delete`).set(w).send({}).expect(200)).body).toMatchObject({ deleted: true });
+  });
+
+  it('sets every opening balance from one page: grahak (by a difference entry), supplier (incl. a gaadi-only one), head', async () => {
+    const { w, base } = await web('9845500006', { name: 'Openings Shop' });
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh', openingPaise: 500000 }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA01', supplier: 'Pollachi Traders', lots: [{ brandName: 'Pollachi', grade: '1', qty: 10, ratePaise: 1000 }] }).expect(201);
+    const head = (await http().post(`${base}/heads`).set(w).send({ name: 'Capital', type: 'liability' }).expect(201)).body;
+
+    let o = (await http().get(`${base}/openings`).set(w).expect(200)).body;
+    expect(o.grahak.find((x: any) => x.id === g.id)).toMatchObject({ openingPaise: 500000, openingOn: istDay() });
+    expect(o.suppliers).toEqual([expect.objectContaining({ id: null, name: 'Pollachi Traders', openingPaise: 0 })]);
+
+    await http().post(`${base}/openings/grahak/${g.id}`).set(w).send({ openingPaise: 300000 }).expect(200);
+    expect((await http().get(`${base}/buyers/${g.id}`).set(w).expect(200)).body.totals.balancePaise).toBe(300000);
+    const sp = (await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'Pollachi Traders', openingPaise: -2500, openingOn: '2026-04-01' }).expect(200)).body;
+    await http().post(`${base}/openings/head/${head.id}`).set(w).send({ openingPaise: 9900000, openingOn: '2026-04-01' }).expect(200);
+
+    o = (await http().get(`${base}/openings`).set(w).expect(200)).body;
+    expect(o.grahak.find((x: any) => x.id === g.id).openingPaise).toBe(300000);
+    expect(o.suppliers).toEqual([{ id: sp.id, code: '', name: 'Pollachi Traders', area: '', openingPaise: -2500, openingOn: '2026-04-01' }]);
+    expect(o.heads).toEqual([expect.objectContaining({ id: head.id, openingPaise: 9900000, openingOn: '2026-04-01' })]);
   });
 });
 

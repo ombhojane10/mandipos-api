@@ -23,6 +23,7 @@ import { Requests } from './pages/Requests'
 import { Deposits } from './pages/Deposits'
 import { Machines } from './pages/Machines'
 import { Creditors, Laddan } from './pages/Creditors'
+import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from './pages/Masters'
 import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
 import { openEntry } from './entries/kinds'
@@ -70,6 +71,15 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
   { group: t('Dukaan'), items: [
     { report: 'nigrani', label: t('Nigrani'), key: 'X', icon: I.IInbox },
     { report: 'team', label: t('Team & Machine'), key: 'T', icon: I.ITeam },
+  ] },
+  { group: t('Masters'), items: [
+    { report: 'company', label: t('Company'), key: '', icon: I.IStore },
+    { report: 'products', label: t('Product Master'), key: '', icon: I.ITag },
+    { report: 'groups', label: t('Product Group'), key: '', icon: I.ITag },
+    { report: 'areas', label: t('Area Master'), key: '', icon: I.IPin },
+    { report: 'stores', label: t('Store Master'), key: '', icon: I.IBox },
+    { report: 'heads', label: t('General Ledger'), key: '', icon: I.ILedger },
+    { report: 'openings', label: t('Opening balance'), key: '', icon: I.IRupee },
   ] },
 ]
 
@@ -363,6 +373,13 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'laddan': return <Laddan key={shopId} shopId={shopId} />
     case 'apmc': return <Apmc key={shopId} shopId={shopId} />
     case 'mazdoori': return <Mazdoori key={shopId} shopId={shopId} />
+    case 'company': return <Company key={shopId} shopId={shopId} />
+    case 'products': return <Products key={shopId} shopId={shopId} />
+    case 'groups': return <ProductGroups key={shopId} shopId={shopId} />
+    case 'areas': return <Areas key={shopId} shopId={shopId} />
+    case 'stores': return <Stores key={shopId} shopId={shopId} />
+    case 'heads': return <Heads key={shopId} shopId={shopId} />
+    case 'openings': return <Openings key={shopId} shopId={shopId} />
     case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }

@@ -5,6 +5,7 @@ import { count, date, rate, rupees, time } from '../format'
 import { openVoucher } from '../keys'
 import { useLoad } from '../useLoad'
 import { PeriodBar, Skeleton } from '../ui'
+import { Seg } from '../entries/fields'
 
 import { t } from '../i18n'
 import { dayRange, fileName, rs, useExport } from '../export/doc'
@@ -13,30 +14,41 @@ import { dayRange, fileName, rs, useExport } from '../export/doc'
 export function Items({ shopId }: { shopId: string }) {
   const [period, setPeriod] = usePeriod('30')
   const [open, setOpen] = useState<string | null>(null)
-  const { data, error, loading } = useLoad(() => api<ItemRow[]>(`/v1/admin/shops/${shopId}/items?from=${period.from}&to=${period.to}`), [shopId, period.from, period.to])
+  // By group (Product Group Master): one row per group; opening one shows its maal.
+  const [view, setView] = useState<'maal' | 'group'>('maal')
+  const [inGroup, setInGroup] = useState<string | null>(null)
+  const { data: all, error, loading } = useLoad(() => api<ItemRow[]>(`/v1/admin/shops/${shopId}/items?from=${period.from}&to=${period.to}`), [shopId, period.from, period.to])
+  const hasGroups = (all ?? []).some((r) => r.group)
+  const data = !all ? null : view === 'group' ? byGroup(all) : inGroup !== null ? all.filter((r) => (r.group ?? '') === inGroup) : all
   const total = (data ?? []).reduce((t, r) => t + r.amountPaise, 0)
+  const title = inGroup !== null && view === 'maal' ? `${t('Maal-wise Bikri')} · ${inGroup || t('Bina group')}` : view === 'group' ? `${t('Maal-wise Bikri')} · ${t('Group')}` : t('Maal-wise Bikri')
   useExport(data ? () => ({
-    style: 'book' as const, title: t('Maal-wise Bikri'), dateLine: dayRange(period.from, period.to), file: fileName(t('Maal-wise Bikri'), period.from, period.to),
-    columns: [{ label: t('Maal'), wide: true }, { label: t('Nag'), num: true }, { label: t('Avg bhav'), num: true }, { label: t('Parchi'), num: true }, { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
-    rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), count(r.slips), rs(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
-    foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', count(data.reduce((s, r) => s + r.slips, 0)), rs(total), ''],
-  }) : null, [data, open])
+    style: 'book' as const, title, dateLine: dayRange(period.from, period.to), file: fileName(title, period.from, period.to),
+    columns: [{ label: view === 'group' ? t('Group') : t('Maal'), wide: true }, { label: t('Nag'), num: true }, { label: t('Avg bhav'), num: true }, { label: t('Parchi'), num: true }, { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
+    rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), view === 'group' ? '' : count(r.slips), rs(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
+    foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', view === 'group' ? '' : count(data.reduce((s, r) => s + r.slips, 0)), rs(total), ''],
+  }) : null, [data, open, view, inGroup])
   if (open) return <ItemLines shopId={shopId} brand={open} period={period} setPeriod={setPeriod} onBack={() => setOpen(null)} />
+  const pick = (r: ItemRow) => { if (view === 'group') { setInGroup(r.group ?? ''); setView('maal') } else setOpen(r.brand) }
   return (
     <>
-      <div className="toolbar"><PeriodBar value={period} onChange={setPeriod} /></div>
+      <div className="toolbar">
+        {inGroup !== null && view === 'maal' && <button type="button" className="btn ghost" onClick={() => { setInGroup(null); setView('group') }}>‹ {inGroup || t('Bina group')}</button>}
+        <PeriodBar value={period} onChange={setPeriod} />
+        {(hasGroups || view === 'group') && <Seg value={view} onChange={(v) => { setView(v); setInGroup(null) }} options={[{ key: 'maal', label: t('Maal') }, { key: 'group', label: t('Group') }]} />}
+      </div>
       {error && <p className="error">{error}</p>}
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
           <table className="tbl fold">
-            <thead><tr><th>{t('Maal')}</th><th className="num">{t('Nag')}</th><th className="num">{t('Avg bhav')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th><th>{t('Hissa')}</th></tr></thead>
+            <thead><tr><th>{view === 'group' ? t('Group') : t('Maal')}</th><th className="num">{t('Nag')}</th><th className="num">{t('Avg bhav')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th><th>{t('Hissa')}</th></tr></thead>
             <tbody>
               {data.map((r) => (
-                <tr key={r.brand} data-row tabIndex={0} onClick={() => setOpen(r.brand)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(r.brand) }}>
+                <tr key={r.brand} data-row tabIndex={0} onClick={() => pick(r)} onKeyDown={(e) => { if (e.key === 'Enter') pick(r) }}>
                   <td className="main-col"><b>{r.brand}</b><small className="show-sm">{t('{n} nag', { n: count(r.nags) })} · {rate(r.ratePaise)}</small></td>
                   <td className="num opt-col money">{count(r.nags)}</td>
                   <td className="num opt-col money">{rate(r.ratePaise)}</td>
-                  <td className="num opt-col money">{count(r.slips)}</td>
+                  <td className="num opt-col money">{view === 'group' ? '' : count(r.slips)}</td>
                   <td className="num amt-col money b">{rupees(r.amountPaise)}</td>
                   <td className="opt-col" style={{ width: 160 }}>
                     <div className="agebar" style={{ margin: 0 }}><span className="a0" style={{ width: `${total ? (r.amountPaise / total) * 100 : 0}%`, background: 'var(--accent)' }} /></div>
@@ -51,6 +63,19 @@ export function Items({ shopId }: { shopId: string }) {
       )}
     </>
   )
+}
+
+/** Maal rows totalled by their product group; maal in no group under "Bina group". */
+function byGroup(rows: ItemRow[]): ItemRow[] {
+  const by = new Map<string, ItemRow>()
+  for (const r of rows) {
+    const g = r.group ?? ''
+    const x = by.get(g) ?? { brand: g || t('Bina group'), group: g, nags: 0, amountPaise: 0, slips: 0, ratePaise: 0 }
+    // Parchi aren't summed: one with two maal of a group would count twice.
+    x.nags += r.nags; x.amountPaise += r.amountPaise
+    by.set(g, x)
+  }
+  return [...by.values()].map((x) => ({ ...x, ratePaise: x.nags ? Math.round(x.amountPaise / x.nags) : 0 })).sort((a, b) => b.amountPaise - a.amountPaise)
 }
 
 type Lines = {

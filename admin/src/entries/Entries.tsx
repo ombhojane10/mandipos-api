@@ -369,8 +369,16 @@ function fromDraft(d: Draft<'parchi'>) {
   }
 }
 
+type LedgerHead = { id: string | null; name: string; type: 'expense' | 'income' | 'asset' | 'liability'; builtin: boolean; hidden: boolean }
+/** The category a custom head's line is written as (MastersService.headCategory). */
+const headCategory = (h: LedgerHead, dir: 'out' | 'in') => (dir === 'in' ? 'aur_aaya' : h.type === 'expense' ? 'kharcha' : 'aur_gaya')
+
 function KharchaForm({ shopId, onClose, onDone, draft }: FormProps & { draft?: Draft<'kharcha'> }) {
   const { saving, error, setError, save } = useSave(onDone)
+  // The shop's own heads (General Ledger master), optional.
+  const [allHeads, setAllHeads] = useState<LedgerHead[]>([])
+  const [headId, setHeadId] = useState('')
+  useEffect(() => { api<{ heads: LedgerHead[] }>(`/v1/admin/shops/${shopId}/heads`).then((r) => setAllHeads(r.heads.filter((h) => !h.builtin && !h.hidden))).catch(() => {}) }, [shopId])
   const [dir, setDir] = useState<'out' | 'in'>(draft?.dir ?? 'out')
   const [cat, setCat] = useState(draft?.category ?? (draft?.dir === 'in' ? 'aur_aaya' : 'kharcha'))
   const [mode, setMode] = useState<'cash' | 'office' | 'upi'>('cash')
@@ -378,19 +386,33 @@ function KharchaForm({ shopId, onClose, onDone, draft }: FormProps & { draft?: D
   const [party, setParty] = useState('')
   const [note, setNote] = useState(draft?.note ?? '')
   const heads = dir === 'out' ? OUT_HEADS : IN_HEADS
-  const fixed = FROM[cat]
+  const own = allHeads.filter((h) => (dir === 'out' ? h.type !== 'income' : h.type !== 'expense'))
+  const head = own.find((h) => h.id === headId) ?? null
+  const fixed = head ? undefined : FROM[cat]
   return (
     <Sheet title={t('Kharcha / Aaya')} onClose={onClose} saving={saving} error={error}
       onSave={() => {
         if (amount <= 0) return setError(t('Rakam daalein'))
+        if (head) {
+          return void save(`/v1/admin/shops/${shopId}/entries/daybook`, { direction: dir, category: headCategory(head, dir), headId: head.id, mode, amountPaise: amount, note },
+            () => t('{head} {amount} save hua', { head: head.name, amount: rupees(amount) }))
+        }
         if (cat.startsWith('aur_') && !note.trim()) return setError(t('Wajah likhein'))
         void save(`/v1/admin/shops/${shopId}/entries/daybook`, { direction: dir, category: cat, mode: fixed ?? mode, amountPaise: amount, party, note },
           () => t('{head} {amount} save hua', { head: heads.find((h) => h[0] === cat)?.[1] ?? '', amount: rupees(amount) }))
       }}>
-      <Seg value={dir} onChange={(d) => { setDir(d); setCat(d === 'out' ? 'kharcha' : 'udhaar_wapas') }} options={[{ key: 'out', label: t('Gaya (kharcha)') }, { key: 'in', label: t('Aaya') }]} />
-      <Field label={t('Kis cheez ka')}>
-        <select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>{heads.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-      </Field>
+      <Seg value={dir} onChange={(d) => { setDir(d); setCat(d === 'out' ? 'kharcha' : 'udhaar_wapas'); setHeadId('') }} options={[{ key: 'out', label: t('Gaya (kharcha)') }, { key: 'in', label: t('Aaya') }]} />
+      <div className={own.length ? 'row2' : undefined}>
+        {!head && <Field label={t('Kis cheez ka')}>
+          <select className="field" value={cat} onChange={(e) => setCat(e.target.value)}>{heads.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        </Field>}
+        {own.length > 0 && <Field label={t('Head (optional)')}>
+          <select className="field" value={headId} onChange={(e) => setHeadId(e.target.value)}>
+            <option value="">—</option>
+            {own.map((h) => <option key={h.id} value={h.id ?? ''}>{h.name}</option>)}
+          </select>
+        </Field>}
+      </div>
       <div className="row2">
         <Field label={t('Rakam')}><Money value={amount} onChange={setAmount} autoFocus /></Field>
         <Field label={fixed ? t('Se') : t('Kahan se')}>
@@ -400,8 +422,8 @@ function KharchaForm({ shopId, onClose, onDone, draft }: FormProps & { draft?: D
         </Field>
       </div>
       <div className="row2">
-        <Field label={t('Kisko / kisse (optional)')}><input className="field" value={party} maxLength={120} onChange={(e) => setParty(e.target.value)} /></Field>
-        <Field label={cat.startsWith('aur_') ? t('Wajah') : t('Note (optional)')}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
+        {!head && <Field label={t('Kisko / kisse (optional)')}><input className="field" value={party} maxLength={120} onChange={(e) => setParty(e.target.value)} /></Field>}
+        <Field label={cat.startsWith('aur_') && !head ? t('Wajah') : t('Note (optional)')}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
       </div>
     </Sheet>
   )

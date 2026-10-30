@@ -274,11 +274,13 @@ export class ReportsService {
   }
 
   private async itemRows(tx: Tx, from: string, to: string) {
-    return (await tx.query<{ brand: string | null; nags: string; amount: string; slips: string }>(
-      `SELECT br.name AS brand, SUM(l.qty) AS nags, SUM(l.qty::bigint * l.rate_paise) AS amount, COUNT(DISTINCT l.bill_id) AS slips
+    // The maal's product group (Product Group Master), so the page can total by group too.
+    return (await tx.query<{ brand: string | null; grp: string | null; nags: string; amount: string; slips: string }>(
+      `SELECT br.name AS brand, MIN(pg.name) AS grp, SUM(l.qty) AS nags, SUM(l.qty::bigint * l.rate_paise) AS amount, COUNT(DISTINCT l.bill_id) AS slips
        FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id LEFT JOIN brands br ON br.id = l.brand_id
+       LEFT JOIN brand_groups bg ON bg.brand_id = l.brand_id LEFT JOIN product_groups pg ON pg.id = bg.group_id
        WHERE lb.business_date BETWEEN $1 AND $2 GROUP BY br.name ORDER BY SUM(l.qty::bigint * l.rate_paise) DESC`, [from, to])).rows
-      .map((r) => ({ brand: r.brand ?? 'Maal', nags: n(r.nags), amountPaise: n(r.amount), slips: n(r.slips), ratePaise: n(r.nags) ? Math.round(n(r.amount) / n(r.nags)) : 0 }));
+      .map((r) => ({ brand: r.brand ?? 'Maal', group: r.grp ?? '', nags: n(r.nags), amountPaise: n(r.amount), slips: n(r.slips), ratePaise: n(r.nags) ? Math.round(n(r.amount) / n(r.nags)) : 0 }));
   }
 
   // ---------------------------------------------------------------- Dashboard

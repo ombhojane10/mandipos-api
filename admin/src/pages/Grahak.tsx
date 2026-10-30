@@ -2,32 +2,45 @@ import { useEffect, useState } from 'react'
 import { api, type BuyerDetail, type BuyerRow } from '../api'
 import { useSession } from '../App'
 import { count, phone, rupees, shortDate } from '../format'
-import { href } from '../routes'
+import { hashQuery, href, setHashQuery } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { Bal, Crumb, Ledger, Skeleton } from '../ui'
 import { t } from '../i18n'
 import { openWhatsApp } from '../keys'
 import { balRs, dmy, fileName, rs, useExport } from '../export/doc'
 import { Field, Sheet } from '../entries/fields'
+import { AreaDatalist } from './Masters'
 
 /** Every grahak of the shop, searchable; biggest baaki first. Enter opens the khata. */
 export function GrahakList({ shopId }: { shopId: string }) {
   const [q, setQ] = useState('')
   const [query, setQuery] = useState('')
+  const [area, setArea] = useState(() => hashQuery().get('area') ?? '')
+  const [areas, setAreas] = useState<string[]>([])
   useEffect(() => { const t = setTimeout(() => setQuery(q.trim()), 250); return () => clearTimeout(t) }, [q])
+  useEffect(() => { api<{ areas: { name: string }[] }>(`/v1/admin/shops/${shopId}/areas`).then((r) => setAreas(r.areas.map((a) => a.name))).catch(() => {}) }, [shopId])
   const { data, error, loading } = useLoad(
-    () => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(query)}`).then((r) => r.buyers), [shopId, query])
+    () => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(query)}&area=${encodeURIComponent(area)}`).then((r) => r.buyers), [shopId, query, area])
+  const pickArea = (a: string) => { setArea(a); setHashQuery(a ? { area: a } : {}) }
 
   useExport(data ? () => ({
-    style: 'book' as const, title: t('Grahak Ledger'), file: fileName(t('Grahak Ledger')),
+    style: 'book' as const, title: area ? `${t('Grahak Ledger')} · ${area}` : t('Grahak Ledger'), file: fileName(t('Grahak Ledger'), area || undefined),
     columns: [{ label: t('Code') }, { label: t('Grahak'), wide: true }, { label: t('Mobile') }, { label: t('Kharida'), num: true }, { label: t('Aakhri parchi') }, { label: t('Baaki'), num: true }],
     rows: data.map((b) => ({ cells: [b.code, b.name, b.phone ? phone(b.phone) : '', rs(b.boughtPaise), b.lastSlipOn ? dmy(b.lastSlipOn) : '—', balRs(b.balancePaise)] })),
     foot: ['', t('Kul'), '', rs(data.reduce((s, b) => s + b.boughtPaise, 0)), '', balRs(data.reduce((s, b) => s + b.balancePaise, 0))],
-  }) : null, [data])
+  }) : null, [data, area])
 
   return (
     <>
-      <div className="toolbar"><input className="field grow" data-search type="search" placeholder={t('Naam, mobile ya code')} value={q} autoFocus onChange={(e) => setQ(e.target.value)} /></div>
+      <div className="toolbar">
+        <input className="field grow" data-search type="search" placeholder={t('Naam, mobile ya code')} value={q} autoFocus onChange={(e) => setQ(e.target.value)} />
+        {(areas.length > 0 || area) && (
+          <select className="field" aria-label={t('Area')} style={{ flex: '0 1 180px' }} value={area} onChange={(e) => pickArea(e.target.value)}>
+            <option value="">{t('Sab area')}</option>
+            {[...new Set([...areas, ...(area ? [area] : [])])].map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        )}
+      </div>
       {error && <p className="error">{error}</p>}
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
@@ -100,7 +113,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
 function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: BuyerDetail['buyer']; balancePaise: number; onClose: () => void }) {
   const { shops } = useSession()
   const caps = shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
-  const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination })
+  const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination, area: b.area ?? '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const send = async (body: object, then: () => void) => {
@@ -111,7 +124,7 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
   const save = () => {
     if (!f.name.trim()) return setError(t('Naam daalein'))
     if (f.phone && !/^[6-9]\d{9}$/.test(f.phone)) return setError(t('Mobile number 10 ank ka hona chahiye'))
-    void send({ name: caps ? f.name.toUpperCase() : f.name, code: f.code, phone: f.phone, address: f.address, destination: f.destination }, onClose)
+    void send({ name: caps ? f.name.toUpperCase() : f.name, code: f.code, phone: f.phone, address: f.address, destination: f.destination, area: f.area }, onClose)
   }
   const hide = () => {
     if (!confirm(t('{name} ko list se hatayein?', { name: b.name }))) return
@@ -126,7 +139,11 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
         <Field label={t('Code')}><input className="field" maxLength={20} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
       </div>
       <Field label={t('Dukaan / pata')}><input className="field" style={up} maxLength={200} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
-      <Field label={t('Kahan jata hai')}><input className="field" style={up} maxLength={120} value={f.destination} onChange={(e) => setF({ ...f, destination: e.target.value })} /></Field>
+      <div className="row2">
+        <Field label={t('Kahan jata hai')}><input className="field" style={up} maxLength={120} value={f.destination} onChange={(e) => setF({ ...f, destination: e.target.value })} /></Field>
+        <Field label={t('Area')}><input className="field" style={{ textTransform: 'uppercase' }} list="grahak-areas" maxLength={60} value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })} /></Field>
+      </div>
+      <AreaDatalist shopId={shopId} id="grahak-areas" />
       {balancePaise === 0 && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={hide}>{t('List se hatayein')}</button>}
     </Sheet>
   )

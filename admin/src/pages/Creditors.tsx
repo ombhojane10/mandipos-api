@@ -8,6 +8,7 @@ import { Skeleton } from '../ui'
 import { fileName, rs, useExport } from '../export/doc'
 import { openDraft } from '../entries/kinds'
 import { Field, Money, Sheet } from '../entries/fields'
+import { AreaDatalist } from './Masters'
 
 // ================================================================ Supplier creditors (April–March)
 
@@ -177,8 +178,9 @@ function SupplierSheet({ shopId, c, onClose }: { shopId: string; c: Creditor | n
       <Field label={t('Supplier ka naam')}><input className="field" style={caps} autoFocus value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <div className="grid g2">
         <Field label={t('Code')}><input className="field" style={caps} value={code} onChange={(e) => setCode(e.target.value)} /></Field>
-        <Field label={t('Area')}><input className="field" style={caps} value={area} onChange={(e) => setArea(e.target.value)} /></Field>
+        <Field label={t('Area')}><input className="field" style={caps} list="supplier-areas" value={area} onChange={(e) => setArea(e.target.value)} /></Field>
       </div>
+      <AreaDatalist shopId={shopId} id="supplier-areas" />
       <Field label={t('Mobile')}><input className="field" inputMode="numeric" value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))} /></Field>
       <div className="grid g2">
         <Field label={t('Opening balance (dena)')}><Money value={opening} onChange={setOpening} /></Field>
@@ -281,11 +283,13 @@ function LaddanSheet({ shopId, p, onClose, onParchi }: { shopId: string; p: Part
           <div key={f.key} style={f.wide ? { gridColumn: '1 / -1' } : undefined}>
             <Field label={t(f.label)}>
               <input className="field" autoFocus={f.key === 'name'} inputMode={f.numeric ? 'numeric' : undefined} style={f.caps ? { textTransform: 'uppercase' } : undefined}
+                list={f.key === 'area' ? 'laddan-areas' : undefined}
                 value={v[f.key]} onChange={(e) => setV({ ...v, [f.key]: f.numeric ? e.target.value.replace(/\D/g, '').slice(0, 10) : e.target.value })} />
             </Field>
           </div>
         ))}
       </div>
+      <AreaDatalist shopId={shopId} id="laddan-areas" />
       {onParchi && <button type="button" className="btn" style={{ justifySelf: 'start' }} onClick={onParchi}>{t('Laddan parchi')} ›</button>}
     </Sheet>
   )
