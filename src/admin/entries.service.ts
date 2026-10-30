@@ -275,7 +275,7 @@ export class EntriesService {
     // an edit prints only when asked, as in the app.
     const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
     // Said on the page: a website slip waits in the queue while no print machine is on.
-    const printOnline = printing && !!(await this.print.station(p).catch(() => null))?.online;
+    const printOnline = printing && !!(await this.print.stationOf(shopId).catch(() => null))?.online;
     return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, printOnline, results };
   }
 
@@ -370,7 +370,7 @@ export class EntriesService {
     const no = bill.renumbered?.to ?? slipNo;
     const printing = !editing && await this.print.queueBill(p, billId, `Order Parchi #${no}`).then(() => true, () => false);
     // Said on the page: a website slip waits in the queue while no print machine is on.
-    const printOnline = printing && !!(await this.print.station(p).catch(() => null))?.online;
+    const printOnline = printing && !!(await this.print.stationOf(shopId).catch(() => null))?.online;
     return { billId, number: pre.number, slipNo: no, buyerId, replaced: editing?.id ?? null, printing, printOnline, results };
   }
 
@@ -782,13 +782,13 @@ export class EntriesService {
     if (!bill) throw new NotFoundException('Yeh parchi nahi mili');
     const p = await this.device(phone, shopId);
     await this.print.queueBill(p, billId, `Order Parchi #${bill.slip_no}`);
-    const st = await this.print.station(p);
+    const st = await this.print.stationOf(shopId);
     return { slipNo: bill.slip_no, station: st && st.online ? { name: st.name } : null };
   }
 
   /** Whether the shop's print machine is listening now, for the page to say so after a save. */
   async printStation(phone: string, shopId: string) {
-    const st = await this.print.station(await this.accounts.webDevice(phone, shopId));
+    const st = await this.print.stationOf(shopId);
     return { online: !!st?.online, name: st?.name ?? '', lastSeenAt: st?.lastSeenAt ?? null };
   }
 
