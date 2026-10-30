@@ -174,7 +174,7 @@ const FRAGMENTS = {
     FROM supplier_phones s
     CROSS JOIN LATERAL (VALUES ('creditors', GREATEST(-s.opening_paise, 0), GREATEST(s.opening_paise, 0)),
                                ('diff:opening_supplier', GREATEST(s.opening_paise, 0), GREATEST(-s.opening_paise, 0))) v(acct, dr, cr)
-    WHERE $3 AND s.opening_paise <> 0 AND COALESCE(s.opening_on, '0001-01-01'::date) <= $1`,
+    WHERE s.opening_paise <> 0 AND COALESCE(s.opening_on, '0001-01-01'::date) <= $1`,
 };
 type Fragment = keyof typeof FRAGMENTS;
 
@@ -422,7 +422,8 @@ export class BooksService {
           balance: -p.moves.filter((m) => m.at <= on).reduce((t, m) => t + m.creditPaise - m.debitPaise, 0) }));
       } else {
         suppliers = (await this.reports.supplierBooks(tx)).map((s) => ({ key: s.key, name: s.name,
-          balance: -(s.gaadis.filter((g) => istDay(g.arrivedAt) <= on).reduce((t, g) => t + g.purchasePaise, 0) - s.payments.filter((x) => x.date <= on).reduce((t, x) => t + x.amountPaise, 0)
+          balance: -(s.openings.filter((o) => o.date <= on).reduce((t, o) => t + o.paise, 0)
+            + s.gaadis.filter((g) => istDay(g.arrivedAt) <= on).reduce((t, g) => t + g.purchasePaise, 0) - s.payments.filter((x) => x.date <= on).reduce((t, x) => t + x.amountPaise, 0)
             - s.jvs.filter((j) => j.date <= on).reduce((t, j) => t + j.amountPaise, 0)) }));
       }
       const owed = suppliers.reduce((t, s) => t + s.balance, 0);

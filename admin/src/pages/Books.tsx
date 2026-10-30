@@ -32,7 +32,7 @@ const creditorHref = (shopId: string, key: string) => `${href({ page: 'report', 
 const ledgerHref = (shopId: string, key: string, from: string, to: string) => `${href({ page: 'report', shopId, report: 'gl' })}?a=${encodeURIComponent(key)}&p=custom&from=${from}&to=${to}`
 
 /** This financial year so far: the period most of these reports are read for. */
-function FyButton({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+export function FyButton({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
   const today = todayIst()
   const on = value.from === fyStart(today) && value.to === today
   return <button type="button" className="btn ghost sm" aria-pressed={on} onClick={() => onChange({ key: 'fy', from: fyStart(today), to: today })}>{t('Is saal')}</button>
@@ -84,6 +84,7 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
     else if (l.kind === 'beejak' && l.ref2) setBeejak(l.ref2)
     else if (l.kind === 'gaadi' && l.detail) location.hash = href({ page: 'supplier', shopId, key: nameKey(l.detail) })
     else if (l.kind === 'daybook' || l.kind === 'day') location.hash = dayBookOn(shopId, l.date)
+    else if (l.kind === 'jv' || l.kind === 'cn') location.hash = `${href({ page: 'report', shopId, report: l.kind })}?p=custom&from=${l.date}&to=${l.date}`
   }
   const groups = useMemo(() => {
     const m = new Map<string, Account[]>()
@@ -194,7 +195,8 @@ export function TrialBalance({ shopId }: { shopId: string }) {
       { cells: [t(g.name), g.dr ? rs(g.dr) : '', g.cr ? rs(g.cr) : ''], bold: true },
       ...(isOpen(g) ? g.shown.map((r) => ({ cells: [`    ${t(r.name)}${r.sub ? ` (${r.sub})` : ''}`, r.dr ? rs(r.dr) : '', r.cr ? rs(r.cr) : ''] })) : []),
     ]),
-    foot: [t('Kul'), rs(data.totals.dr), rs(data.totals.cr)],
+    // A search prints only some ledgers: no grand total under them.
+    foot: q.trim() ? undefined : [t('Kul'), rs(data.totals.dr), rs(data.totals.cr)],
   }) : null, [data, q, opened])
 
   return (

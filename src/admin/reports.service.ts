@@ -170,8 +170,12 @@ export class ReportsService {
        WHERE category = 'supplier' AND direction = 'out' AND hidden = false AND TRIM(party_name) <> ''
        ORDER BY business_date DESC, created_at DESC`)).rows;
     const jvs = await supplierJvs(tx);
+    // What the shop owed each supplier when it started on the books (Masters › Openings).
+    const openings = (await tx.query<{ name: string; paise: string; day: string | null; at: Date }>(
+      `SELECT name, opening_paise AS paise, opening_on::text AS day, created_at AS at FROM supplier_phones WHERE opening_paise <> 0`)).rows;
     const names = new Map<string, string>();
     for (const g of gaadis) if (!names.has(nameKey(g.supplier))) names.set(nameKey(g.supplier), g.supplier);
+    for (const o of openings) if (!names.has(nameKey(o.name))) names.set(nameKey(o.name), o.name);
     for (const p of payments) if (!names.has(nameKey(p.party))) names.set(nameKey(p.party), p.party);
     for (const j of jvs) if (!names.has(nameKey(j.name))) names.set(nameKey(j.name), j.name);
     return [...names].filter(([k]) => k).map(([key, name]) => ({
@@ -180,6 +184,8 @@ export class ReportsService {
       payments: payments.filter((p) => nameKey(p.party) === key).map((p) => ({ id: p.id, amountPaise: n(p.amount), mode: p.mode, note: p.note, date: p.day, at: p.at })),
       // + = he is debited (owed less, as a payment), − = credited (owed more).
       jvs: jvs.filter((j) => nameKey(j.name) === key),
+      // + = the shop owed him; dated its opening day (none: before everything).
+      openings: openings.filter((o) => nameKey(o.name) === key).map((o) => ({ paise: n(o.paise), date: o.day ?? '0001-01-01', at: o.day ? new Date(`${o.day}T00:00:00+05:30`) : new Date(0) })),
     }));
   }
 
@@ -188,11 +194,13 @@ export class ReportsService {
       const purchase = s.gaadis.reduce((t, g) => t + g.purchasePaise, 0);
       const paid = s.payments.reduce((t, p) => t + p.amountPaise, 0);
       const jv = s.jvs.reduce((t, j) => t + j.amountPaise, 0);
-      const a = age([...s.gaadis.map((g) => ({ at: g.arrivedAt, amount: g.purchasePaise })), ...s.jvs.filter((j) => j.amountPaise < 0).map((j) => ({ at: j.at, amount: -j.amountPaise }))],
-        paid + s.jvs.filter((j) => j.amountPaise > 0).reduce((t, j) => t + j.amountPaise, 0), today);
+      const opening = s.openings.reduce((t, o) => t + o.paise, 0);
+      const a = age([...s.openings.filter((o) => o.paise > 0).map((o) => ({ at: o.at, amount: o.paise })),
+        ...s.gaadis.map((g) => ({ at: g.arrivedAt, amount: g.purchasePaise })), ...s.jvs.filter((j) => j.amountPaise < 0).map((j) => ({ at: j.at, amount: -j.amountPaise }))],
+        paid + s.jvs.filter((j) => j.amountPaise > 0).reduce((t, j) => t + j.amountPaise, 0) - s.openings.filter((o) => o.paise < 0).reduce((t, o) => t + o.paise, 0), today);
       const last = [...s.gaadis.map((g) => g.arrivedAt.getTime()), ...s.payments.map((p) => p.at.getTime())].sort().at(-1);
       return { key: s.key, name: s.name, gaadis: s.gaadis.length, openGaadis: s.gaadis.filter((g) => !g.closed).length,
-        purchasePaise: purchase, paidPaise: paid, jvPaise: jv, duePaise: purchase - paid - jv, d0_7: a.d0_7, d8_30: a.d8_30, d31: a.d31,
+        openingPaise: opening, purchasePaise: purchase, paidPaise: paid, jvPaise: jv, duePaise: opening + purchase - paid - jv, d0_7: a.d0_7, d8_30: a.d8_30, d31: a.d31,
         lastAt: last ? new Date(last).toISOString() : null };
     }).sort((a, b) => b.duePaise - a.duePaise || (b.lastAt ?? '').localeCompare(a.lastAt ?? ''));
     const owed = rows.filter((r) => r.duePaise > 0);
@@ -206,6 +214,8 @@ export class ReportsService {
       const s = (await this.supplierBooks(tx)).find((x) => x.key === key);
       if (!s) throw new NotFoundException('Supplier nahi mila');
       const rows = [
+        ...s.openings.map((o, i) => ({ id: `opening-${i}`, at: o.at.toISOString(), date: o.date, kind: 'opening' as const, title: 'Opening balance', detail: '',
+          nags: 0, debitPaise: Math.max(0, -o.paise), creditPaise: Math.max(0, o.paise), open: false, sold: 0, left: 0 })),
         ...s.gaadis.map((g) => ({ id: g.truckId, at: g.arrivedAt.toISOString(), date: istDay(g.arrivedAt), kind: 'gaadi' as const,
           title: `Gaadi ${g.number}`, detail: [g.brands, g.freightPaise ? `bhada ₹${Math.round(g.freightPaise / 100).toLocaleString('en-IN')}` : ''].filter(Boolean).join(' · '),
           nags: g.dana, debitPaise: 0, creditPaise: g.purchasePaise, open: !g.closed, sold: g.sold, left: Math.max(0, g.dana - g.sold - g.spoiled) })),
@@ -219,7 +229,7 @@ export class ReportsService {
       const history = rows.map((r) => ({ ...r, balancePaise: (bal += r.creditPaise - r.debitPaise) })).reverse();
       return {
         key: s.key, name: s.name,
-        totals: { purchasePaise: s.gaadis.reduce((t, g) => t + g.purchasePaise, 0), paidPaise: s.payments.reduce((t, p) => t + p.amountPaise, 0),
+        totals: { openingPaise: s.openings.reduce((t, o) => t + o.paise, 0), purchasePaise: s.gaadis.reduce((t, g) => t + g.purchasePaise, 0), paidPaise: s.payments.reduce((t, p) => t + p.amountPaise, 0),
           duePaise: bal, gaadis: s.gaadis.length, dana: s.gaadis.reduce((t, g) => t + g.dana, 0) },
         history,
       };

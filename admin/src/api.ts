@@ -167,12 +167,12 @@ export type Outstanding = {
 }
 export type Suppliers = {
   totals: Buckets & { duePaise: number; count: number }
-  rows: (Buckets & { key: string; name: string; gaadis: number; openGaadis: number; purchasePaise: number; paidPaise: number; duePaise: number; lastAt: string | null })[]
+  rows: (Buckets & { key: string; name: string; gaadis: number; openGaadis: number; openingPaise: number; purchasePaise: number; paidPaise: number; duePaise: number; lastAt: string | null })[]
 }
 export type SupplierKhata = {
   key: string; name: string
-  totals: { purchasePaise: number; paidPaise: number; duePaise: number; gaadis: number; dana: number }
-  history: { id: string; at: string; date: string; kind: 'gaadi' | 'payment'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; balancePaise: number; open: boolean; sold: number; left: number }[]
+  totals: { openingPaise: number; purchasePaise: number; paidPaise: number; duePaise: number; gaadis: number; dana: number }
+  history: { id: string; at: string; date: string; kind: 'opening' | 'gaadi' | 'payment' | 'jv'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; balancePaise: number; open: boolean; sold: number; left: number }[]
 }
 export type Stock = {
   totals: { left: number; valuePaise: number; gaadis: number; stale: number }

@@ -3299,6 +3299,35 @@ describe('reports (General Ledger, Trial Balance, Ledger Multiple, big transacti
     expect((await http().get(`${base}/gaadi-hisab`).set(w).expect(200)).body.rows[0]).toMatchObject({ costPaise: 120000, landedRatePaise: 1200, buyRatePaise: 1000 });
   });
 
+  it('carries a coconut supplier\'s opening into Supplier Khata and the Trial Balance', async () => {
+    const { w, base } = await web('9845700007', { name: 'TB Opening' });
+    const d = istDay();
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA04', supplier: 'Pollachi Traders', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'pollachi traders', openingPaise: 50000, openingOn: '2026-04-01' }).expect(200);
+    await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'Venkat', openingPaise: 20000, openingOn: '2026-04-01' }).expect(200);
+    await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'Pollachi Traders', mode: 'cash', amountPaise: 30000 }).expect(201);
+
+    // Owed: ₹500 opening + ₹1,000 gaadi − ₹300 paid = ₹1,200; Venkat only an opening, ₹200.
+    const list = (await http().get(`${base}/suppliers`).set(w).expect(200)).body;
+    expect(list.rows.map((r: any) => [r.name, r.openingPaise, r.purchasePaise, r.duePaise])).toEqual([['Pollachi Traders', 50000, 100000, 120000], ['Venkat', 20000, 0, 20000]]);
+    expect(list.totals.duePaise).toBe(140000);
+    const khata = (await http().get(`${base}/suppliers/pollachitraders`).set(w).expect(200)).body;
+    expect(khata.totals).toMatchObject({ openingPaise: 50000, duePaise: 120000 });
+    expect(khata.history.at(-1)).toMatchObject({ kind: 'opening', creditPaise: 50000, balancePaise: 50000 });
+
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+    const cred = tb.groups.find((x: any) => x.key === 'creditors');
+    expect(cred).toMatchObject({ cr: 140000, dr: 0 });
+    const row = (k: string) => tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === k);
+    expect(row('diff:opening_supplier')).toMatchObject({ dr: 70000 });
+    expect(row('diff:other')).toBeUndefined();
+    const led = (await http().get(`${base}/books/ledger?account=creditors&from=2026-04-01&to=${d}`).set(w).expect(200)).body;
+    expect(led.closingPaise).toBe(-140000);
+    // Before the opening day it was not there yet.
+    expect((await http().get(`${base}/books/trial-balance?on=2026-03-31`).set(w).expect(200)).body.groups).toEqual([]);
+  });
+
   it('closes a P&L ledger each 1 April, nets each Trial Balance group, and backs up every book', async () => {
     const { w, base } = await web('9845700005', { name: 'TB Years' });
     const d = istDay();
@@ -3330,6 +3359,10 @@ describe('reports (General Ledger, Trial Balance, Ledger Multiple, big transacti
     }).expect(200);
     const book = unzip(bk.body as Buffer)['xl/workbook.xml'];
     for (const s of ['Vasooli delete', 'Galla band', 'Card payment', 'Toote box', 'Delivery parchi', 'Laddan parchi', 'Maal liya']) expect(book).toContain(`name="${s}"`);
+    // A Hindi name keeps its vowel signs in the file name.
+    const hi = await web('9845700006', { name: 'गुरु कृपा' });
+    const head = await http().get(`${hi.base}/books/backup`).set(hi.w).buffer(true).parse((res, cb) => { res.on('data', () => {}); res.on('end', () => cb(null, null)); }).expect(200);
+    expect(decodeURIComponent(/filename\*=UTF-8''([^;]+)/.exec(head.headers['content-disposition'])![1])).toBe(`गुरु-कृपा-backup-${d}.xlsx`);
   });
 });
 
