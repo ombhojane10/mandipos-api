@@ -217,6 +217,9 @@ export default function App() {
       }
       if (e.key === 'Escape') {
         if (drawer) { setDrawer(false); return }
+        // A page opened inside a report (a credit note, a bank slip, one maal) goes back to its list first.
+        const back = document.querySelector<HTMLElement>('main [data-back]')
+        if (back) { back.click(); return }
         // Up one level: a khata goes back to its list, a report to the dashboard.
         if (route.page === 'grahak' || route.page === 'supplier' || route.page === 'person') history.back()
         else if (route.page === 'report' && route.report !== 'dashboard') go('dashboard')

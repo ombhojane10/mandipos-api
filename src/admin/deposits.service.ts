@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Db, Tx } from '../db/db.service';
 import { uuidv7 } from '../common/uuid';
 import { EntriesService } from './entries.service';
@@ -154,6 +154,31 @@ export class DepositsService {
       }
     }
 
+    const seenNo = new Set<string>();
+    for (const c of lines) {
+      const no = (c.chequeNo ?? '').replace(/\s+/g, '');
+      if (!no) throw new BadRequestException('Har cheque ka number daalein');
+      const k = `${(c.bank ?? '').trim().toUpperCase()}|${no}`;
+      if (seenNo.has(k)) throw new BadRequestException(`Cheque ${no} do baar likha hai`);
+      seenNo.add(k);
+    }
+    // A raseed already written is linked once, to its own grahak's cheque, and only while it stands.
+    const linked = lines.filter((c) => c.raseed && c.raseed !== 'new' && isUuid(c.raseed));
+    if (new Set(linked.map((c) => c.raseed)).size !== linked.length) throw new BadRequestException('Ek raseed do cheque par nahi lag sakti');
+    if (linked.length) {
+      await this.db.withShop(shopId, async (tx) => {
+        for (const c of linked) {
+          const r = (await tx.query<{ buyer_id: string; live: boolean; slip_no: number | null }>(
+            `SELECT c.buyer_id, NOT EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id) AS live,
+                    (SELECT s.slip_no FROM deposit_cheques d JOIN deposit_slips s ON s.id = d.slip_id
+                     WHERE d.collection_id = c.id AND s.voided_at IS NULL AND s.id IS DISTINCT FROM $2::uuid LIMIT 1) AS slip_no
+             FROM collections c WHERE c.id = $1`, [c.raseed, slipId])).rows[0];
+          if (!r || r.buyer_id !== c.buyerId) throw new BadRequestException('Yeh raseed is grahak ki nahi');
+          if (!r.live) throw new BadRequestException('Yeh raseed hat chuki hai');
+          if (r.slip_no !== null) throw new ConflictException(`Yeh raseed pehle se bank parchi #${r.slip_no} par hai`);
+        }
+      });
+    }
     // Raseeds: kept as they are unless the grahak or amount changed; new ones written for 'new'.
     const raseedFor = new Map<number, { id: string | null; made: boolean }>();
     for (const [i, c] of lines.entries()) {

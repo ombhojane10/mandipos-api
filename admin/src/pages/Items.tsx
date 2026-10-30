@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSession } from '../App'
 import { api, type ItemRow } from '../api'
 import { usePeriod } from '../hooks'
 import { count, date, rate, rupees, time } from '../format'
@@ -10,8 +11,15 @@ import { Seg } from '../entries/fields'
 import { t } from '../i18n'
 import { dayRange, fileName, rs, useExport } from '../export/doc'
 
-/** Maal-wise bikri over the period: nag, average bhav, rakam, and each maal's share. */
+/** What the shop counts in: coconut by the nag, fruit (grapes, amrud) by the box. */
+function useUnit(shopId: string) {
+  const box = useSession().shops?.find((s) => s.id === shopId)?.commodity !== 'nariyal'
+  return { unit: box ? t('Box') : t('Nag'), many: (n: string) => (box ? t('{n} box', { n }) : t('{n} nag', { n })) }
+}
+
+/** Maal-wise bikri over the period: nag (or box), average bhav, rakam, and each maal's share. */
 export function Items({ shopId }: { shopId: string }) {
+  const { unit, many } = useUnit(shopId)
   const [period, setPeriod] = usePeriod('30')
   const [open, setOpen] = useState<string | null>(null)
   // By group (Product Group Master): one row per group; opening one shows its maal.
@@ -24,7 +32,7 @@ export function Items({ shopId }: { shopId: string }) {
   const title = inGroup !== null && view === 'maal' ? `${t('Maal-wise Bikri')} · ${inGroup || t('Bina group')}` : view === 'group' ? `${t('Maal-wise Bikri')} · ${t('Group')}` : t('Maal-wise Bikri')
   useExport(data ? () => ({
     style: 'book' as const, title, dateLine: dayRange(period.from, period.to), file: fileName(title, period.from, period.to),
-    columns: [{ label: view === 'group' ? t('Group') : t('Maal'), wide: true }, { label: t('Nag'), num: true }, { label: t('Avg bhav'), num: true }, { label: t('Parchi'), num: true }, { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
+    columns: [{ label: view === 'group' ? t('Group') : t('Maal'), wide: true }, { label: unit, num: true }, { label: t('Avg bhav'), num: true }, { label: t('Parchi'), num: true }, { label: t('Rakam'), num: true }, { label: t('Hissa'), num: true }],
     rows: data.map((r) => ({ cells: [r.brand, count(r.nags), rate(r.ratePaise), view === 'group' ? '' : count(r.slips), rs(r.amountPaise), total ? `${Math.round((r.amountPaise / total) * 100)}%` : ''] })),
     foot: [t('Kul'), count(data.reduce((s, r) => s + r.nags, 0)), '', view === 'group' ? '' : count(data.reduce((s, r) => s + r.slips, 0)), rs(total), ''],
   }) : null, [data, open, view, inGroup])
@@ -33,7 +41,7 @@ export function Items({ shopId }: { shopId: string }) {
   return (
     <>
       <div className="toolbar">
-        {inGroup !== null && view === 'maal' && <button type="button" className="btn ghost" onClick={() => { setInGroup(null); setView('group') }}>‹ {inGroup || t('Bina group')}</button>}
+        {inGroup !== null && view === 'maal' && <button type="button" className="btn ghost" data-back onClick={() => { setInGroup(null); setView('group') }}>‹ {inGroup || t('Bina group')}</button>}
         <PeriodBar value={period} onChange={setPeriod} />
         {(hasGroups || view === 'group') && <Seg value={view} onChange={(v) => { setView(v); setInGroup(null) }} options={[{ key: 'maal', label: t('Maal') }, { key: 'group', label: t('Group') }]} />}
       </div>
@@ -41,11 +49,11 @@ export function Items({ shopId }: { shopId: string }) {
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
           <table className="tbl fold">
-            <thead><tr><th>{view === 'group' ? t('Group') : t('Maal')}</th><th className="num">{t('Nag')}</th><th className="num">{t('Avg bhav')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th><th>{t('Hissa')}</th></tr></thead>
+            <thead><tr><th>{view === 'group' ? t('Group') : t('Maal')}</th><th className="num">{unit}</th><th className="num">{t('Avg bhav')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th><th>{t('Hissa')}</th></tr></thead>
             <tbody>
               {data.map((r) => (
                 <tr key={r.brand} data-row tabIndex={0} onClick={() => pick(r)} onKeyDown={(e) => { if (e.key === 'Enter') pick(r) }}>
-                  <td className="main-col"><b>{r.brand}</b><small className="show-sm">{t('{n} nag', { n: count(r.nags) })} · {rate(r.ratePaise)}</small></td>
+                  <td className="main-col"><b>{r.brand}</b><small className="show-sm">{many(count(r.nags))} · {rate(r.ratePaise)}</small></td>
                   <td className="num opt-col money">{count(r.nags)}</td>
                   <td className="num opt-col money">{rate(r.ratePaise)}</td>
                   <td className="num opt-col money">{view === 'group' ? '' : count(r.slips)}</td>
@@ -88,19 +96,20 @@ type Lines = {
 function ItemLines({ shopId, brand, period, setPeriod, onBack }: {
   shopId: string; brand: string; period: ReturnType<typeof usePeriod>[0]; setPeriod: ReturnType<typeof usePeriod>[1]; onBack: () => void
 }) {
+  const { unit } = useUnit(shopId)
   const { data, error, loading } = useLoad(() => api<Lines>(`/v1/admin/shops/${shopId}/items/lines?from=${period.from}&to=${period.to}&brand=${encodeURIComponent(brand)}`), [shopId, brand, period.from, period.to])
   const nags = data?.lines.reduce((t, l) => t + l.qty, 0) ?? 0
   const amount = data?.lines.reduce((t, l) => t + l.amountPaise, 0) ?? 0
   useExport(data ? () => ({
     style: 'book' as const, title: `${brand} · ${t('Maal-wise Bikri')}`, dateLine: dayRange(period.from, period.to), file: fileName(brand, period.from, period.to),
-    columns: [{ label: t('Tarikh') }, { label: t('Parchi') }, { label: t('Grahak'), wide: true }, { label: t('Nag'), num: true }, { label: t('Bhav'), num: true }, { label: t('Rakam'), num: true }],
+    columns: [{ label: t('Tarikh') }, { label: t('Parchi') }, { label: t('Grahak'), wide: true }, { label: unit, num: true }, { label: t('Bhav'), num: true }, { label: t('Rakam'), num: true }],
     rows: data.lines.map((l) => ({ cells: [date(l.day), l.slipNo ? String(l.slipNo) : '', l.name, count(l.qty), rate(l.ratePaise), rs(l.amountPaise)] })),
     foot: ['', '', t('Kul'), count(nags), nags ? rate(Math.round(amount / nags)) : '', rs(amount)],
   }) : null, [data])
   return (
     <>
       <div className="toolbar">
-        <button type="button" className="btn ghost" onClick={onBack}>‹ {t('Maal-wise Bikri')}</button>
+        <button type="button" className="btn ghost" data-back onClick={onBack}>‹ {t('Maal-wise Bikri')}</button>
         <PeriodBar value={period} onChange={setPeriod} />
       </div>
       {error && <p className="error">{error}</p>}
@@ -108,14 +117,14 @@ function ItemLines({ shopId, brand, period, setPeriod, onBack }: {
         <>
           <div className="card sum">
             <div><span className="lb">{t('Maal')}</span><span className="v">{brand}</span></div>
-            <div><span className="lb">{t('Nag')}</span><span className="v">{count(nags)}</span></div>
+            <div><span className="lb">{unit}</span><span className="v">{count(nags)}</span></div>
             <div><span className="lb">{t('Avg bhav')}</span><span className="v">{nags ? rate(Math.round(amount / nags)) : '—'}</span></div>
             <div><span className="lb">{t('Rakam')}</span><span className="v">{rupees(amount)}</span></div>
           </div>
           {data.rates.length > 0 && (
             <div className={`card wrap-x${loading ? ' dim' : ''}`}>
               <table className="tbl">
-                <thead><tr><th>{t('Bhav')}</th><th className="num">{t('Nag')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th></tr></thead>
+                <thead><tr><th>{t('Bhav')}</th><th className="num">{unit}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Rakam')}</th></tr></thead>
                 <tbody>
                   {data.rates.map((r) => (
                     <tr key={r.ratePaise}><td className="money b">{rate(r.ratePaise)}</td><td className="num money">{count(r.qty)}</td><td className="num money">{count(r.slips)}</td><td className="num money">{rupees(r.amountPaise)}</td></tr>
@@ -126,7 +135,7 @@ function ItemLines({ shopId, brand, period, setPeriod, onBack }: {
           )}
           <div className={`card wrap-x${loading ? ' dim' : ''}`}>
             <table className="tbl fold">
-              <thead><tr><th className="opt-col">{t('Tarikh')}</th><th className="opt-col">{t('Parchi')}</th><th>{t('Grahak')}</th><th className="num">{t('Nag')}</th><th className="num">{t('Bhav')}</th><th className="num opt-col">{t('Rakam')}</th></tr></thead>
+              <thead><tr><th className="opt-col">{t('Tarikh')}</th><th className="opt-col">{t('Parchi')}</th><th>{t('Grahak')}</th><th className="num">{unit}</th><th className="num">{t('Bhav')}</th><th className="num opt-col">{t('Rakam')}</th></tr></thead>
               <tbody>
                 {data.lines.map((l, i) => (
                   <tr key={`${l.billId}-${i}`} data-row tabIndex={0} onClick={() => openVoucher(shopId, l.billId)} onKeyDown={(e) => { if (e.key === 'Enter') openVoucher(shopId, l.billId) }}>

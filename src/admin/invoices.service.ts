@@ -105,6 +105,9 @@ export class InvoicesService {
         `SELECT i.number, b.slip_no FROM tax_invoices i JOIN bills b ON b.id = ANY(i.bill_ids) WHERE i.voided_at IS NULL AND b.id = ANY($1::uuid[]) LIMIT 1`, [ids])).rows[0];
       if (taken) throw new ConflictException(`Parchi ${taken.slip_no ?? ''} pehle se invoice ${taken.number} par hai`);
       if (bills.some((b) => b.pay_mode === 'free' || n(b.total_paise) <= 0)) throw new BadRequestException('Free parchi ka invoice nahi banta');
+      // An invoice is never dated before the supply it bills.
+      const early = isDay(input.day) ? bills.find((b) => b.day > input.day!) : undefined;
+      if (early) throw new BadRequestException(`Parchi #${early.slip_no ?? ''} ${early.day.split('-').reverse().join('-')} ki hai — invoice usse pehle ki nahi`);
       const groups = input.mode === 'one' ? [bills] : bills.map((b) => [b]);
       if (input.mode === 'one') {
         const who = new Set(bills.map((b) => b.buyer_id ?? `name:${b.buyer_name.trim().toLowerCase()}`));

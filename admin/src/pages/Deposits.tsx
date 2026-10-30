@@ -138,8 +138,10 @@ function SlipList({ shopId, onOpen }: { shopId: string; onOpen: (id: string) => 
 function ChequeRegister({ shopId, onOpen }: { shopId: string; onOpen: (id: string) => void }) {
   const [status, setStatus] = useState<Status | ''>('pending')
   const [q, setQ] = useState('')
+  const [dq, setDq] = useState('')
+  useEffect(() => { const x = setTimeout(() => setDq(q.trim()), 250); return () => clearTimeout(x) }, [q])
   const [acting, setActing] = useState<Cheque | null>(null)
-  const { data, error, loading } = useLoad(() => api<{ cheques: Cheque[] }>(`/v1/admin/shops/${shopId}/deposits/cheques?status=${status}&q=${encodeURIComponent(q)}`), [shopId, status, q])
+  const { data, error, loading } = useLoad(() => api<{ cheques: Cheque[] }>(`/v1/admin/shops/${shopId}/deposits/cheques?status=${status}&q=${encodeURIComponent(dq)}`), [shopId, status, dq])
   useExport(data ? () => ({
     style: 'book' as const, title: t('Cheque Register'), file: fileName('Cheques', todayIst()),
     columns: [{ label: t('Tarikh') }, { label: t('Grahak'), wide: true }, { label: t('Bank') }, { label: t('Cheque no.') }, { label: t('Rakam'), num: true }, { label: t('Haal') }],
@@ -150,7 +152,7 @@ function ChequeRegister({ shopId, onOpen }: { shopId: string; onOpen: (id: strin
     <>
       <div className="toolbar">
         <Seg value={status} onChange={setStatus} options={[{ key: 'pending', label: t('Bank mein') }, { key: 'cleared', label: t('Clear') }, { key: 'bounced', label: t('Bounce') }, { key: '', label: t('Sab') }]} />
-        <input className="field search grow" data-search placeholder={t('Grahak, bank ya cheque no.')} value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="field search grow" data-search type="search" placeholder={t('Grahak, bank ya cheque no.')} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {error && <p className="error">{error}</p>}
       {!data ? <Skeleton /> : (
@@ -177,8 +179,8 @@ function ChequeTable({ shopId, rows, onSlip, onAct, inSlip }: { shopId: string; 
             <td className="opt-col">{[c.bank, c.branch].filter(Boolean).join(' · ')}<small>{c.city}</small></td>
             <td className="opt-col money">{c.chequeNo}<small>{c.chequeDate ? date(c.chequeDate) : ''}</small></td>
             <td className="num amt-col money b">{rupees(c.amountPaise)}</td>
-            <td className="opt-col">{c.receiptNo ? <button type="button" className="link" onClick={(e) => { e.stopPropagation(); if (c.collectionId) openRaseed(shopId, c.collectionId) }}
-              style={!c.raseedLive ? { textDecoration: 'line-through' } : undefined}>{t('Raseed')} #{c.receiptNo}</button> : <span className="muted">—</span>}</td>
+            <td className="opt-col">{c.collectionId ? <button type="button" className="link" onClick={(e) => { e.stopPropagation(); openRaseed(shopId, c.collectionId!) }}
+              style={!c.raseedLive ? { textDecoration: 'line-through' } : undefined}>{t('Raseed')}{c.receiptNo ? ` #${c.receiptNo}` : ''}</button> : <span className="muted">—</span>}</td>
             <td>
               <span className={`chip ${STATUS[c.status].tone}`}>{t(STATUS[c.status].label)}</span>
               {c.status === 'bounced' && <small>{[c.bounceReason, c.chargesPaise ? `${t('charges')} ${rupees(c.chargesPaise)}` : ''].filter(Boolean).join(' · ')}</small>}
@@ -230,15 +232,17 @@ function SlipView({ shopId, id, onBack, onEdit, edit, onEdited }: {
   const { data: s, error } = useLoad(() => api<Slip>(`/v1/admin/shops/${shopId}/deposits/${id}`), [shopId, id])
   const [acting, setActing] = useState<Cheque | null>(null)
   const [busy, setBusy] = useState(false)
+  const [fail, setFail] = useState('')
   const remove = async () => {
     if (!s || !confirm(t('Parchi #{n} hatayein? Iske raseed bhi hatenge.', { n: String(s.slipNo) }))) return
-    setBusy(true)
-    try { await api(`/v1/admin/shops/${shopId}/deposits/${id}/delete`, { method: 'POST' }); booksChanged() } finally { setBusy(false) }
+    setBusy(true); setFail('')
+    try { await api(`/v1/admin/shops/${shopId}/deposits/${id}/delete`, { method: 'POST' }); booksChanged() }
+    catch (e) { setFail((e as Error).message) } finally { setBusy(false) }
   }
   return (
     <>
       <div className="toolbar">
-        <button type="button" className="btn ghost" onClick={onBack}>‹ {t('Bank Jama Parchi')}</button>
+        <button type="button" className="btn ghost" data-back onClick={onBack}>‹ {t('Bank Jama Parchi')}</button>
         <span className="grow" />
         {s && !s.voided && <>
           <button type="button" className="btn" onClick={() => printSlip(s)}>{t('Print')}</button>
@@ -246,7 +250,7 @@ function SlipView({ shopId, id, onBack, onEdit, edit, onEdited }: {
           <button type="button" className="btn ghost" disabled={busy} onClick={() => void remove()}>{t('Hatayein')}</button>
         </>}
       </div>
-      {error && <p className="error">{error}</p>}
+      {(error || fail) && <p className="error">{error || fail}</p>}
       {!s ? <Skeleton /> : (
         <>
           <div className="card sum">
@@ -301,6 +305,7 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
   const [daybook, setDaybook] = useState(slip ? slip.daybook || !slip.cashPaise : true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [tried, setTried] = useState(false)
 
   // A new slip starts on the shop's first account; one with none starts blank, to be remembered.
   useEffect(() => {
@@ -327,12 +332,13 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
     } catch { /* the line still works by hand */ }
   }
 
+  const needPan = cash >= 5_000_000 && !/^[A-Z]{5}\d{4}[A-Z]$/.test(account.pan)
   const save = async () => {
-    setError('')
-    if (!account.account.trim()) return setError(t('Account number daalein'))
-    if (!total) return setError(t('Cheque ya cash daalein'))
+    setError(''); setTried(true)
     const filled = lines.filter((l) => l.amount > 0)
-    if (filled.some((l) => !l.chequeNo.trim())) return setError(t('Har cheque ka number daalein'))
+    // Each miss is said beside its box; only "nothing at all" goes at the foot.
+    if (!account.account.trim() || needPan || filled.some((l) => !l.chequeNo.trim())) return
+    if (!total) return setError(t('Cheque ya cash daalein'))
     setSaving(true)
     try {
       const body = {
@@ -366,7 +372,7 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
         <div className="card" style={{ padding: 12, display: 'grid', gap: 10 }}>
           <div className="row2">
             <Field label={t('Naam (account)')}><input className="field" style={caps} value={account.holder} onChange={(e) => setAccount({ ...account, holder: e.target.value })} /></Field>
-            <Field label={t('Account number')}><input className="field" inputMode="numeric" value={account.account} onChange={(e) => setAccount({ ...account, account: e.target.value.replace(/[^\d]/g, '') })} /></Field>
+            <Field label={t('Account number')} error={tried && !account.account.trim() ? t('Account number daalein') : ''}><input className="field" inputMode="numeric" value={account.account} onChange={(e) => setAccount({ ...account, account: e.target.value.replace(/[^\d]/g, '') })} /></Field>
           </div>
           <div className="row2">
             <Field label={t('Bank')}><input className="field" style={caps} value={account.bank} onChange={(e) => setAccount({ ...account, bank: e.target.value })} /></Field>
@@ -374,7 +380,7 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
           </div>
           <div className="row2">
             <Field label={t('Contact no.')}><input className="field" inputMode="tel" value={account.phone} onChange={(e) => setAccount({ ...account, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} /></Field>
-            <Field label={t('PAN')}><input className="field" style={caps} maxLength={10} value={account.pan} onChange={(e) => setAccount({ ...account, pan: e.target.value.toUpperCase() })} /></Field>
+            <Field label={t('PAN')} error={tried && needPan ? t('PAN zaroori') : ''}><input className="field" style={caps} maxLength={10} value={account.pan} onChange={(e) => setAccount({ ...account, pan: e.target.value.toUpperCase() })} /></Field>
           </div>
         </div>
       )}
@@ -385,7 +391,7 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
         <div key={l.key} className="card" style={{ padding: 12, display: 'grid', gap: 10, opacity: l.locked ? 0.6 : 1 }}>
           <div className="row2">
             <Field label={`${i + 1}. ${t('Grahak')}`}>
-              {l.locked ? <input className="field" disabled value={l.buyer?.name ?? l.drawer} /> : <BuyerPicker shopId={shopId} value={l.buyer} onChange={(b) => void pickBuyer(l.key, b)} walkIn />}
+              {l.locked ? <input className="field" disabled value={l.buyer?.name ?? l.drawer} /> : <BuyerPicker shopId={shopId} value={l.buyer} onChange={(b) => void pickBuyer(l.key, b)} walkIn autoFocus={!slip && i === 0} />}
             </Field>
             <Field label={t('Rakam')}>{l.locked ? <input className="field" disabled value={rupees(l.amount)} /> : <Money value={l.amount} onChange={(v) => setLine(l.key, { amount: v })} />}</Field>
           </div>
@@ -398,7 +404,7 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
             <Field label={t('Shehar')}><input className="field" style={caps} value={l.city} onChange={(e) => setLine(l.key, { city: e.target.value })} /></Field>
           </div>
           <div className="row2">
-            <Field label={t('Cheque no.')}><input className="field" inputMode="numeric" maxLength={12} value={l.chequeNo} onChange={(e) => setLine(l.key, { chequeNo: e.target.value.replace(/\D/g, '') })} /></Field>
+            <Field label={t('Cheque no.')} error={tried && l.amount > 0 && !l.chequeNo.trim() ? t('Cheque number daalein') : ''}><input className="field" inputMode="numeric" maxLength={12} value={l.chequeNo} onChange={(e) => setLine(l.key, { chequeNo: e.target.value.replace(/\D/g, '') })} /></Field>
             <Field label={t('Cheque ki tarikh')}><input className="field" type="date" value={l.chequeDate} onChange={(e) => setLine(l.key, { chequeDate: e.target.value })} /></Field>
           </div>
           {l.buyer?.id && !l.locked && (
@@ -407,7 +413,8 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
               setLine(l.key, { raseed: v || null, ...(r ? { amount: r.amountPaise } : {}) })
             }} options={[
               { key: 'new', label: t('Khate mein jama') },
-              ...l.raseeds.map((r) => ({ key: r.id, label: `${t('Raseed')} #${r.receiptNo} · ${rupees(r.amountPaise)}` })),
+              // A raseed from an app without numbers is told apart by its day.
+              ...l.raseeds.map((r) => ({ key: r.id, label: [r.receiptNo ? `${t('Raseed')} #${r.receiptNo}` : t('Raseed'), rupees(r.amountPaise), r.receiptNo ? '' : date(r.day)].filter(Boolean).join(' · ') })),
               ...(l.raseed && l.raseed !== 'new' && !l.raseeds.some((r) => r.id === l.raseed) ? [{ key: l.raseed, label: t('Raseed juda') }] : []),
               { key: '', label: t('Sirf parchi') },
             ]} />
@@ -429,7 +436,7 @@ function SlipSheet({ shopId, slip, onClose, onSaved }: { shopId: string; slip: S
         <Field label={t('Sikke')}><Money value={notes.coins ?? 0} onChange={(v) => setNotes({ ...notes, coins: v })} /></Field>
       </div>
       {cash > 0 && <Tick label={t('Day Book mein bank jama ({amt})', { amt: rupees(cash) })} on={daybook} onChange={setDaybook} />}
-      {cash >= 5_000_000 && !/^[A-Z]{5}\d{4}[A-Z]$/.test(account.pan) && <p className="error" style={{ margin: 0 }}>{t('₹50,000 se zyada cash ke liye PAN zaroori hai')}</p>}
+      {needPan && <p className="error" style={{ margin: 0 }}>{t('₹50,000 se zyada cash ke liye PAN zaroori hai')}</p>}
 
       <Field label={t('Note')}><input className="field" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} /></Field>
       <div className="card" style={{ padding: 12, background: 'var(--box)' }}>
@@ -449,7 +456,7 @@ function printSlip(s: Slip) {
   const boxes = (v: string, n: number) => `<span class="boxes">${Array.from({ length: n }, (_, i) => `<i>${esc(v[i] ?? '')}</i>`).join('')}</span>`
   const d = s.day.split('-').reverse().join('')
   const chequeRows = (full: boolean) => [...s.cheques, ...Array(Math.max(0, 4 - s.cheques.length)).fill(null)].map((c: Cheque | null) => c
-    ? `<tr><td>${esc([c.bank, c.branch].filter(Boolean).join(', '))}${full ? '' : ` · ${esc(c.name || c.drawer)}`}</td>${full ? `<td>${esc(c.city)}</td>` : ''}<td>${esc(c.chequeNo)}</td><td class="n">${r(c.amountPaise)}</td></tr>`
+    ? `<tr><td>${esc(full ? [c.bank, c.branch].filter(Boolean).join(', ') : [[c.bank, c.branch].filter(Boolean).join(', '), c.name || c.drawer].filter(Boolean).join(' · '))}</td>${full ? `<td>${esc(c.city)}</td>` : ''}<td>${esc(c.chequeNo)}</td><td class="n">${r(c.amountPaise)}</td></tr>`
     : `<tr><td>&nbsp;</td>${full ? '<td></td>' : ''}<td></td><td></td></tr>`).join('')
   const cashRows = [...NOTES, 'coins'].map((k) => `<tr><td>${k === 'coins' ? 'Coins' : `${k} ×`}</td><td class="n">${k === 'coins' ? (s.notes[k] ? r(s.notes[k]) : '') : (s.notes[k] || '')}</td><td class="n">${s.notes[k] ? r(k === 'coins' ? s.notes[k] : s.notes[k] * Number(k) * 100) : ''}</td></tr>`).join('')
   const head = (title: string) => `<div class="hd"><b>${esc(s.account.bank || 'BANK')}</b><span>${title} · No. ${s.slipNo}</span><span>Date ${boxes(d, 8)}</span></div>

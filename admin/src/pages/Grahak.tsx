@@ -85,7 +85,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         <Crumb to={back}>{t('Grahak Ledger')}</Crumb>
         <div className="head" style={{ marginBottom: 0 }}>
           <div className="grow">
-            <h1>{b.code && <span className="code big">{b.code}</span>}{b.name}</h1>
+            <h1>{b.code && <span className="code big">{b.code}</span>}{b.name}{b.hidden && <span className="chip grey" style={{ marginLeft: 8, verticalAlign: 'middle' }}>{t('Chhupa hua')}</span>}</h1>
             <p>{[b.kind, b.address, b.destination && `→ ${b.destination}`, b.vehicle, b.gstin && `GSTIN ${b.gstin}`].filter(Boolean).join(' · ')}</p>
           </div>
           {mobile && <a className="call" href={`tel:+91${b.phone}`}>☎ {phone(b.phone)}</a>}
@@ -118,16 +118,25 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
   const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination, area: b.area ?? '', gstin: b.gstin ?? '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [tried, setTried] = useState(false)
+  // A refusal from the server is about what was sent: typing again clears it.
+  useEffect(() => { setError('') }, [f])
   const send = async (body: object, then: () => void) => {
     setSaving(true); setError('')
     try { await api(`/v1/admin/shops/${shopId}/grahak/${b.id}`, { method: 'POST', body }); booksChanged(); then() }
     catch (e) { setError((e as Error).message) } finally { setSaving(false) }
   }
+  const bad = {
+    name: tried && !f.name.trim() ? t('Naam daalein') : /naam/i.test(error) ? error : '',
+    phone: tried && f.phone && !/^[6-9]\d{9}$/.test(f.phone) ? t('Mobile number 10 ank ka hona chahiye') : /mobile/i.test(error) ? error : '',
+    code: /^code/i.test(error) ? error : '',
+    gstin: tried && f.gstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(f.gstin) ? t('GSTIN 15 akshar ka hota hai') : /gstin/i.test(error) ? error : '',
+  }
   const save = () => {
-    if (!f.name.trim()) return setError(t('Naam daalein'))
-    if (f.phone && !/^[6-9]\d{9}$/.test(f.phone)) return setError(t('Mobile number 10 ank ka hona chahiye'))
-    if (f.gstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(f.gstin)) return setError(t('GSTIN 15 akshar ka hota hai'))
-    void send({ name: caps ? f.name.toUpperCase() : f.name, code: f.code, phone: f.phone, address: f.address, destination: f.destination, area: f.area, gstin: f.gstin }, onClose)
+    setTried(true); setError('')
+    if (!f.name.trim() || (f.phone && !/^[6-9]\d{9}$/.test(f.phone)) || (f.gstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(f.gstin))) return
+    const up = (v: string) => (caps ? v.trim().toUpperCase() : v.trim())
+    void send({ name: up(f.name), code: f.code.trim(), phone: f.phone, address: up(f.address), destination: up(f.destination), area: f.area, gstin: f.gstin }, onClose)
   }
   const hide = () => {
     if (!confirm(t('{name} ko list se hatayein?', { name: b.name }))) return
@@ -135,11 +144,11 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
   }
   const up = caps ? { textTransform: 'uppercase' as const } : undefined
   return (
-    <Sheet title={t('Grahak badlein')} onClose={onClose} onSave={save} saving={saving} error={error}>
-      <Field label={t('Naam')}><input className="field" style={up} autoFocus maxLength={120} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+    <Sheet title={t('Grahak badlein')} onClose={onClose} onSave={save} saving={saving} error={bad.name || bad.phone || bad.code || bad.gstin ? '' : error}>
+      <Field label={t('Naam')} error={bad.name}><input className="field" style={up} autoFocus maxLength={120} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <div className="row2">
-        <Field label={t('Mobile')}><input className="field" inputMode="tel" maxLength={10} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
-        <Field label={t('Code')}><input className="field" maxLength={20} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
+        <Field label={t('Mobile')} error={bad.phone}><input className="field" inputMode="tel" maxLength={10} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, '') })} /></Field>
+        <Field label={t('Code')} error={bad.code}><input className="field" maxLength={20} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} /></Field>
       </div>
       <Field label={t('Dukaan / pata')}><input className="field" style={up} maxLength={200} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
       <div className="row2">
@@ -147,8 +156,10 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
         <Field label={t('Area')}><input className="field" style={{ textTransform: 'uppercase' }} list="grahak-areas" maxLength={60} value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })} /></Field>
       </div>
       <AreaDatalist shopId={shopId} id="grahak-areas" />
-      <Field label={t('GSTIN (invoice ke liye)')}><input className="field" style={{ textTransform: 'uppercase' }} maxLength={15} value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value.toUpperCase().replace(/\s/g, '') })} /></Field>
-      {balancePaise === 0 && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={hide}>{t('List se hatayein')}</button>}
+      <Field label={t('GSTIN (invoice ke liye)')} error={bad.gstin}><input className="field" style={{ textTransform: 'uppercase' }} maxLength={15} value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value.toUpperCase().replace(/\s/g, '') })} /></Field>
+      {b.hidden
+        ? <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={() => void send({ hidden: false }, onClose)}>{t('List mein wapas laayein')}</button>
+        : balancePaise === 0 && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={hide}>{t('List se hatayein')}</button>}
     </Sheet>
   )
 }

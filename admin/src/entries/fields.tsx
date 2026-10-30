@@ -7,9 +7,16 @@ import { t } from '../i18n'
 export function Sheet({ title, onClose, onSave, saving, error, saveLabel = t('Save'), wide, children }: {
   title: string; onClose: () => void; onSave: () => void; saving: boolean; error: string; saveLabel?: string; wide?: boolean; children: ReactNode
 }) {
+  const form = useRef<HTMLFormElement>(null)
+  // The keys work from the moment it opens, and again after a refused Save: focus is never left
+  // on the page behind it (the button that opened it, or nothing once Save was disabled).
+  useEffect(() => {
+    const f = form.current
+    if (!saving && f && !f.contains(document.activeElement)) f.focus({ preventScroll: true })
+  }, [saving])
   return (
     <div className="scrim sheet-scrim" onClick={() => !saving && onClose()}>
-      <form className={`sheet${wide ? ' wide' : ''}`} role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}
+      <form ref={form} tabIndex={-1} className={`sheet${wide ? ' wide' : ''}`} role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onSave() } }}
         onSubmit={(e) => { e.preventDefault(); onSave() }}>
         <div className="sheet-hd"><h3>{title}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={onClose}>✕</button></div>
@@ -24,12 +31,13 @@ export function Sheet({ title, onClose, onSave, saving, error, saveLabel = t('Sa
   )
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
+/** A form field; [error] is said right under it (and marks it), not only at the foot of the sheet. */
+export function Field({ label, children, hint, error }: { label: string; children: ReactNode; hint?: ReactNode; error?: string }) {
   return (
-    <label className="fld">
+    <label className={`fld${error ? ' bad' : ''}`}>
       <span className="fld-lb">{label}</span>
       {children}
-      {hint && <span className="fld-hint">{hint}</span>}
+      {error ? <span className="fld-err" role="alert">{error}</span> : hint && <span className="fld-hint">{hint}</span>}
     </label>
   )
 }
@@ -69,23 +77,37 @@ const walkInLabel = (name: string) => (name === 'Bank' ? t('Bank (UPI)') : t('Ca
  * Grahak by name, mobile or code — with the baaki beside each. [walkIn] puts Cash and Bank first
  * and adds "Naya: <name>" for a name the shop hasn't seen, as the parchi screen allows.
  */
-export function BuyerPicker({ shopId, value, onChange, walkIn, autoFocus }: {
+export function BuyerPicker({ shopId, value, onChange, walkIn, autoFocus, exclude }: {
   shopId: string; value: PickedBuyer | null; onChange: (b: PickedBuyer | null) => void; walkIn?: boolean; autoFocus?: boolean
+  /** Grahak not to offer (a voucher's other side). */
+  exclude?: (string | null | undefined)[]
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const [list, setList] = useState<BuyerRow[]>([])
   const [sel, setSel] = useState(0)
   const box = useRef<HTMLInputElement>(null)
+  const chosen = useRef<HTMLButtonElement>(null)
+  const [moveOn, setMoveOn] = useState(false)
+  // Picked: the next box takes the keys (Tally's Enter-to-next), not the page behind.
+  useEffect(() => {
+    if (!moveOn) return
+    setMoveOn(false)
+    if (!chosen.current) return
+    const scope = chosen.current.closest('form, .card, main') ?? document.body
+    const all = [...scope.querySelectorAll<HTMLElement>('input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), button.picked')]
+    const next = all[all.indexOf(chosen.current) + 1]
+    ;(next ?? chosen.current).focus()
+  }, [moveOn, value])
   useEffect(() => {
     if (!open) return
     let live = true
     const t = setTimeout(() => {
       api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(q.trim())}`)
-        .then((r) => { if (live) setList(r.buyers.filter((b) => !b.hidden).slice(0, 8)) }).catch(() => {})
+        .then((r) => { if (live) setList(r.buyers.filter((b) => !b.hidden && !exclude?.includes(b.id)).slice(0, 8)) }).catch(() => {})
     }, 150)
     return () => { live = false; clearTimeout(t) }
-  }, [q, open, shopId])
+  }, [q, open, shopId, exclude?.join()]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const typed = q.trim().toLowerCase()
   const opts: PickedBuyer[] = [
@@ -93,11 +115,11 @@ export function BuyerPicker({ shopId, value, onChange, walkIn, autoFocus }: {
     ...list.map((b) => ({ id: b.id, name: b.name, balancePaise: b.balancePaise, sub: b.phone, address: b.address, destination: b.destination })),
     ...(walkIn && typed && !isWalkInName(typed) && !list.some((b) => b.name.toLowerCase() === typed) ? [{ id: null, name: q.trim() }] : []),
   ]
-  const pick = (b: PickedBuyer) => { onChange(b); setOpen(false); setQ('') }
+  const pick = (b: PickedBuyer) => { onChange(b); setOpen(false); setQ(''); setMoveOn(true) }
 
   if (value && !open) {
     return (
-      <button type="button" className="picked" onClick={() => { setOpen(true); setTimeout(() => box.current?.focus()) }}>
+      <button ref={chosen} type="button" className="picked" onClick={() => { setOpen(true); setTimeout(() => box.current?.focus()) }}>
         <b>{value.id === null && isWalkInName(value.name) ? walkInLabel(value.name) : value.name}</b>
         {value.id === null && !isWalkInName(value.name) && <span className="chip blue">{t('Naya')}</span>}
         {value.balancePaise ? <span className={`money ${value.balancePaise > 0 ? 'due' : 'jama'}`}>{rupees(Math.abs(value.balancePaise))} {value.balancePaise > 0 ? t('baaki') : t('jama')}</span> : null}
@@ -114,6 +136,8 @@ export function BuyerPicker({ shopId, value, onChange, walkIn, autoFocus }: {
           if (e.key === 'ArrowDown') { e.preventDefault(); setSel(Math.min(opts.length - 1, sel + 1)) }
           else if (e.key === 'ArrowUp') { e.preventDefault(); setSel(Math.max(0, sel - 1)) }
           else if (e.key === 'Enter' && opts[sel]) { e.preventDefault(); pick(opts[sel]) }
+          // Esc shuts the list first; only a second Esc reaches the form (and closes it).
+          else if (e.key === 'Escape' && open && opts.length) { e.stopPropagation(); setOpen(false) }
         }} />
       {open && opts.length > 0 && (
         <div className="combo-list" role="listbox">

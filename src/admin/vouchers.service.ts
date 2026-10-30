@@ -200,14 +200,14 @@ export class VouchersService {
     });
   }
 
-  /** A parchi's lines, for a credit note against it: quality, grade, boxes and bhav. */
-  async cnSlip(shopId: string, billId: string) {
+  /** A parchi's lines, for a credit note against it: quality, grade, boxes and bhav; what notes (but [except], the one being altered) already gave back. */
+  async cnSlip(shopId: string, billId: string, except: string | null = null) {
     return this.db.withShop(shopId, async (tx) => {
       const b = (await tx.query<{ id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; day: string; total_paise: string }>(
         `SELECT id, slip_no, buyer_id, buyer_name, business_date::text AS day, total_paise FROM ${LIVE_BILLS} lb WHERE id = $1`, [billId])).rows[0];
       if (!b) throw new NotFoundException('Parchi nahi mili');
       return { billId: b.id, slipNo: b.slip_no, buyerId: b.buyer_id, buyerName: b.buyer_name, date: b.day, totalPaise: n(b.total_paise), lines: await slipLines(tx, b.id),
-        creditedPaise: await credited(tx, b.id, null) };
+        creditedPaise: await credited(tx, b.id, except) };
     });
   }
 

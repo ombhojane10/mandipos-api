@@ -365,8 +365,8 @@ export class AdminController {
   }
 
   @Get('shops/:id/credit-notes/slip/:billId')
-  cnSlip(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string) {
-    return this.vouchers.cnSlip(mine(v, id), parse(Id, billId));
+  cnSlip(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string, @Query('except') except?: string) {
+    return this.vouchers.cnSlip(mine(v, id), parse(Id, billId), except ? parse(Id, except) : null);
   }
 
   @Get('shops/:id/credit-notes/:cid')

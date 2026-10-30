@@ -114,7 +114,7 @@ export type HistoryRow = {
 }
 
 export type BuyerDetail = {
-  buyer: { id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; vehicle: string; creditLimitPaise: number; marketPaise: number | null; since: string; gstin?: string }
+  buyer: { id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; vehicle: string; creditLimitPaise: number; marketPaise: number | null; since: string; gstin?: string; hidden?: boolean }
   totals: { balancePaise: number; boughtPaise: number; nags: number; slips: number; paidPaise: number; lastSlipOn: string | null }
   history: HistoryRow[]
 }

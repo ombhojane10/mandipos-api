@@ -879,15 +879,33 @@ export class EntriesService {
   async updateGrahak(phone: string, shopId: string, buyerId: string, patch: { phone?: string; address?: string; destination?: string; code?: string; name?: string; kind?: '' | 'laddan'; hidden?: boolean } & LaddanFields) {
     const p = await this.device(phone, shopId);
     const g = await this.db.withShop(shopId, async (tx) => (await tx.query<{
-      id: string; created_at: Date; name: string; phone: string; kind: string; credit_limit_paise: string; vehicle: string; address: string; destination: string; hidden: boolean
-    }>(`SELECT id, created_at, name, phone, kind, credit_limit_paise, vehicle, address, destination, hidden FROM buyers WHERE id = $1`, [buyerId])).rows[0]);
+      id: string; created_at: Date; name: string; phone: string; kind: string; credit_limit_paise: string; vehicle: string; address: string; destination: string; hidden: boolean; code: string | null
+    }>(`SELECT id, created_at, name, phone, kind, credit_limit_paise, vehicle, address, destination, hidden, code FROM buyers WHERE id = $1`, [buyerId])).rows[0]);
     if (!g) throw new BadRequestException('Grahak nahi mila');
     if (patch.phone !== undefined && patch.phone && !/^[6-9]\d{9}$/.test(patch.phone)) throw new BadRequestException('Mobile number 10 ank ka hona chahiye');
+    const caps = await this.capsNames(shopId);
+    const name = patch.name !== undefined && caps ? patch.name.trim().toUpperCase() : (patch.name ?? g.name).trim();
+    if (!name) throw new BadRequestException('Naam daalein');
+    const hidden = patch.hidden ?? g.hidden;
+    await this.db.withShop(shopId, async (tx) => {
+      // Two khatas under one name (or one code) can't be told apart at the counter.
+      if (!hidden && (name.toLowerCase() !== g.name.trim().toLowerCase() || g.hidden)) {
+        const twin = (await tx.query<{ code: string }>(`SELECT code FROM buyers WHERE hidden = false AND id <> $1 AND lower(trim(name)) = lower($2) LIMIT 1`, [g.id, name])).rows[0];
+        if (twin) throw new ConflictException(`Is naam ka grahak pehle se hai${twin.code ? ` (code ${twin.code})` : ''}`);
+      }
+      const code = patch.code?.trim().toUpperCase();
+      if (code && code !== (g.code ?? '').trim().toUpperCase()) {
+        const other = (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE hidden = false AND id <> $1 AND upper(trim(code)) = $2 LIMIT 1`, [g.id, code])).rows[0];
+        if (other) throw new ConflictException(`Code ${code} pehle se ${other.name} ka hai`);
+      }
+    });
+    const up = (v: string) => (caps ? v.trim().toUpperCase() : v.trim());
     const row: Record<string, unknown> = {
       id: g.id, created_at: g.created_at.toISOString(), updated_at: new Date().toISOString(),
-      name: patch.name !== undefined && (await this.capsNames(shopId)) ? patch.name.trim().toUpperCase() : (patch.name ?? g.name).trim(),
+      name,
       phone: patch.phone ?? g.phone, kind: patch.kind ?? g.kind, credit_limit_paise: n(g.credit_limit_paise),
-      vehicle: g.vehicle, address: (patch.address ?? g.address).trim(), destination: (patch.destination ?? g.destination).trim(), hidden: patch.hidden ?? g.hidden,
+      vehicle: g.vehicle, address: patch.address !== undefined ? up(patch.address) : g.address.trim(),
+      destination: patch.destination !== undefined ? up(patch.destination) : g.destination.trim(), hidden,
       ...(patch.code !== undefined ? { code: patch.code.trim().toUpperCase() } : {}),
       ...laddanCols(patch),
     };

@@ -199,8 +199,8 @@ export class AdminService {
   async buyer(shopId: string, buyerId: string) {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
-      const g = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; vehicle: string; credit_limit_paise: string; market_paise: string | null; created_at: Date; gstin: string | null }>(
-        `SELECT id, name, phone, code, kind, address, destination, area, vehicle, credit_limit_paise, market_paise, created_at,
+      const g = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; vehicle: string; credit_limit_paise: string; market_paise: string | null; created_at: Date; gstin: string | null; hidden: boolean }>(
+        `SELECT id, name, phone, code, kind, address, destination, area, vehicle, credit_limit_paise, market_paise, created_at, hidden,
                 (SELECT x.gstin FROM buyer_gstin x WHERE x.buyer_id = b.id) AS gstin FROM buyers b WHERE id = $1`, [buyerId])).rows[0];
       if (!g) throw new NotFoundException('Grahak nahi mila');
 
@@ -211,7 +211,7 @@ export class AdminService {
         buyer: {
           id: g.id, name: g.name, phone: g.phone, code: g.code, kind: g.kind, address: g.address, destination: g.destination, area: g.area,
           vehicle: g.vehicle, creditLimitPaise: n(g.credit_limit_paise), marketPaise: g.market_paise === null ? null : n(g.market_paise),
-          since: g.created_at.toISOString(), gstin: g.gstin ?? '',
+          since: g.created_at.toISOString(), gstin: g.gstin ?? '', hidden: g.hidden,
         },
         totals: {
           balancePaise: bal,

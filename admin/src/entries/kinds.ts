@@ -13,7 +13,7 @@ export const ENTRY_TYPES: { kind: EntryKind; label: string; sub: string }[] = [
   { kind: 'bikri', label: t('Bikri Entry'), sub: t('Ek gaadi, kai grahak') },
   { kind: 'jv', label: t('Journal Voucher'), sub: t('Khate se khata') },
   { kind: 'cn', label: t('Credit Note'), sub: t('Grahak ka kam') },
-  { kind: 'invoice', label: t('Tax Invoice'), sub: t('Parchi se invoice') },
+  { kind: 'invoice', label: t('Invoice'), sub: t('Parchi se invoice') },
 ]
 
 /** Opens an entry form from anywhere: the + button, the dashboard, or Alt+N. No kind = the menu. */

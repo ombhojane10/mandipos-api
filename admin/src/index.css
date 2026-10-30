@@ -335,6 +335,14 @@ a.kpi:hover { border-color: #cfd3da; }
 .fld { display: grid; gap: 6px; min-width: 0; }
 .fld-lb { font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .fld-hint { font-size: 12.5px; color: var(--muted); }
+.fld-err { font-size: 12.5px; color: var(--due); font-weight: 600; }
+.fld.bad .field, .fld.bad .picked, .fld.bad .money-in .field { border-color: var(--due); }
+.sheet:focus { outline: none; }
+/* A date box has a wide built-in minimum; in a half-width column on a phone it would spill out. */
+.fld input[type="date"].field { min-width: 0; width: 100%; }
+.total-line.jv-preview { display: grid; gap: 4px; }
+.jv-preview > div { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.total-line.jv-preview b { font-size: inherit; min-width: 0; overflow-wrap: anywhere; }
 .row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .seg.wide { display: flex; flex-wrap: wrap; }
 .seg.wide button { flex: 1; }
@@ -1270,6 +1278,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .bikri-grid .money-in { min-width: 100px; }
 .grahak-cell { display: flex; align-items: center; gap: 4px; }
 .grahak-cell .cell-tag { flex: none; font-size: 10.5px; padding: 0 5px; }
+.bikri-grid .field.bad { border-color: var(--due); background: #fff1ef; }
 .field.num-in { width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
 .cn-lines .money-in { width: 110px; margin-left: auto; }
 .jv-sides { align-items: start; }

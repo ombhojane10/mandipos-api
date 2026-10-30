@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useSession } from '../App'
 import { api, type BuyerRow, type ShopSettings } from '../api'
 import { count, date, phone as fmtPhone, rate as fmtRate, rupees, todayIst } from '../format'
 import { usePeriod } from '../hooks'
 import { t } from '../i18n'
 import { openVoucher } from '../keys'
+import { openDraft } from '../entries/kinds'
 import { hashQuery, href, setHashQuery } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { PeriodBar, Skeleton } from '../ui'
@@ -39,6 +40,8 @@ const REASONS: { key: Reason; label: string }[] = [
   { key: 'rate', label: t('Rate farq') }, { key: 'kharab', label: t('Maal kharab') }, { key: 'wapsi', label: t('Maal wapas') }, { key: 'discount', label: t('Discount') }, { key: 'other', label: t('Aur') },
 ]
 const reasonLabel = (r: Reason) => REASONS.find((x) => x.key === r)?.label ?? r
+/** A coconut grade as the counter says it: 1st, 2nd, 3rd, Mix. */
+const gradeLabel = (g: string) => ({ '1': '1st', '2': '2nd', '3': '3rd', mix: 'Mix' } as Record<string, string>)[g] ?? g
 const KINDS: { key: Kind; label: string }[] = [{ key: 'grahak', label: t('Grahak') }, { key: 'supplier', label: t('Supplier') }, { key: 'head', label: t('Head') }]
 const caps = { textTransform: 'uppercase' as const }
 const useCaps = (shopId: string) => useSession().shops?.find((s) => s.id === shopId)?.commodity === 'angoor'
@@ -83,11 +86,12 @@ export function JournalVouchers({ shopId }: { shopId: string }) {
   const [q, setQ] = useQuery()
   const dq = useDebounced(q)
   const [open, setOpen] = useState<Jv | 'new' | null>(null)
+  const [toast, say] = useToast()
   const { data, error, loading } = useLoad(() => api<{ vouchers: Jv[]; totalPaise: number }>(
     `/v1/admin/shops/${shopId}/jv?from=${period.from}&to=${period.to}&q=${encodeURIComponent(dq)}`), [shopId, period.from, period.to, dq])
   useExport(data ? () => ({
     style: 'book' as const, title: t('Journal Voucher'), dateLine: dayRange(period.from, period.to), file: fileName('JV', period.from, period.to),
-    columns: [{ label: t('No.') }, { label: t('Tarikh') }, { label: 'Dr' }, { label: 'Cr' }, { label: t('Narration'), wide: true }, { label: t('Rakam'), num: true }],
+    columns: [{ label: t('No.') }, { label: t('Tarikh') }, { label: t('Naam (Dr)') }, { label: t('Jama (Cr)') }, { label: t('Narration'), wide: true }, { label: t('Rakam'), num: true }],
     rows: data.vouchers.map((v) => ({ strike: v.voided, cells: [String(v.no), dmyLong(v.date), v.dr.name, v.cr.name, v.narration, rs(v.amountPaise)] })),
     foot: ['', '', '', '', t('Kul'), rs(data.totalPaise)],
   }) : null, [data])
@@ -102,7 +106,7 @@ export function JournalVouchers({ shopId }: { shopId: string }) {
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
           <table className="tbl fold">
-            <thead><tr><th className="opt-col">{t('No.')}</th><th className="opt-col">{t('Tarikh')}</th><th>Dr</th><th>Cr</th><th className="opt-col">{t('Narration')}</th><th className="num">{t('Rakam')}</th></tr></thead>
+            <thead><tr><th className="opt-col">{t('No.')}</th><th className="opt-col">{t('Tarikh')}</th><th>{t('Naam (Dr)')}</th><th>{t('Jama (Cr)')}</th><th className="opt-col">{t('Narration')}</th><th className="num">{t('Rakam')}</th></tr></thead>
             <tbody>
               {data.vouchers.map((v) => (
                 <tr key={v.id} data-row tabIndex={0} className={v.voided ? 'muted' : ''} onClick={() => setOpen(v)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(v) }}>
@@ -120,7 +124,8 @@ export function JournalVouchers({ shopId }: { shopId: string }) {
           {data.vouchers.length === 0 && <p className="empty">{t('Is samay koi JV nahi')}</p>}
         </div>
       )}
-      {open && <JvSheet shopId={shopId} jv={open === 'new' ? null : open} onClose={() => setOpen(null)} onDone={() => setOpen(null)} />}
+      {open && <JvSheet shopId={shopId} jv={open === 'new' ? null : open} onClose={() => setOpen(null)} onDone={(m) => { setOpen(null); say(m) }} />}
+      {toast}
     </>
   )
 }
@@ -131,19 +136,25 @@ const fromSide = (s: SideRow): Acct => ({ kind: s.kind, buyer: s.kind === 'graha
 const acctBody = (a: Acct) => (a.kind === 'grahak' ? { kind: 'grahak', id: a.buyer?.id } : a.kind === 'supplier' ? { kind: 'supplier', name: a.name.trim() } : { kind: 'head', key: a.key })
 const acctName = (a: Acct, o: JvOptions | null) => (a.kind === 'grahak' ? a.buyer?.name ?? '' : a.kind === 'supplier' ? a.name.trim() : o?.heads.find((h) => h.key === a.key)?.name ?? '')
 const acctReady = (a: Acct) => (a.kind === 'grahak' ? !!a.buyer?.id : a.kind === 'supplier' ? !!a.name.trim() : !!a.key)
-/** What a side of the voucher does, said as the khata says it. */
-function effect(a: Acct, dr: boolean, paise: number, o: JvOptions | null) {
+/** A supplier name as the books match it (case, spaces and dots aside). */
+const supKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+/** Both sides the same account: a voucher that would move nothing. */
+const sameAcct = (a: Acct, b: Acct) => a.kind === b.kind && acctReady(a) && acctReady(b)
+  && (a.kind === 'grahak' ? a.buyer?.id === b.buyer?.id : a.kind === 'supplier' ? supKey(a.name) === supKey(b.name) : a.key === b.key)
+/** What a side does, in plain words: who owes more or less, what we owe, which kharcha or aamdani. */
+function effect(a: Acct, dr: boolean, paise: number, o: JvOptions | null): [string, string] | null {
   const name = acctName(a, o)
-  if (!name || !paise) return ''
+  if (!name || !paise) return null
   const amt = rupees(paise)
-  if (a.kind === 'grahak') return `${name}: ${t('baaki')} ${dr ? '+' : '−'}${amt}`
-  if (a.kind === 'supplier') return `${name}: ${t('dena')} ${dr ? '−' : '+'}${amt}`
-  return `${name}: ${dr ? 'Dr' : 'Cr'} ${amt}`
+  if (a.kind === 'grahak') return [name, dr ? t('baaki {amt} badhega', { amt }) : t('baaki {amt} ghatega', { amt })]
+  if (a.kind === 'supplier') return [name, dr ? t('humara dena {amt} ghatega', { amt }) : t('humara dena {amt} badhega', { amt })]
+  const income = o?.heads.find((h) => h.key === a.key)?.type === 'income'
+  return [name, income ? (dr ? t('aamdani {amt} kam', { amt }) : t('aamdani {amt}', { amt })) : (dr ? t('kharcha {amt}', { amt }) : t('kharcha {amt} kam', { amt }))]
 }
 
-/** One account: grahak (by name, mobile or code), supplier (by name), or a ledger head (or a new one). */
-function AccountPicker({ shopId, value, onChange, o, reload, autoFocus }: {
-  shopId: string; value: Acct; onChange: (a: Acct) => void; o: JvOptions | null; reload: () => Promise<JvOptions | null>; autoFocus?: boolean
+/** One account: grahak (by name, mobile or code), supplier (by name), or a ledger head (or a new one). The other side's account is not offered. */
+function AccountPicker({ shopId, value, onChange, o, reload, autoFocus, other }: {
+  shopId: string; value: Acct; onChange: (a: Acct) => void; o: JvOptions | null; reload: () => Promise<JvOptions | null>; autoFocus?: boolean; other: Acct
 }) {
   const upper = useCaps(shopId)
   const [newHead, setNewHead] = useState<{ name: string; type: 'expense' | 'income' } | null>(null)
@@ -155,19 +166,21 @@ function AccountPicker({ shopId, value, onChange, o, reload, autoFocus }: {
       await reload(); onChange({ ...value, key: `h:${r.id}` }); setNewHead(null); setErr('')
     } catch (e) { setErr((e as Error).message) }
   }
-  const listId = `jv-sup-${Math.random().toString(36).slice(2, 7)}`
+  const [listId] = useState(() => `jv-sup-${Math.random().toString(36).slice(2, 7)}`)
+  const otherSup = other.kind === 'supplier' && other.name.trim() ? supKey(other.name) : null
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <Seg value={value.kind} onChange={(k) => onChange(blankAcct(k))} options={KINDS} />
-      {value.kind === 'grahak' && <BuyerPicker shopId={shopId} value={value.buyer} autoFocus={autoFocus} onChange={(b) => onChange({ ...value, buyer: b?.id ? b : null })} />}
+      {value.kind === 'grahak' && <BuyerPicker shopId={shopId} value={value.buyer} autoFocus={autoFocus} exclude={other.kind === 'grahak' ? [other.buyer?.id] : undefined}
+        onChange={(b) => onChange({ ...value, buyer: b?.id ? b : null })} />}
       {value.kind === 'supplier' && <>
         <input className="field" style={upper ? caps : undefined} list={listId} placeholder={t('Supplier ka naam')} value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} />
-        <datalist id={listId}>{o?.suppliers.map((s) => <option key={s} value={s} />)}</datalist>
+        <datalist id={listId}>{o?.suppliers.filter((s) => supKey(s) !== otherSup).map((s) => <option key={s} value={s} />)}</datalist>
       </>}
       {value.kind === 'head' && !newHead && (
         <select className="field" value={value.key} onChange={(e) => (e.target.value === '__new' ? setNewHead({ name: '', type: 'expense' }) : onChange({ ...value, key: e.target.value }))}>
           <option value="">—</option>
-          {o?.heads.map((h) => <option key={h.key} value={h.key}>{h.name}</option>)}
+          {o?.heads.filter((h) => !(other.kind === 'head' && other.key === h.key) || h.key === value.key).map((h) => <option key={h.key} value={h.key}>{h.name}</option>)}
           <option value="__new">+ {t('Naya head')}</option>
         </select>
       )}
@@ -188,7 +201,11 @@ function AccountPicker({ shopId, value, onChange, o, reload, autoFocus }: {
   )
 }
 
-/** A JV: Dr and Cr account, amount, date, narration. Opened on one, it alters it or deletes it. */
+/**
+ * A JV: whose khata is debited (naam) and whose credited (jama), amount, date, narration. Opened
+ * on one, it alters it or deletes it. A JV moves an amount between khatas without cash; money
+ * received from a grahak is a Vasooli, which is one tap away when the form looks like one.
+ */
 export function JvSheet({ shopId, jv, onClose, onDone }: { shopId: string; jv: Jv | null; onClose: () => void; onDone: (msg: string) => void }) {
   const [o, setO] = useState<JvOptions | null>(null)
   const reload = () => api<JvOptions>(`/v1/admin/shops/${shopId}/jv/options`).then((r) => { setO(r); return r }).catch(() => null)
@@ -200,11 +217,19 @@ export function JvSheet({ shopId, jv, onClose, onDone }: { shopId: string; jv: J
   const [narration, setNarration] = useState(jv?.narration ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [tried, setTried] = useState(false)
   const locked = !!jv?.voided
+  const same = sameAcct(dr, cr)
+  const bad = {
+    dr: tried && !acctReady(dr) ? t('Khata chunein') : '',
+    cr: same ? t('Dono taraf ek hi khata — doosra chunein') : tried && !acctReady(cr) ? t('Khata chunein') : '',
+    amount: tried && amount <= 0 ? t('Rakam daalein') : '',
+  }
   const save = async () => {
     if (locked) return onClose()
-    if (!acctReady(dr) || !acctReady(cr)) return setError(t('Dono khate chunein'))
-    if (amount <= 0) return setError(t('Rakam daalein'))
+    // What is missing is said beside its box.
+    setTried(true); setError('')
+    if (!acctReady(dr) || !acctReady(cr) || same || amount <= 0) return
     setSaving(true); setError('')
     try {
       const r = await api<{ no: number }>(jv ? `/v1/admin/shops/${shopId}/jv/${jv.id}` : `/v1/admin/shops/${shopId}/jv`, {
@@ -219,25 +244,36 @@ export function JvSheet({ shopId, jv, onClose, onDone }: { shopId: string; jv: J
     try { await api(`/v1/admin/shops/${shopId}/jv/${jv.id}/delete`, { method: 'POST' }); booksChanged(); onDone(t('JV #{n} hata diya', { n: String(jv.no) })) }
     catch (e) { setError((e as Error).message); setSaving(false) }
   }
-  const lines = [effect(dr, true, amount, o), effect(cr, false, amount, o)].filter(Boolean)
+  const lines = same ? [] : [effect(dr, true, amount, o), effect(cr, false, amount, o)].filter((x): x is [string, string] => !!x)
+  // A grahak on one side and nothing (or the same grahak) on the other: most likely money came in — that is a Vasooli.
+  const lone = !jv && (dr.kind === 'grahak' && dr.buyer?.id && (!acctReady(cr) || same) ? dr.buyer : cr.kind === 'grahak' && cr.buyer?.id && !acctReady(dr) ? cr.buyer : null)
+  const vasooli = (b: PickedBuyer) => { onClose(); openDraft({ kind: 'vasooli', buyer: { id: b.id, name: b.name, balancePaise: b.balancePaise }, cashPaise: amount, upiPaise: 0, notes: [] }) }
   return (
     <Sheet wide title={jv ? `JV #${jv.no}${locked ? ` · ${t('Hata diya')}` : ''}` : `${t('Journal Voucher')}${o ? ` #${o.nextNo}` : ''}`}
       onClose={onClose} onSave={() => void save()} saving={saving} error={error} saveLabel={locked ? t('Band karein') : amount ? `${t('Save')} · ${rupees(amount)}` : t('Save')}>
-      <fieldset disabled={locked} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 14 }}>
-        <div className="row2">
-          <Field label={t('Tarikh')}><input className="field" type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
-          <Field label={t('Rakam')}><Money value={amount} onChange={setAmount} /></Field>
-        </div>
+      <fieldset disabled={locked} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 14, minWidth: 0 }}>
         <div className="row2 jv-sides">
-          <Field label={t('Dr · Naam')}><AccountPicker shopId={shopId} value={dr} onChange={setDr} o={o} reload={reload} autoFocus={!jv} /></Field>
-          <Field label={t('Cr · Jama')}><AccountPicker shopId={shopId} value={cr} onChange={setCr} o={o} reload={reload} /></Field>
+          <Field label={t('Kiske khate mein naam (Dr)')} error={bad.dr}><AccountPicker shopId={shopId} value={dr} onChange={setDr} o={o} reload={reload} autoFocus={!jv} other={cr} /></Field>
+          <Field label={t('Kiske khate mein jama (Cr)')} error={bad.cr}><AccountPicker shopId={shopId} value={cr} onChange={setCr} o={o} reload={reload} other={dr} /></Field>
+        </div>
+        <div className="row2">
+          <Field label={t('Rakam')} error={bad.amount}><Money value={amount} onChange={setAmount} /></Field>
+          <Field label={t('Tarikh')}><input className="field" type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
         </div>
         <Field label={t('Narration')}><input className="field" maxLength={200} value={narration} onChange={(e) => setNarration(e.target.value)} /></Field>
       </fieldset>
-      {lines.length > 0 && <div className="total-line"><span>{lines.join('  ·  ')}</span></div>}
+      {lines.length > 0 && <div className="total-line jv-preview">{lines.map(([who, what], i) => <div key={i}><b>{who}</b><span>{what}</span></div>)}</div>}
+      {lone && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => vasooli(lone)}>{t('{name} se paisa mila? Vasooli likhein ›', { name: lone.name })}</button>}
       {jv && !locked && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={() => void remove()}>{t('Hatayein')}</button>}
     </Sheet>
   )
+}
+
+/** A short "saved" note at the foot of a register page. */
+function useToast(): [ReactNode, (m: string) => void] {
+  const [msg, setMsg] = useState('')
+  useEffect(() => { if (!msg) return; const x = setTimeout(() => setMsg(''), 3500); return () => clearTimeout(x) }, [msg])
+  return [msg ? <div className="toast" role="status">✓ {msg}</div> : null, setMsg]
 }
 
 // ================================================================ Credit Note
@@ -248,6 +284,7 @@ export function CreditNotes({ shopId }: { shopId: string }) {
   const dq = useDebounced(q)
   const [edit, setEdit] = useState<Cn | 'new' | null>(null)
   const [open, setOpen] = useState<string | null>(null)
+  const [toast, say] = useToast()
   const { data, error, loading } = useLoad(() => api<{ notes: Cn[]; totalPaise: number }>(
     `/v1/admin/shops/${shopId}/credit-notes?from=${period.from}&to=${period.to}&q=${encodeURIComponent(dq)}`), [shopId, period.from, period.to, dq])
   useExport(!open && data ? () => ({
@@ -256,7 +293,7 @@ export function CreditNotes({ shopId }: { shopId: string }) {
     rows: data.notes.map((c) => ({ strike: c.voided, cells: [String(c.no), dmyLong(c.date), c.buyerName, c.slipNo ? String(c.slipNo) : '', reasonLabel(c.reason), rs(c.amountPaise)] })),
     foot: ['', '', t('Kul'), '', '', rs(data.totalPaise)],
   }) : null, [data, open])
-  if (open) return <CnView shopId={shopId} id={open} onBack={() => setOpen(null)} />
+  if (open) return <><CnView shopId={shopId} id={open} onBack={() => setOpen(null)} onSaid={say} />{toast}</>
   return (
     <>
       <div className="toolbar">
@@ -282,29 +319,36 @@ export function CreditNotes({ shopId }: { shopId: string }) {
                 </tr>
               ))}
             </tbody>
+            {data.notes.length > 0 && <tfoot><tr><td className="opt-col" /><td className="opt-col" /><td><b>{t('Kul')}</b></td><td className="opt-col" /><td className="opt-col" /><td className="num money b">{rupees(data.totalPaise)}</td></tr></tfoot>}
           </table>
           {data.notes.length === 0 && <p className="empty">{t('Is samay koi credit note nahi')}</p>}
         </div>
       )}
-      {edit && <CnSheet shopId={shopId} cn={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onDone={() => setEdit(null)} />}
+      {edit && <CnSheet shopId={shopId} cn={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onDone={(m) => { setEdit(null); say(m) }} />}
+      {toast}
     </>
   )
 }
 
-function CnView({ shopId, id, onBack }: { shopId: string; id: string; onBack: () => void }) {
+function CnView({ shopId, id, onBack, onSaid }: { shopId: string; id: string; onBack: () => void; onSaid: (m: string) => void }) {
   const { data: c, error } = useLoad(() => api<Cn>(`/v1/admin/shops/${shopId}/credit-notes/${id}`), [shopId, id])
   const [edit, setEdit] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [fail, setFail] = useState('')
   const remove = async () => {
     if (!c || !confirm(t('Credit note #{n} hatayein? Grahak ka khata wapas ho jayega.', { n: String(c.no) }))) return
-    setBusy(true)
-    try { await api(`/v1/admin/shops/${shopId}/credit-notes/${id}/delete`, { method: 'POST' }); booksChanged() } finally { setBusy(false) }
+    setBusy(true); setFail('')
+    try { await api(`/v1/admin/shops/${shopId}/credit-notes/${id}/delete`, { method: 'POST' }); booksChanged(); onSaid(t('Credit note #{n} hata diya', { n: String(c.no) })) }
+    catch (e) { setFail((e as Error).message) } finally { setBusy(false) }
   }
-  const print = async () => { if (c) printCreditNotes([c], await api<ShopSettings>(`/v1/admin/shops/${shopId}/settings`)) }
+  const print = async () => {
+    if (!c) return
+    try { printCreditNotes([c], await api<ShopSettings>(`/v1/admin/shops/${shopId}/settings`)) } catch (e) { setFail((e as Error).message) }
+  }
   return (
     <>
       <div className="toolbar">
-        <button type="button" className="btn ghost" onClick={onBack}>‹ {t('Credit Note')}</button>
+        <button type="button" className="btn ghost" data-back onClick={onBack}>‹ {t('Credit Note')}</button>
         <span className="grow" />
         {c && <button type="button" className="btn" onClick={() => void print()}>{t('Print')}</button>}
         {c && !c.voided && <>
@@ -312,7 +356,7 @@ function CnView({ shopId, id, onBack }: { shopId: string; id: string; onBack: ()
           <button type="button" className="btn ghost" disabled={busy} onClick={() => void remove()}>{t('Hatayein')}</button>
         </>}
       </div>
-      {error && <p className="error">{error}</p>}
+      {(error || fail) && <p className="error">{error || fail}</p>}
       {!c ? <Skeleton /> : (
         <>
           <div className="card sum">
@@ -323,7 +367,7 @@ function CnView({ shopId, id, onBack }: { shopId: string; id: string; onBack: ()
           {c.lines.length > 0 && (
             <div className="card wrap-x">
               <table className="tbl">
-                <thead><tr><th>{t('Quality')}</th><th className="num">{t('Box')}</th><th className="num">{t('Rate farq')}</th><th className="num">{t('Rakam')}</th></tr></thead>
+                <thead><tr><th>{t('Quality')}</th><th className="num">{t('Box')}</th><th className="num">{c.reason === 'wapsi' ? t('Bhav') : t('Rate farq')}</th><th className="num">{t('Rakam')}</th></tr></thead>
                 <tbody>{c.lines.map((l, i) => <tr key={i}><td>{l.quality}{l.grade && l.grade !== '1' ? ` · ${l.grade}` : ''}</td><td className="num">{count(l.boxes)}</td><td className="num money">{fmtRate(l.ratePaise)}</td><td className="num money b">{rupees(l.amountPaise)}</td></tr>)}</tbody>
               </table>
             </div>
@@ -332,12 +376,13 @@ function CnView({ shopId, id, onBack }: { shopId: string; id: string; onBack: ()
           {!c.billId && c.note && <p className="muted">{c.note}</p>}
         </>
       )}
-      {edit && c && <CnSheet shopId={shopId} cn={c} onClose={() => setEdit(false)} onDone={() => setEdit(false)} />}
+      {edit && c && <CnSheet shopId={shopId} cn={c} onClose={() => setEdit(false)} onDone={(m) => { setEdit(false); onSaid(m) }} />}
     </>
   )
 }
 
 type Slip = { billId: string; slipNo: number | null; date: string; totalPaise: number; boxes: number }
+const lineKey = (l: { quality: string; grade: string }) => `${l.quality}|${l.grade}`
 type SlipDetail = { billId: string; slipNo: number | null; totalPaise: number; creditedPaise: number; lines: { quality: string; grade: string; qty: number; ratePaise: number }[] }
 
 /** A credit note: grahak, an optional parchi (its lines to pick boxes and rate difference from), or a flat amount. */
@@ -347,6 +392,8 @@ export function CnSheet({ shopId, cn, onClose, onDone }: { shopId: string; cn: C
   const [billId, setBillId] = useState(cn?.billId ?? '')
   const [slip, setSlip] = useState<SlipDetail | null>(null)
   const [reason, setReason] = useState<Reason>(cn?.reason ?? 'rate')
+  const reasonRef = useRef(reason)
+  reasonRef.current = reason
   const [byLines, setByLines] = useState(cn ? cn.lines.length > 0 : true)
   const [picks, setPicks] = useState<Record<string, { boxes: number; ratePaise: number }>>(() =>
     Object.fromEntries((cn?.lines ?? []).map((l) => [`${l.quality}|${l.grade}`, { boxes: l.boxes, ratePaise: l.ratePaise }])))
@@ -361,16 +408,24 @@ export function CnSheet({ shopId, cn, onClose, onDone }: { shopId: string; cn: C
   }, [shopId, buyer?.id])
   useEffect(() => {
     if (!billId) { setSlip(null); return }
-    api<SlipDetail>(`/v1/admin/shops/${shopId}/credit-notes/slip/${billId}`).then(setSlip).catch(() => setSlip(null))
-  }, [shopId, billId])
-  const lineKey = (l: { quality: string; grade: string }) => `${l.quality}|${l.grade}`
+    // What other notes already gave back on it; this note itself is not counted when it is being altered.
+    api<SlipDetail>(`/v1/admin/shops/${shopId}/credit-notes/slip/${billId}${cn ? `?except=${cn.id}` : ''}`).then((d) => {
+      setSlip(d)
+      // Maal wapas picked before the parchi: the bhav comes in with its lines.
+      if (reasonRef.current === 'wapsi') setPicks((p) => Object.fromEntries(d.lines.map((l) => [lineKey(l), { boxes: p[lineKey(l)]?.boxes ?? 0, ratePaise: p[lineKey(l)]?.ratePaise || l.ratePaise }])))
+    }).catch(() => setSlip(null))
+  }, [shopId, billId]) // eslint-disable-line react-hooks/exhaustive-deps
   const lines = slip && byLines ? slip.lines.map((l) => ({ ...l, pick: picks[lineKey(l)] ?? { boxes: 0, ratePaise: 0 } })) : []
   const amount = slip && byLines ? lines.reduce((s, l) => s + l.pick.boxes * l.pick.ratePaise, 0) : flat
   const setPick = (k: string, p: Partial<{ boxes: number; ratePaise: number }>) => setPicks({ ...picks, [k]: { ...(picks[k] ?? { boxes: 0, ratePaise: 0 }), ...p } })
+  // What is left to give back on the parchi.
+  const room = slip ? Math.max(0, slip.totalPaise - slip.creditedPaise) : null
+  const over = room !== null && amount > room
+  const [tried, setTried] = useState(false)
   const save = async () => {
-    if (!buyer?.id) return setError(t('Grahak chunein'))
-    if (amount <= 0) return setError(t('Rakam daalein'))
-    setSaving(true); setError('')
+    setTried(true); setError('')
+    if (!buyer?.id || amount <= 0 || over) return
+    setSaving(true)
     try {
       const body = {
         day, buyerId: buyer.id, billId: billId || null, reason, note,
@@ -384,13 +439,14 @@ export function CnSheet({ shopId, cn, onClose, onDone }: { shopId: string; cn: C
     <Sheet wide title={cn ? `${t('Credit note')} #${cn.no}` : t('Credit Note')} onClose={onClose} onSave={() => void save()} saving={saving} error={error}
       saveLabel={amount ? `${t('Save')} · ${rupees(amount)}` : t('Save')}>
       <div className="row2">
-        <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} autoFocus={!cn} onChange={(b) => { setBuyer(b?.id ? b : null); setBillId(''); setPicks({}) }} /></Field>
+        <Field label={t('Grahak')} error={tried && !buyer?.id ? t('Grahak chunein') : ''}><BuyerPicker shopId={shopId} value={buyer} autoFocus={!cn} onChange={(b) => { setBuyer(b?.id ? b : null); setBillId(''); setPicks({}) }} /></Field>
         <Field label={t('Tarikh')}><input className="field" type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
       </div>
       <Field label={t('Wajah')}><Seg value={reason} onChange={(r) => {
         setReason(r)
-        // Maal wapas: the whole bhav comes off each box sent back.
+        // Maal wapas: the whole bhav comes off each box sent back; leaving it, that bhav is not a rate farq.
         if (r === 'wapsi' && slip) setPicks(Object.fromEntries(slip.lines.map((l) => [lineKey(l), { boxes: picks[lineKey(l)]?.boxes ?? 0, ratePaise: l.ratePaise }])))
+        else if (reason === 'wapsi' && slip) setPicks(Object.fromEntries(slip.lines.map((l) => { const p = picks[lineKey(l)]; return [lineKey(l), { boxes: p?.boxes ?? 0, ratePaise: p && p.ratePaise !== l.ratePaise ? p.ratePaise : 0 }] })))
       }} options={REASONS} /></Field>
       <Field label={t('Parchi')}>
         <select className="field" value={billId} disabled={!buyer} onChange={(e) => { setBillId(e.target.value); setPicks({}) }}>
@@ -419,9 +475,11 @@ export function CnSheet({ shopId, cn, onClose, onDone }: { shopId: string; cn: C
           </table>
         </div>
       ) : (
-        <Field label={t('Rakam')}><Money value={flat} onChange={setFlat} /></Field>
+        <Field label={t('Rakam')} error={tried && amount <= 0 ? t('Rakam daalein') : ''}><Money value={flat} onChange={setFlat} /></Field>
       )}
-      {slip && slip.creditedPaise > 0 && <p className="muted" style={{ margin: 0 }}>{t('Is parchi par pehle {amt} credit', { amt: rupees(slip.creditedPaise) })}</p>}
+      {slip && byLines && tried && amount <= 0 && <p className="error" style={{ margin: 0 }}>{reason === 'wapsi' ? t('Wapas aaye box daalein') : t('Box aur rate farq daalein')}</p>}
+      {over && <p className="error" style={{ margin: 0 }}>{t('Parchi {total} ki hai{before} — {room} se zyada credit nahi', { total: rupees(slip!.totalPaise), before: slip!.creditedPaise ? `, ${t('pehle {amt} credit', { amt: rupees(slip!.creditedPaise) })}` : '', room: rupees(room!) })}</p>}
+      {!over && slip && slip.creditedPaise > 0 && <p className="muted" style={{ margin: 0 }}>{t('Is parchi par pehle {amt} credit', { amt: rupees(slip.creditedPaise) })}</p>}
       <Field label={t('Note')}><input className="field" maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
       <div className="total-line"><span>{inWords(amount)}</span><b className="money">{rupees(amount)}</b></div>
     </Sheet>
@@ -457,7 +515,7 @@ function InvoiceList({ shopId, onOpen }: { shopId: string; onOpen: (id: string) 
   const { data, error, loading } = useLoad(() => api<{ invoices: InvoiceRow[]; totalPaise: number }>(
     `/v1/admin/shops/${shopId}/invoices?from=${period.from}&to=${period.to}&q=${encodeURIComponent(dq)}`), [shopId, period.from, period.to, dq])
   useExport(data ? () => ({
-    style: 'book' as const, title: t('Tax Invoice'), dateLine: dayRange(period.from, period.to), file: fileName('Invoices', period.from, period.to),
+    style: 'book' as const, title: t('Invoices'), dateLine: dayRange(period.from, period.to), file: fileName('Invoices', period.from, period.to),
     columns: [{ label: t('Invoice no.') }, { label: t('Tarikh') }, { label: t('Grahak'), wide: true }, { label: 'GSTIN' }, { label: t('Parchi') }, { label: t('Rakam'), num: true }],
     rows: data.invoices.map((i) => ({ strike: i.voided, cells: [i.number, dmyLong(i.date), i.buyerName, i.gstin, i.slipNos.join(', '), rs(i.totalPaise)] })),
     foot: ['', '', t('Kul'), '', '', rs(data.totalPaise)],
@@ -504,22 +562,24 @@ function InvoiceList({ shopId, onOpen }: { shopId: string; onOpen: (id: string) 
 function InvoiceView({ shopId, id, onBack }: { shopId: string; id: string; onBack: () => void }) {
   const { data: d, error } = useLoad(() => api<InvoiceDoc>(`/v1/admin/shops/${shopId}/invoices/${id}`), [shopId, id])
   const [busy, setBusy] = useState(false)
+  const [fail, setFail] = useState('')
   const cancel = async () => {
     if (!d) return
     const reason = prompt(t('Invoice {n} cancel karein? Wajah:', { n: d.number }), '')
     if (reason === null) return
-    setBusy(true)
-    try { await api(`/v1/admin/shops/${shopId}/invoices/${id}/cancel`, { method: 'POST', body: { reason } }); booksChanged() } finally { setBusy(false) }
+    setBusy(true); setFail('')
+    try { await api(`/v1/admin/shops/${shopId}/invoices/${id}/cancel`, { method: 'POST', body: { reason } }); booksChanged() }
+    catch (e) { setFail((e as Error).message) } finally { setBusy(false) }
   }
   return (
     <>
       <div className="toolbar">
-        <button type="button" className="btn ghost" onClick={onBack}>‹ {t('Invoices')}</button>
+        <button type="button" className="btn ghost" data-back onClick={onBack}>‹ {t('Invoices')}</button>
         <span className="grow" />
         {d && <button type="button" className="btn" onClick={() => printInvoices([d])}>{t('Print')}</button>}
-        {d && !d.voided && <button type="button" className="btn ghost" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</button>}
+        {d && !d.voided && <button type="button" className="btn ghost" disabled={busy} onClick={() => void cancel()}>{t('Invoice cancel')}</button>}
       </div>
-      {error && <p className="error">{error}</p>}
+      {(error || fail) && <p className="error">{error || fail}</p>}
       {!d ? <Skeleton /> : (
         <>
           <div className="card sum">
@@ -534,7 +594,7 @@ function InvoiceView({ shopId, id, onBack }: { shopId: string; id: string; onBac
                 {d.lines.map((l, i) => (
                   <tr key={i}>
                     <td>{l.slipNo}<small>{date(l.date)}</small></td>
-                    <td>{l.quality}{l.grade ? ` · ${l.grade}` : ''}<small>{l.gaadi}</small></td>
+                    <td>{l.quality}{l.grade ? ` · ${gradeLabel(l.grade)}` : ''}<small>{l.gaadi}</small></td>
                     <td className="opt-col muted">{l.hsn}</td>
                     <td className="num">{count(l.qty)} {l.unit}</td>
                     <td className="num opt-col">{l.kg ? count(l.kg) : ''}</td>
@@ -575,9 +635,11 @@ function InvoiceMaker({ shopId, onMade }: { shopId: string; onMade: () => void }
   const picked = rows.filter((r) => sel.has(r.billId))
   const total = picked.reduce((s, r) => s + r.totalPaise, 0)
   const flip = (id: string) => { const s = new Set(sel); if (s.has(id)) s.delete(id); else s.add(id); setSel(s) }
+  const late = day ? picked.find((p) => p.date > day) : undefined
   const make = async () => {
     if (!picked.length) return setError(t('Parchi chunein'))
     if (mode === 'one' && new Set(picked.map((p) => p.buyerId ?? p.buyerName)).size > 1) return setError(t('Ek invoice mein ek hi grahak ki parchiyan'))
+    if (late) return
     setBusy(true); setError('')
     try {
       const r = await api<{ invoices: { id: string; number: string }[] }>(`/v1/admin/shops/${shopId}/invoices`, { method: 'POST', body: { billIds: picked.map((p) => p.billId), mode, day: day || undefined } })
@@ -628,7 +690,9 @@ function InvoiceMaker({ shopId, onMade }: { shopId: string; onMade: () => void }
       <div className="card" style={{ padding: 14, display: 'grid', gap: 12 }}>
         <div className="row2">
           <Field label={t('Kaise')}><Seg value={mode} onChange={setMode} options={[{ key: 'each', label: t('Har parchi ka') }, { key: 'one', label: t('Sab ka ek') }]} /></Field>
-          <Field label={t('Invoice ki tarikh')} hint={t('Khaali = parchi ki tarikh')}><input className="field" type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
+          <Field label={t('Invoice ki tarikh')} hint={t('Khaali = parchi ki tarikh')}
+            error={late ? t('Parchi #{n} {date} ki hai — invoice usse pehle ki nahi', { n: String(late.slipNo ?? ''), date: date(late.date) }) : ''}>
+            <input className="field" type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
         </div>
         {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
         <button type="button" className="btn primary" disabled={busy || !picked.length} onClick={() => void make()}>
@@ -700,12 +764,19 @@ export function BikriEntry({ shopId }: { shopId: string }) {
     if (next) { next.focus(); if (next instanceof HTMLInputElement) next.select() }
   }
 
+  const [badKey, setBadKey] = useState<number | null>(null)
   const save = async () => {
-    setError('')
+    setError(''); setBadKey(null)
+    if (busy) return
     if (!truckId) return setError(t('Gaadi chunein'))
     if (!filled.length) return setError(t('Kam se kam ek grahak aur box daalein'))
-    const bad = filled.findIndex((r) => r.pay === 'credit' && !r.buyer?.id && !r.text.trim())
-    if (bad >= 0) return setError(t('Line {n}: udhaar ke liye grahak ka naam', { n: rows.indexOf(filled[bad]) + 1 }))
+    const bad = filled.find((r) => r.pay === 'credit' && !r.buyer?.id && !r.text.trim())
+    if (bad) {
+      // The row is marked and its name box takes the cursor.
+      setBadKey(bad.key)
+      grid.current?.querySelector<HTMLInputElement>(`tr[data-key="${bad.key}"] .grahak-cell input`)?.focus()
+      return setError(t('Line {n}: udhaar ke liye grahak ka naam', { n: rows.indexOf(bad) + 1 }))
+    }
     setBusy(true)
     try {
       const r = await api<{ made: Made[]; failed: { line: number; error: string }[] }>(`/v1/admin/shops/${shopId}/bikri`, { method: 'POST', body: {
@@ -722,6 +793,16 @@ export function BikriEntry({ shopId }: { shopId: string }) {
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
+  // Ctrl+Enter saves the grid, as it saves every form.
+  const saveRef = useRef(save)
+  saveRef.current = save
+  useEffect(() => {
+    const on = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !document.querySelector('.scrim')) { e.preventDefault(); void saveRef.current() }
+    }
+    addEventListener('keydown', on)
+    return () => removeEventListener('keydown', on)
+  }, [])
   return (
     <>
       <div className="toolbar">
@@ -748,9 +829,9 @@ export function BikriEntry({ shopId }: { shopId: string }) {
           </tr></thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.key}>
+              <tr key={r.key} data-key={r.key}>
                 <td className="muted">{i + 1}</td>
-                <td><GrahakCell shopId={shopId} row={r} upper={upper} onPick={(b, text) => set(r.key, { buyer: b, text })} onEnter={onEnter} /></td>
+                <td><GrahakCell shopId={shopId} row={r} upper={upper} bad={badKey === r.key && !r.buyer?.id && !r.text.trim()} onPick={(b, text) => set(r.key, { buyer: b, text })} onEnter={onEnter} /></td>
                 <td>{angoor
                   ? <select className="field" value={r.brandId} onKeyDown={onEnter} onChange={(e) => set(r.key, { brandId: e.target.value })}>
                       {lots.map((l) => <option key={l.brandId} value={l.brandId}>{l.quality}</option>)}
@@ -779,7 +860,7 @@ export function BikriEntry({ shopId }: { shopId: string }) {
       {error && <p className="error">{error}</p>}
       <div className="toolbar" style={{ marginTop: 12 }}>
         <span className="grow" />
-        <button type="button" className="btn primary" disabled={busy || !filled.length} onClick={() => void save()}>{busy ? '…' : `${t('Save')} · ${t('{n} parchi', { n: filled.length })} · ${rupees(total)}`}</button>
+        <button type="button" className="btn primary" disabled={busy || !filled.length} onClick={() => void save()}>{busy ? '…' : <><kbd>Ctrl+↵: </kbd>{`${t('Save')} · ${t('{n} parchi', { n: filled.length })} · ${rupees(total)}`}</>}</button>
       </div>
       {result && (
         <div className="card" style={{ padding: 14, display: 'grid', gap: 8 }}>
@@ -795,8 +876,8 @@ export function BikriEntry({ shopId }: { shopId: string }) {
 }
 
 /** A grahak in the grid: type-ahead by name, mobile or code; Enter takes the lit one (or the typed name as a new grahak). */
-function GrahakCell({ shopId, row, upper, onPick, onEnter }: {
-  shopId: string; row: Row; upper: boolean; onPick: (b: Row['buyer'], text: string) => void; onEnter: (e: KeyboardEvent) => void
+function GrahakCell({ shopId, row, upper, bad, onPick, onEnter }: {
+  shopId: string; row: Row; upper: boolean; bad?: boolean; onPick: (b: Row['buyer'], text: string) => void; onEnter: (e: KeyboardEvent) => void
 }) {
   const [list, setList] = useState<BuyerRow[]>([])
   const [open, setOpen] = useState(false)
@@ -812,7 +893,7 @@ function GrahakCell({ shopId, row, upper, onPick, onEnter }: {
   const exact = list.find((b) => b.name.trim().toLowerCase() === row.text.trim().toLowerCase())
   return (
     <div className="combo grahak-cell">
-      <input className="field" style={upper ? caps : undefined} value={text} placeholder={t('Naam')} aria-label={t('Grahak')}
+      <input className={`field${bad ? ' bad' : ''}`} style={upper ? caps : undefined} value={text} placeholder={t('Naam')} aria-label={t('Grahak')} aria-invalid={bad || undefined}
         onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e) => { onPick(null, e.target.value); setOpen(true) }}
         onKeyDown={(e) => {
@@ -880,7 +961,7 @@ function printInvoices(docs: InvoiceDoc[]) {
       </div>
       <table>
         <tr><th>#</th><th>Description</th><th>HSN</th><th class="n">Qty</th><th class="n">Kg</th><th class="n">Rate</th><th class="n">Amount</th></tr>
-        ${d.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc([d.item, l.quality, l.grade].filter(Boolean).join(' · '))}${l.gaadi ? ` <span class="muted">(${esc(l.gaadi)}, parchi ${l.slipNo ?? ''})</span>` : ''}</td>
+        ${d.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc([d.item, l.quality, l.grade && gradeLabel(l.grade)].filter(Boolean).join(' · '))}${l.gaadi ? ` <span class="muted">(${esc(l.gaadi)}, parchi ${l.slipNo ?? ''})</span>` : ''}</td>
           <td>${esc(l.hsn)}</td><td class="n">${l.qty} ${esc(l.unit)}</td><td class="n">${l.kg ? l.kg.toLocaleString('en-IN') : ''}</td><td class="n">${r2(l.ratePaise)}</td><td class="n">${r2(l.amountPaise)}</td></tr>`).join('')}
         <tr class="tot"><td></td><td colspan="5">Goods value</td><td class="n">${r2(d.goodsPaise)}</td></tr>
         ${d.charges.map((c) => `<tr><td></td><td colspan="5">${esc(c.label)}</td><td class="n">${r2(c.amountPaise)}</td></tr>`).join('')}

@@ -3514,4 +3514,90 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     expect(cr.made).toEqual([expect.objectContaining({ line: 1, buyerName: 'Mohan', totalPaise: 50000 })]);
     expect(cr.failed).toEqual([{ line: 2, error: expect.stringContaining('80') }]);
   });
+
+  it('refuses what a counter gets wrong: a JV to the same khata, a credit note past its parchi, an invoice dated before its parchi', async () => {
+    const { w, base } = await web('9845800011', { name: 'QA Vouchers', commodity: 'angoor' });
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh21', supplier: 'Sai Fruits', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Hitesh' }).expect(201)).body;
+    const p = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: a.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+    const owed = await bal(base, w, a.id);
+    expect(owed).toBe(1010000);
+
+    // Hitesh on both sides (the owner's "payment" JV), or one supplier spelled two ways: nothing is written.
+    expect((await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'grahak', id: a.id }, cr: { kind: 'grahak', id: a.id }, amountPaise: 100000, narration: 'payment' }).expect(400)).body.message).toMatch(/ek hi/);
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'supplier', name: 'Sai Fruits' }, cr: { kind: 'supplier', name: 'SAI  FRUITS.' }, amountPaise: 100 }).expect(400);
+    expect((await http().get(`${base}/jv?from=2026-01-01&to=${istDay()}`).set(w).expect(200)).body.vouchers).toEqual([]);
+    expect(await bal(base, w, a.id)).toBe(owed);
+
+    // A credit note counts what others gave back on the parchi — but not itself while it is being altered.
+    const cn = (await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'rate', lines: [{ quality: 'Royal', boxes: 4, ratePaise: 5000 }] }).expect(201)).body;
+    expect((await http().get(`${base}/credit-notes/slip/${p.billId}`).set(w).expect(200)).body.creditedPaise).toBe(20000);
+    expect((await http().get(`${base}/credit-notes/slip/${p.billId}?except=${cn.id}`).set(w).expect(200)).body).toMatchObject({ creditedPaise: 0, totalPaise: 1010000 });
+    await http().get(`${base}/credit-notes/slip/${p.billId}?except=nonsense`).set(w).expect(400);
+    // Past what is left on the parchi: refused; up to it: taken; the note itself can grow to the whole parchi less the others.
+    await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'discount', amountPaise: 1010000 - 20000 + 1 }).expect(400);
+    const rest = (await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'discount', amountPaise: 90000 }).expect(201)).body;
+    await http().post(`${base}/credit-notes/${cn.id}`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'wapsi', amountPaise: 1010000 - 90000 }).expect(200);
+    await http().post(`${base}/credit-notes/${cn.id}`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'wapsi', amountPaise: 1010000 - 90000 + 1 }).expect(400);
+    expect(await bal(base, w, a.id)).toBe(0);
+    await http().post(`${base}/credit-notes/${rest.id}/delete`).set(w).expect(200);
+    expect(await bal(base, w, a.id)).toBe(90000);
+
+    // An invoice is never dated before the parchi it bills; on or after, it is issued.
+    const before = daysAgo(1);
+    const r = await http().post(`${base}/invoices`).set(w).send({ billIds: [p.billId], mode: 'each', day: before }).expect(400);
+    expect(r.body.message).toMatch(new RegExp(`Parchi #${p.slipNo} .*pehle ki nahi`));
+    expect((await http().get(`${base}/invoices?from=2026-01-01&to=${istDay()}`).set(w).expect(200)).body.invoices).toEqual([]);
+    await http().post(`${base}/invoices`).set(w).send({ billIds: [p.billId], mode: 'each', day: istDay() }).expect(201);
+  });
+
+  it('keeps a bank jama parchi honest: every cheque numbered once, a raseed linked once to its own grahak while it stands', async () => {
+    const { w, base } = await web('9845800012', { name: 'QA Bank Jama' });
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Raju' }).expect(201)).body;
+    const b = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Sonu' }).expect(201)).body;
+    const ra = (await http().post(`${base}/entries/vasooli`).set(w).send({ buyerId: a.id, cashPaise: 0, upiPaise: 20000, paymentRef: 'CHQ 11' }).expect(201)).body;
+    const raseed = (await http().get(`${base}/deposits/grahak/${a.id}`).set(w).expect(200)).body.raseeds[0];
+    expect(raseed).toMatchObject({ receiptNo: ra.receiptNo, amountPaise: 20000 });
+    const account = { holder: 'qa', bank: 'hdfc', branch: '', ifsc: '', account: '123456789', phone: '', pan: '' };
+    const slip = (cheques: object[]) => ({ account, notes: {}, cheques });
+    const msg = async (body: object, code: number) => (await http().post(`${base}/deposits`).set(w).send(body).expect(code)).body.message as string;
+
+    expect(await msg(slip([{ buyerId: a.id, bank: 'sbi', amountPaise: 5000, raseed: null }]), 400)).toMatch(/number/);
+    expect(await msg(slip([{ bank: 'sbi', chequeNo: '9', amountPaise: 5000 }, { bank: 'SBI ', chequeNo: ' 9', amountPaise: 6000 }]), 400)).toMatch(/do baar/);
+    expect(await msg(slip([{ buyerId: b.id, chequeNo: '1', amountPaise: 20000, raseed: raseed.id }]), 400)).toMatch(/is grahak ki nahi/);
+    expect(await msg(slip([{ buyerId: a.id, chequeNo: '1', amountPaise: 10000, raseed: raseed.id }, { buyerId: a.id, chequeNo: '2', amountPaise: 10000, raseed: raseed.id }]), 400)).toMatch(/do cheque/);
+    // Nothing above was written: no slip, no stray raseed.
+    expect((await http().get(`${base}/deposits?from=2026-01-01&to=${istDay()}`).set(w).expect(200)).body.slips).toEqual([]);
+    expect(await bal(base, w, a.id)).toBe(-20000);
+
+    const s1 = (await http().post(`${base}/deposits`).set(w).send(slip([{ buyerId: a.id, chequeNo: '11', amountPaise: 20000, raseed: raseed.id }])).expect(201)).body;
+    expect(await msg(slip([{ buyerId: a.id, chequeNo: '12', amountPaise: 20000, raseed: raseed.id }]), 409)).toMatch(new RegExp(`#${s1.slipNo}`));
+    // Its own slip, altered, keeps it; once the slip is struck out the raseed is free again.
+    const one = (await http().get(`${base}/deposits/${s1.id}`).set(w).expect(200)).body;
+    await http().post(`${base}/deposits/${s1.id}`).set(w).send({ account: one.account, notes: {}, cheques: [{ id: one.cheques[0].id, buyerId: a.id, chequeNo: '11', amountPaise: 20000, raseed: raseed.id }] }).expect(201);
+    await http().post(`${base}/deposits/${s1.id}/delete`).set(w).expect(201);
+    await http().post(`${base}/deposits`).set(w).send(slip([{ buyerId: a.id, chequeNo: '12', amountPaise: 20000, raseed: raseed.id }])).expect(201);
+    expect(await bal(base, w, a.id)).toBe(-20000);
+  });
+
+  it('edits a grahak without making twins: no two khatas under one name or code; capitals in a grapes shop; hide and bring back', async () => {
+    const { w, base } = await web('9845800013', { name: 'QA Grahak', commodity: 'angoor' });
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Mohan', code: 'M1' }).expect(201)).body;
+    const b = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Sohan' }).expect(201)).body;
+    expect((await http().post(`${base}/grahak/${b.id}`).set(w).send({ name: 'mohan ' }).expect(409)).body.message).toMatch(/naam/);
+    expect((await http().post(`${base}/grahak/${b.id}`).set(w).send({ code: 'm1' }).expect(409)).body.message).toMatch(/M1.*MOHAN/);
+    await http().post(`${base}/grahak/${b.id}`).set(w).send({ name: '' }).expect(400);
+    // Mohan's other details change freely, his own name and code kept; pata goes in capitals as the name does.
+    await http().post(`${base}/grahak/${a.id}`).set(w).send({ name: 'Mohan', code: 'M1', phone: '', address: 'shed 4, azadpur', destination: 'karnal' }).expect(201);
+    expect((await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.buyer).toMatchObject({ name: 'MOHAN', code: 'M1', address: 'SHED 4, AZADPUR', destination: 'KARNAL', hidden: false });
+    // Hidden, his name is free; brought back while another holds it, he is refused.
+    await http().post(`${base}/grahak/${a.id}`).set(w).send({ hidden: true }).expect(201);
+    expect((await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.buyer.hidden).toBe(true);
+    await http().post(`${base}/grahak/${b.id}`).set(w).send({ name: 'Mohan' }).expect(201);
+    await http().post(`${base}/grahak/${a.id}`).set(w).send({ hidden: false }).expect(409);
+    await http().post(`${base}/grahak/${b.id}`).set(w).send({ name: 'Sohan' }).expect(201);
+    await http().post(`${base}/grahak/${a.id}`).set(w).send({ hidden: false }).expect(201);
+    expect((await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.buyer.hidden).toBe(false);
+  });
 });
