@@ -613,7 +613,12 @@ function StoreSheet({ shopId, draft, data, onClose }: { shopId: string; draft: S
   const [storeId, setStoreId] = useState(m?.storeId ?? draft.storeId ?? stores[0]?.id ?? '')
   const [lotKey, setLotKey] = useState(m ? `${m.truckId}:${m.brandId}` : draft.truckId ? `${draft.truckId}:${draft.brandId}` : '')
   const [boxes, setBoxes] = useState(m ? String(m.boxes) : '')
-  const [kg, setKg] = useState<string | null>(m ? String(m.kg) : null)
+  // Kg left as boxes × box weight stays that way on an edit, so changing the boxes changes it too.
+  const [kg, setKg] = useState<string | null>(() => {
+    if (!m) return null
+    const g = data.lots.find((l) => l.truckId === m.truckId && l.brandId === m.brandId)?.boxGrams
+    return g && Math.abs(m.kg - (m.boxes * g) / 1000) < 0.01 ? null : String(m.kg)
+  })
   const [rent, setRent] = useState(m?.rentPaise ?? 0)
   const [day, setDay] = useState(m?.day ?? todayIst())
   const [note, setNote] = useState(m?.note ?? '')

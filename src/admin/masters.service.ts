@@ -5,13 +5,14 @@ import type { PushItem } from '../sync/sync.service';
 import { fyOf, fyRange } from './creditors.service';
 import { EntriesService } from './entries.service';
 import { nameKey } from './reports.service';
-import { LIVE_BILLS, LIVE_COLS, OPENING_NOTES, n } from './sql';
+import { LIVE_BILLS, LIVE_COLS, OPENING_NOTES, n, supplierJvs } from './sql';
 
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 const up = (s: string | undefined) => (s ?? '').trim().toUpperCase();
 const MOBILE_OR_BLANK = /^([6-9]\d{9})?$/;
 
 export type HeadType = 'expense' | 'income' | 'asset' | 'liability';
+const MODE_BOOK: Record<string, string> = { cash: 'Galla', office: 'Office', upi: 'Bank', bank: 'Bank' };
 
 /** The Day Book's own heads (the app's categories): listed read-only beside the shop's own. */
 export const BUILTIN_HEADS: { key: string; name: string; type: HeadType }[] = [
@@ -375,7 +376,9 @@ export class MastersService {
       const lines = [
         ...(openingOn && openingOn >= from && openingOn <= to && opening ? [{ id: 'opening', date: openingOn, title: 'Opening balance', detail: '', debitPaise: Math.max(0, opening), creditPaise: Math.max(0, -opening) }] : []),
         ...mine.filter((l) => l.day >= from).map((l) => ({
-          id: l.id, date: l.day, title: l.party || (BUILTIN_HEADS.find((b) => b.key === l.category)?.name ?? l.category), detail: [l.mode, l.note].filter(Boolean).join(' · '),
+          id: l.id, date: l.day, title: l.party || (BUILTIN_HEADS.find((b) => b.key === l.category)?.name ?? l.category),
+          // The book it came from, as the Cash/Bank Book names them; a note that only repeats the head is left out.
+          detail: [MODE_BOOK[l.mode] ?? l.mode, up(l.note) === l.party ? '' : l.note].filter(Boolean).join(' · '),
           debitPaise: l.direction === 'out' ? n(l.amount) : 0, creditPaise: l.direction === 'in' ? n(l.amount) : 0,
         })),
       ].sort((a, b) => a.date.localeCompare(b.date)).map((l) => ({ ...l, balancePaise: (bal += l.debitPaise - l.creditPaise) }));
@@ -451,10 +454,10 @@ export class MastersService {
       // Suppliers known only from gaadis, beejaks or payments (no master row yet) are listed too, as
       // on their khata; a saved opening makes their row.
       const known = new Set(suppliers.map((s) => nameKey(s.name)));
-      const onGaadis = (await tx.query<{ s: string }>(
+      const onGaadis = [...(await tx.query<{ s: string }>(
         `SELECT DISTINCT s FROM (SELECT TRIM(supplier) AS s FROM trucks UNION ALL SELECT TRIM(party) FROM beejaks
            UNION ALL SELECT TRIM(party_name) FROM daybook_entries WHERE category = 'supplier' AND direction = 'out' AND hidden = false) x
-         WHERE s <> '' ORDER BY 1`)).rows
+         WHERE s <> '' ORDER BY 1`)).rows, ...(await supplierJvs(tx)).map((j) => ({ s: j.name.trim() }))]
         .filter((r) => { const k = nameKey(r.s); if (!k || known.has(k)) return false; known.add(k); return true; });
       const heads = await this.customHeads(tx);
       return {

@@ -2834,7 +2834,7 @@ describe('masters (company, products, groups, areas, stores, heads, openings)', 
     expect(h.find((x: any) => x.id === diesel.id)).toMatchObject({ builtin: false, type: 'expense', openingPaise: 0, debitPaise: 70000, closingPaise: 70000 });
     expect(h.find((x: any) => x.id === loan.id)).toMatchObject({ creditPaise: 1000000, closingPaise: -1000000 });
     const led = (await http().get(`${base}/heads/${diesel.id}?fy=${fy}`).set(w).expect(200)).body;
-    expect(led.lines.map((l: any) => [l.title, l.debitPaise, l.balancePaise])).toEqual([['Opening balance', 50000, 50000], ['DIESEL', 20000, 70000]]);
+    expect(led.lines.map((l: any) => [l.title, l.detail, l.debitPaise, l.balancePaise])).toEqual([['Opening balance', '', 50000, 50000], ['DIESEL', 'Galla', 20000, 70000]]);
     expect((await http().get(`${base}/heads/b:kharcha?fy=${fy}`).set(w).expect(200)).body.closingPaise).toBe(7000);
 
     // In use: name and type stay, opening can change; "delete" hides it.
@@ -2906,10 +2906,12 @@ describe('masters (company, products, groups, areas, stores, heads, openings)', 
     await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA09', supplier: 'Pollachi', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
     await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'Pollachi', mode: 'cash', amountPaise: 30000 }).expect(201);
     await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'Raju Transport', mode: 'cash', amountPaise: 5000 }).expect(201);
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'supplier', name: 'Old Party' }, cr: { kind: 'supplier', name: 'Raju Transport' }, amountPaise: 1000 }).expect(201);
     const on = new Date(Date.now() + 330 * 60_000 - 10 * 86_400_000).toISOString().slice(0, 10);
 
+    // Everyone with a supplier khata: from a gaadi, a payment, or only a JV.
     let o = (await http().get(`${base}/openings`).set(w).expect(200)).body;
-    expect(o.suppliers.map((s: any) => s.name)).toEqual(['Pollachi', 'Raju Transport']);
+    expect(o.suppliers.map((s: any) => s.name)).toEqual(['Old Party', 'Pollachi', 'Raju Transport']);
     await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'Pollachi', openingPaise: 50000, openingOn: on }).expect(200);
     // Set twice: replaced, not added.
     await http().post(`${base}/openings/supplier`).set(w).send({ id: null, name: 'Pollachi', openingPaise: 50000, openingOn: on }).expect(200);
