@@ -29,11 +29,11 @@ type Raseed = {
 const PACKING: Record<string, string> = { loose: t('Loose'), katta10: t('Katta {n}', { n: 10 }), katta15: t('Katta {n}', { n: 15 }), katta20: t('Katta {n}', { n: 20 }), katta25: t('Katta {n}', { n: 25 }), panni: t('Panni') }
 const VOIDED: Record<string, string> = { edited: t('Badli gayi'), deleted: t('Hatayi gayi'), refunded: t('Paisa wapas'), advance: t('Advance mein') }
 
-/** Tally's voucher keys: A alters, D (or Alt+D, Alt+X) deletes. */
-const voucherKey = (e: KeyboardEvent): 'alter' | 'delete' | null => {
+/** Tally's voucher keys: A alters, D (or Alt+D, Alt+X) deletes, P prints a parchi again. */
+const voucherKey = (e: KeyboardEvent): 'alter' | 'delete' | 'print' | null => {
   if (e.ctrlKey || e.metaKey) return null
   const k = e.altKey ? e.code.replace(/^Key/, '').toLowerCase() : e.key.toLowerCase()
-  return k === 'a' ? 'alter' : k === 'd' || (e.altKey && k === 'x') ? 'delete' : null
+  return k === 'a' ? 'alter' : k === 'd' || (e.altKey && k === 'x') ? 'delete' : k === 'p' ? 'print' : null
 }
 
 /** Listens for Enter on a parchi or raseed anywhere and opens it, as Tally opens a voucher. */
@@ -77,14 +77,25 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
     editEntry({ kind: 'parchi', bill: b })
   }
   const remove = () => { if (live && !picked) setDeleting(true) }
+  // Again to the shop's print machine; says so when no machine is on, so nobody waits for paper.
+  const [printing, setPrinting] = useState(false)
+  const print = async () => {
+    if (!b || !live || printing) return
+    setPrinting(true)
+    try {
+      const r = await api<{ slipNo: number; station: { name: string } | null }>(`/v1/admin/shops/${shopId}/bills/${b.id}/print`, { method: 'POST' })
+      onDone(r.station ? t('Parchi #{n} print machine par bhej di', { n: String(r.slipNo) }) : t('Print machine band hai · parchi #{n} chalu hote hi chhapegi', { n: String(r.slipNo) }))
+    } catch (e) { setBlocked((e as Error).message) } finally { setPrinting(false) }
+  }
   return (
-    <Scrim label={t('Parchi')} onClose={onClose} onKey={(k) => (k === 'alter' ? alter() : remove())}
+    <Scrim label={t('Parchi')} onClose={onClose} onKey={(k) => (k === 'alter' ? alter() : k === 'print' ? void print() : remove())}
       title={<>{t('Parchi')} {b ? `#${b.slipNo ?? b.number}` : ''}</>}
       chip={b?.voided ? <span className="chip red">{VOIDED[b.voided.reason] ?? b.voided.reason}</span> : picked ? <span className="chip green">{t('Dispatch: {n} box diye', { n: String(b?.pickedQty) })}</span> : null}
       footer={b && (
         <>
           {b.buyerId && <a className="btn ghost" href={href({ page: 'grahak', shopId, buyerId: b.buyerId })} onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', marginRight: 'auto' }}>{t('{name} ka khata', { name: b.buyerName })} ›</a>}
           {live && picked && <span className="muted">{t('Maal uth chuka hai — yeh parchi ab nahi badlegi')}</span>}
+          {live && <button type="button" className="btn ghost" disabled={printing} onClick={() => void print()}><kbd>P: </kbd>{printing ? '…' : t('Print')}</button>}
           {live && !picked && <button type="button" className="btn ghost" onClick={alter}><kbd>A: </kbd>{t('Alter')}</button>}
           {live && !picked && <button type="button" className="btn ghost" onClick={remove}><kbd>D: </kbd>{t('Delete')}</button>}
         </>
@@ -229,7 +240,7 @@ function RaseedVoucher({ shopId, id, onClose, onDone }: VoucherProps & { id: str
     } catch (e) { setFailed((e as Error).message); setBusy(false) }
   }
   return (
-    <Scrim label={t('Raseed')} onClose={onClose} onKey={(k) => (k === 'alter' ? alter() : live && setDeleting(true))}
+    <Scrim label={t('Raseed')} onClose={onClose} onKey={(k) => (k === 'alter' ? alter() : k === 'delete' && live && setDeleting(true))}
       title={<>{t('Raseed')} {no ? `#${no}` : ''}</>}
       chip={r?.voided && <span className="chip red">{VOIDED[r.voided.reason] ?? r.voided.reason}</span>}
       footer={r && (
@@ -286,7 +297,7 @@ function RaseedVoucher({ shopId, id, onClose, onDone }: VoucherProps & { id: str
 
 /** The voucher's frame: Esc closes, A and D reach the voucher, anything inside a dialog stays there. */
 function Scrim({ label, title, chip, footer, onClose, onKey, children }: {
-  label: string; title: ReactNode; chip?: ReactNode; footer?: ReactNode; onClose: () => void; onKey: (k: 'alter' | 'delete') => void; children: ReactNode
+  label: string; title: ReactNode; chip?: ReactNode; footer?: ReactNode; onClose: () => void; onKey: (k: 'alter' | 'delete' | 'print') => void; children: ReactNode
 }) {
   return (
     <div className="scrim sheet-scrim" onClick={onClose} onKeyDown={(e) => {

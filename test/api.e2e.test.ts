@@ -559,6 +559,8 @@ describe('angoor on the website', () => {
       if (said === 'web angoor grahak cash 5000 baaki udhaar') return { text: JSON.stringify({ transcript: said, kind: 'slip', say: 'Grahak', heard: 'Web Angoor Grahak', buyer_name: 'Web Angoor Grahak', slip: {}, pay: { mode: 'mixed', cash: 5000 } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'manat wali gaadi shed 9 pe hai') return { text: JSON.stringify({ transcript: said, kind: 'jagah', say: 'Jagah', jagah: { gaadi_no: 'HR26X1111', location: 'Shed 9' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === '9999 ki location badlo') return { text: JSON.stringify({ transcript: said, kind: 'jagah', say: 'Jagah', jagah: { gaadi_no: '9999' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
+      // "Print" is no kind of the model's: it calls such a request anything; the words decide.
+      if (/print/.test(said)) return { text: JSON.stringify({ transcript: said, kind: 'unclear', say: 'Samajh nahi aaya' }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'gaadi kahan') return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Gaadi', query: { sql: "SELECT gaadi_no, jagah, bika_dana AS bika_box FROM gaadi WHERE band IS NULL AND gaadi_no LIKE '%3289%'", title: 'Gaadi 3289' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       if (said === 'dispatch') return { text: JSON.stringify({ transcript: said, kind: 'query', say: 'Dispatch', query: { sql: `SELECT parchi_no, box, diye, baaki_box, haal, gaadi_no, jagah FROM dispatch WHERE parchi_no = ${b.slipNo}`, title: 'Dispatch' } }), model: 'stub', tokensIn: 0, tokensOut: 0 };
       const reply = said.startsWith('cash')
@@ -590,6 +592,28 @@ describe('angoor on the website', () => {
       const j3 = (await http().post(`${base}/voice`).set(web).send({ pick: sai, session: 'ang7' }).expect(200)).body;
       expect(j3.ask.question).toBe('Gaadi 3289 ab kahan khadi hai?');
       expect((await http().post(`${base}/voice`).set(web).send({ text: 'Pillar 400', session: 'ang7' }).expect(200)).body.ask.detail).toEqual(['Gaadi 3289 · Sai', 'Nayi jagah: Pillar 400']);
+
+      // A slip printed again by voice: by number, previewed, queued on the tap; with no print machine
+      // on it says so. "Pichli parchi" offers the latest with the ones before it.
+      const jobs = async () => (await http().get('/v1/print/jobs').set(pos).expect(200)).body.jobs.filter((j: any) => j.title === `Order Parchi #${b.slipNo}`).length;
+      const before = await jobs();
+      const p1 = (await http().post(`${base}/voice`).set(web).send({ text: `parchi ${b.slipNo} print karo`, session: 'ang8' }).expect(200)).body;
+      expect(p1.ask).toMatchObject({ question: `Parchi #${b.slipNo} print karein?`, tap: true });
+      expect(p1.ask.detail[0]).toMatch(new RegExp(`^#${b.slipNo} · `));
+      const p2 = (await http().post(`${base}/voice`).set(web).send({ pick: 'yes', session: 'ang8' }).expect(200)).body;
+      expect(p2).toMatchObject({ printed: { slipNo: b.slipNo, online: false } });
+      expect(p2.say).toMatch(/Print machine abhi band hai/);
+      expect(await jobs()).toBe(before + 1);
+      const p3 = (await http().post(`${base}/voice`).set(web).send({ text: 'pichli parchi print kar do', session: 'ang9' }).expect(200)).body;
+      expect(p3.ask).toMatchObject({ tap: true, question: expect.stringMatching(/^Parchi #\d+ print karein\?$/) });
+      expect(p3.ask.options[0]).toEqual({ label: 'Print karo', value: 'yes' });
+      // "Printer band hai kya" is about the machine, not a slip to print.
+      expect((await http().post(`${base}/voice`).set(web).send({ text: 'printer band hai kya', session: 'ang10' }).expect(200)).body.ask).toBeUndefined();
+      // The voucher's Print, with a print machine on: sent to it by name.
+      await http().get('/v1/print/next?wait=0&name=P052&widthDots=384').set(pos).expect(204);
+      expect((await http().get(`${base}/print-station`).set(web).expect(200)).body).toMatchObject({ online: true, name: 'P052' });
+      expect((await http().post(`${base}/bills/${b.billId}/print`).set(web).expect(201)).body).toEqual({ slipNo: b.slipNo, station: { name: 'P052' } });
+      expect(await jobs()).toBe(before + 2);
 
       // The floor, asked: where gaadi 3289 stands, and a slip's dispatch — said in boxes.
       const q1 = (await http().post(`${base}/voice`).set(web).send({ text: 'gaadi kahan', session: 'ang3' }).expect(200)).body;

@@ -8,10 +8,10 @@ export type Expect = 'phone' | 'choice' | 'yes' | 'number' | 'text'
 export type Option = { label: string; value: string }
 export type Pending = {
   /** The job: what happens once the missing piece is in. */
-  job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open' | 'slip' | 'gaadi' | 'yaad' | 'bhav' | 'jagah'
+  job: 'whatsapp' | 'call' | 'grahak' | 'draft' | 'show' | 'edit' | 'download' | 'open' | 'slip' | 'gaadi' | 'yaad' | 'bhav' | 'jagah' | 'print'
   /** What was asked and how to read the answer. */
   expect: Expect
-  slot: 'buyer' | 'phone' | 'confirm' | 'name' | 'gaadi' | 'qty' | 'rate' | 'number' | 'maal' | 'supplier' | 'when' | 'pick' | 'cash' | 'lot' | 'place'
+  slot: 'buyer' | 'phone' | 'confirm' | 'name' | 'gaadi' | 'qty' | 'rate' | 'number' | 'maal' | 'supplier' | 'when' | 'pick' | 'cash' | 'lot' | 'place' | 'slip'
   question: string
   options?: Option[]
   /** Lines shown under the question (the slip or gaadi being read back). */

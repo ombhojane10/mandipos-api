@@ -53,10 +53,27 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 const agrees = (a: string, b: string) => { const x = norm(a), y = norm(b); return !!x && !!y && (x.startsWith(y) || y.startsWith(x) || x.includes(y) || y.includes(x)); };
 const paise = (r: unknown) => (typeof r === 'number' && r > 0 ? Math.round(r * 100) : 0);
 const CANCEL: Option = { label: 'Rehne dein', value: 'cancel' };
+/** "Parchi 37 print karo", "pichli parchi chhap do": the model has no print kind, so this reads the words. */
+const PRINT_ASK = /\b(print|prnt|printout|chhap|chhaap|chap(o|wa|na|ein|e|do)?)\b|प्रिंट|छाप/i;
+/** Talk about the print machine itself ("printer band hai kya"), not a slip to print. */
+const PRINTER_TALK = /(machine|printer)\s*(kahan|kaha|band|chalu|on|off|online|kaun|theek|kharab)/i;
+/** The slip number they said: "parchi 37", "slip number 37", "#37", or the only number in the request. */
+function slipNoIn(said: string): number | null {
+  const m = said.match(/(?:parchi|parchee|slip|bill|#)\s*(?:no\.?|number|nambar|nam?bar|ka|ki)?\s*#?(\d{1,7})/i);
+  if (m) return Number(m[1]);
+  const all = said.match(/\d+/g) ?? [];
+  return all.length === 1 && all[0].length <= 7 ? Number(all[0]) : null;
+}
 /** Words that make an utterance a request of its own, not an answer to the question waiting. */
 const COMMAND = /\b(bhej|bhejo|bhejde|send|whatsapp|call|phone karo|parchi|bill|kaat|kaato|yaad|remind|reminder|gaadi add|nayi gaadi|udhaar|hisab|dikha|dikhao|khol|kholo|download|kitna|kitne|kitni|banao|bana do|jod|jodo|bhav|grahak)\b/i;
 const gradeOf = (g?: string): Grade => (g === 'II' ? '2' : g === 'III' ? '3' : '1');
 const roman = (g: string) => (g === '2' ? 'II' : g === '3' ? 'III' : g === 'mix' ? 'Leak' : 'I');
+/** "aaj 11:53" / "29 Oct 18:02", IST. */
+const when = (d: Date) => {
+  const ist = new Date(d.getTime() + 330 * 60_000), today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  const hm = ist.toISOString().slice(11, 16);
+  return ist.toISOString().slice(0, 10) === today ? `aaj ${hm}` : `${ist.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getUTCMonth()]} ${hm}`;
+};
 const rs = (p: number) => `₹${(p / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const titleCase = (n: string) => n.trim().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 /** A gaadi number as the books keep it: "mh 12 ab 3289" → "MH12AB3289". */
@@ -165,6 +182,10 @@ export class PortalVoiceService {
     const out: Record<string, unknown> = {};
     const heard = String(reply.heard ?? reply.buyer_name ?? '').trim();
     // "Gaadi aayi hai" routed to the blank form: start the questions instead, unless they asked for the screen.
+    // Printing a slip again: whatever the model made of it, the words decide.
+    if (PRINT_ASK.test(String(reply.transcript ?? '')) && !PRINTER_TALK.test(String(reply.transcript ?? '')) && !['query', 'download', 'whatsapp', 'call'].includes(String(reply.kind))) {
+      return this.advance(phone, shopId, s, { job: 'print', expect: 'text', slot: 'slip', question: '', data: { reply, heard }, tries: 0 }, undefined, shops);
+    }
     if (reply.kind === 'open' && reply.open === 'nayi_gaadi' && !/khol|screen|form|page|dikha/i.test(String(reply.transcript ?? ''))) reply.kind = 'gaadi';
     switch (reply.kind) {
       case 'whatsapp': case 'call': case 'grahak':
@@ -365,6 +386,7 @@ export class PortalVoiceService {
     if (q.job === 'yaad') return this.yaadStep(phone, shopId, s, q, value);
     if (q.job === 'bhav') return this.bhavStep(phone, shopId, s, q, value);
     if (q.job === 'jagah') return this.jagahStep(phone, shopId, s, q, value);
+    if (q.job === 'print') return this.printStep(phone, shopId, s, q, value);
     if (q.slot === 'buyer' && value) {
       if (q.expect === 'text') data.heard = value;
       else if (value.startsWith('go:')) { const [, sid, bid] = value.split(':'); data.shopId = sid; data.buyerId = bid; }
@@ -669,6 +691,63 @@ export class PortalVoiceService {
     await this.entries.setGaadiLocation(phone, shopId, g.id, d.location);
     this.cache.delete(shopId);
     return { say: `Gaadi ${g.number} ab ${d.location} par`, saved: { truckId: g.id } };
+  }
+
+  /**
+   * "Parchi 37 print karo" / "Ramesh ki parchi print karo" / "pichli parchi print karo": which slip
+   * (by number, else the named grahak's latest, else the latest of all — the other recent ones offered
+   * beside it), a preview, and on its tap the slip goes to the shop's print machine. When no print
+   * machine is listening it says so, rather than leaving the counter waiting for paper.
+   */
+  private async printStep(phone: string, shopId: string, s: Session, q: Pending, value: string | undefined): Promise<Record<string, unknown>> {
+    const d = q.data as { reply: Reply; heard: string; billId?: string; miss?: string };
+    const isId = (v: string) => /^[0-9a-f-]{36}$/i.test(v);
+    type Row = { id: string; slip_no: number; total_paise: string; name: string | null; created_at: Date };
+    const recent = (no: number | null, buyerId: string | null, limit: number) => this.db.withShop(shopId, async (tx) => (await tx.query<Row>(
+      `SELECT b.id, b.slip_no, b.total_paise, g.name, b.created_at FROM ${LIVE_BILLS} b LEFT JOIN buyers g ON g.id = b.buyer_id
+       WHERE ($1::int IS NULL OR b.slip_no = $1) AND ($2::uuid IS NULL OR b.buyer_id = $2) ORDER BY b.created_at DESC LIMIT $3`,
+      [no, buyerId, limit])).rows);
+    const label = (r: Row) => `#${r.slip_no} · ${r.name || 'Cash'} · ${rs(n(r.total_paise))}`;
+    // A tap on one of the recent slips is the choice itself: print it.
+    if (value !== undefined && isId(value) && q.slot === 'confirm' && value !== d.billId) d.billId = value;
+    else if (value !== undefined && q.slot === 'slip') {
+      if (isId(value)) d.billId = value;
+      else { const no = slipNoIn(value) ?? numberIn(value); const hit = no ? (await recent(no, null, 1))[0] : undefined; if (hit) d.billId = hit.id; else d.miss = value; }
+    }
+    if (!d.billId) {
+      const said = String(d.reply.transcript ?? '');
+      const no = d.miss ? null : ((d.reply.edit as { slip_no?: number } | undefined)?.slip_no ?? slipNoIn(said));
+      let buyerId: string | null = null;
+      if (!no && d.heard && !/pichl|aakhr|akhr|last|abhi|latest|nayi|wali/i.test(d.heard)) {
+        const pick = this.choose(d.heard, await this.books(shopId), d.reply);
+        buyerId = pick.id ?? null;
+      }
+      const rows = await recent(no, buyerId, no ? 1 : 5);
+      if (!rows.length) {
+        if (no || d.miss) return this.ask(s, q, d, 'slip', 'text', `Parchi ${d.miss ?? `#${no}`} nahi mili. Kaun si parchi? Number boliye`,
+          [...(await recent(null, null, 4)).map((r) => ({ label: label(r), value: r.id })), CANCEL]);
+        return { say: 'Abhi koi parchi nahi bani' };
+      }
+      d.miss = undefined;
+      d.billId = rows[0].id;
+      // Not said by number: the latest is offered, the few before it beside it.
+      if (!no) {
+        const r = rows[0];
+        return this.confirm(s, q, d, `Parchi #${r.slip_no} print karein?`, 'Print karo', [label(r), when(r.created_at)],
+          rows.slice(1).map((x) => ({ label: `${label(x)}`, value: x.id })));
+      }
+    }
+    if (q.slot !== 'confirm' || (value !== 'yes' && !(value && isId(value)))) {
+      const r = (await this.db.withShop(shopId, async (tx) => (await tx.query<Row>(
+        `SELECT b.id, b.slip_no, b.total_paise, g.name, b.created_at FROM ${LIVE_BILLS} b LEFT JOIN buyers g ON g.id = b.buyer_id WHERE b.id = $1`, [d.billId])).rows))[0];
+      if (!r) return { say: 'Yeh parchi ab nahi rahi' };
+      return this.confirm(s, q, d, `Parchi #${r.slip_no} print karein?`, 'Print karo', [label(r), when(r.created_at)]);
+    }
+    const out = await this.entries.reprint(phone, shopId, d.billId);
+    const say = out.station
+      ? `Parchi #${out.slipNo} print machine ${out.station.name} par bhej di`
+      : `Print machine abhi band hai. Parchi #${out.slipNo} queue mein hai, machine chalu hote hi chhapegi`;
+    return { say, printed: { slipNo: out.slipNo, online: !!out.station } };
   }
 
   // ---------------------------------------------------------------- a gaadi, added by Bolo

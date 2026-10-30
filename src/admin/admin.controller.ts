@@ -509,6 +509,17 @@ export class AdminController {
   }
 
   /** One parchi in full, as Tally opens a voucher. */
+  /** The parchi to the shop's print machine again. */
+  @Post('shops/:id/bills/:billId/print')
+  printBill(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string) {
+    return this.entries.reprint(v.phone, mine(v, id), parse(Id, billId));
+  }
+
+  @Get('shops/:id/print-station')
+  printStation(@See() v: Viewer, @Param('id') id: string) {
+    return this.entries.printStation(v.phone, mine(v, id));
+  }
+
   @Get('shops/:id/bills/:billId')
   bill(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string) {
     return this.admin.bill(mine(v, id), parse(Id, billId));

@@ -138,7 +138,7 @@ export function AngoorParchiForm({ shopId, o, editing, draft, onClose, onDone }:
           delivery: delivery ? { address, stand } : undefined, staff: staff.trim() || undefined,
           slipNo: !editing && Number(slipNo) > 0 ? Number(slipNo) : undefined,
         }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) })
-          : t(r.printing ? 'Parchi #{n} save hui · machine par chhapegi' : 'Parchi #{n} save hui', { n: String(r.slipNo) })))
+          : t(!r.printing ? 'Parchi #{n} save hui' : r.printOnline === false ? 'Parchi #{n} save hui · print machine band hai, chalu hote hi chhapegi' : 'Parchi #{n} save hui · machine par chhapegi', { n: String(r.slipNo) })))
       }}>
       {draft?.notes.length ? <p className="muted">{draft.notes.join(' · ')}</p> : null}
       <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus={!draft} /></Field>
