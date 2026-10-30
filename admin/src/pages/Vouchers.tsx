@@ -873,7 +873,7 @@ function printInvoices(docs: InvoiceDoc[]) {
   const body = docs.map((d) => `
     <div class="doc">${d.voided ? '<div class="void">CANCELLED</div>' : ''}
       <div class="head"><div>${sellerBlock(d.seller)}</div>
-        <div><div class="title">TAX INVOICE</div><div class="n">No. <b>${esc(d.number)}</b></div><div class="n">Date ${dmyLong(d.date)}</div></div></div>
+        <div><div class="title">BILL OF SUPPLY</div><div class="n">No. <b>${esc(d.number)}</b></div><div class="n">Date ${dmyLong(d.date)}</div></div></div>
       <div class="row">
         <div><b>Bill to</b><br>${esc(d.buyer.name)}${d.buyer.code ? ` (${esc(d.buyer.code)})` : ''}<br>${esc(d.buyer.address)}${d.buyer.phone ? `<br>Ph ${esc(d.buyer.phone)}` : ''}${d.buyer.gstin ? `<br>GSTIN <b>${esc(d.buyer.gstin)}</b>` : ''}</div>
         <div><b>Parchi</b><br>${esc(d.slips.map((s) => `${s.slipNo ?? ''} (${dmyLong(s.date)})`).join(', '))}<br>Place of supply: ${esc(d.seller.mandi || '-')}</div>
