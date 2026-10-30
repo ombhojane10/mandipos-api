@@ -76,7 +76,7 @@ export function SupplierKhata({ shopId, supplierKey }: { shopId: string; supplie
       </div>
       <div className="card sum">
         <div><span className="lb">{t('Baaki')}</span><span className="v"><Bal paise={tot.duePaise} who="supplier" /></span></div>
-        {tot.openingPaise !== 0 && <div><span className="lb">{t('Opening')}</span><span className="v"><Bal paise={tot.openingPaise} who="supplier" /></span></div>}
+        {!!tot.openingPaise && <div><span className="lb">{t('Opening')}</span><span className="v"><Bal paise={tot.openingPaise} who="supplier" /></span></div>}
         <div><span className="lb">{t('Kharid')}</span><span className="v">{rupees(tot.purchasePaise)}</span></div>
         <div><span className="lb">{t('Diya')}</span><span className="v">{rupees(tot.paidPaise)}</span></div>
         <div><span className="lb">{t('Gaadi')}</span><span className="v">{count(tot.gaadis)} · {t('{n} nag', { n: count(tot.dana) })}</span></div>

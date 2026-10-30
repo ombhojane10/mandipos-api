@@ -163,7 +163,8 @@ export function Chithi({ shopId }: { shopId: string }) {
   const total = due.reduce((s, p) => s + p.balancePaise, 0)
   useEffect(() => setDocs(null), [sel, on, last])
 
-  useExport(tab === 'chithi' && docs ? () => docs : list.data ? () => {
+  // Chithi: the letters once printed (nothing before — Export is not the schedule there).
+  useExport(tab === 'chithi' ? (docs ? () => docs : null) : list.data ? () => {
     // Without an area chosen, the schedule goes area by area, each with its own total.
     const byArea = !area && due.some((p) => p.area)
     const out: ExportDoc['rows'] = []
