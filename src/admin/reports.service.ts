@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Db, Tx } from '../db/db.service';
-import { CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, UPI_PART, n } from './sql';
+import { CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, UPI_PART, n, supplierJvs } from './sql';
 
 /**
  * Tally's reports for one shop, read off the books the terminals sync. Each one ports the
  * app's own sum (Store.kt) so the website and the counter can never show two numbers:
  *  - Cash / Bank Book: Store.book/openingPaise — counter cash and UPI, typed lines, transfers;
- *  - Supplier dues: Store.suppliers — gaadi goods (less corrections) + bhada − supplier payments;
+ *  - Supplier dues: Store.suppliers — gaadi goods (less corrections) + bhada − supplier payments
+ *    (and the website's journal vouchers, which move a supplier's dues without cash);
  *  - Stock: Models.stockOf — billed + free − corrections − sold − phoota, per open gaadi.
  */
 
@@ -168,13 +169,17 @@ export class ReportsService {
       `SELECT id, TRIM(party_name) AS party, amount_paise AS amount, mode, note, business_date::text AS day, created_at AS at FROM daybook_entries
        WHERE category = 'supplier' AND direction = 'out' AND hidden = false AND TRIM(party_name) <> ''
        ORDER BY business_date DESC, created_at DESC`)).rows;
+    const jvs = await supplierJvs(tx);
     const names = new Map<string, string>();
     for (const g of gaadis) if (!names.has(nameKey(g.supplier))) names.set(nameKey(g.supplier), g.supplier);
     for (const p of payments) if (!names.has(nameKey(p.party))) names.set(nameKey(p.party), p.party);
+    for (const j of jvs) if (!names.has(nameKey(j.name))) names.set(nameKey(j.name), j.name);
     return [...names].filter(([k]) => k).map(([key, name]) => ({
       key, name,
       gaadis: gaadis.filter((g) => nameKey(g.supplier) === key),
       payments: payments.filter((p) => nameKey(p.party) === key).map((p) => ({ id: p.id, amountPaise: n(p.amount), mode: p.mode, note: p.note, date: p.day, at: p.at })),
+      // + = he is debited (owed less, as a payment), − = credited (owed more).
+      jvs: jvs.filter((j) => nameKey(j.name) === key),
     }));
   }
 
@@ -182,10 +187,12 @@ export class ReportsService {
     const rows = (await this.supplierBooks(tx)).map((s) => {
       const purchase = s.gaadis.reduce((t, g) => t + g.purchasePaise, 0);
       const paid = s.payments.reduce((t, p) => t + p.amountPaise, 0);
-      const a = age(s.gaadis.map((g) => ({ at: g.arrivedAt, amount: g.purchasePaise })), paid, today);
+      const jv = s.jvs.reduce((t, j) => t + j.amountPaise, 0);
+      const a = age([...s.gaadis.map((g) => ({ at: g.arrivedAt, amount: g.purchasePaise })), ...s.jvs.filter((j) => j.amountPaise < 0).map((j) => ({ at: j.at, amount: -j.amountPaise }))],
+        paid + s.jvs.filter((j) => j.amountPaise > 0).reduce((t, j) => t + j.amountPaise, 0), today);
       const last = [...s.gaadis.map((g) => g.arrivedAt.getTime()), ...s.payments.map((p) => p.at.getTime())].sort().at(-1);
       return { key: s.key, name: s.name, gaadis: s.gaadis.length, openGaadis: s.gaadis.filter((g) => !g.closed).length,
-        purchasePaise: purchase, paidPaise: paid, duePaise: purchase - paid, d0_7: a.d0_7, d8_30: a.d8_30, d31: a.d31,
+        purchasePaise: purchase, paidPaise: paid, jvPaise: jv, duePaise: purchase - paid - jv, d0_7: a.d0_7, d8_30: a.d8_30, d31: a.d31,
         lastAt: last ? new Date(last).toISOString() : null };
     }).sort((a, b) => b.duePaise - a.duePaise || (b.lastAt ?? '').localeCompare(a.lastAt ?? ''));
     const owed = rows.filter((r) => r.duePaise > 0);
@@ -205,6 +212,8 @@ export class ReportsService {
         ...s.payments.map((p) => ({ id: p.id, at: p.at.toISOString(), date: p.date, kind: 'payment' as const,
           title: 'Payment', detail: [p.mode === 'upi' || p.mode === 'bank' ? 'Bank' : p.mode === 'office' ? 'Office' : 'Galla', p.note].filter(Boolean).join(' · '),
           nags: 0, debitPaise: p.amountPaise, creditPaise: 0, open: false, sold: 0, left: 0 })),
+        ...s.jvs.map((j) => ({ id: j.id, at: j.at.toISOString(), date: j.date, kind: 'jv' as const, title: `JV #${j.no}`, detail: [j.other, j.narration].filter(Boolean).join(' · '),
+          nags: 0, debitPaise: Math.max(0, j.amountPaise), creditPaise: Math.max(0, -j.amountPaise), open: false, sold: 0, left: 0 })),
       ].sort((a, b) => a.at.localeCompare(b.at));
       let bal = 0;
       const history = rows.map((r) => ({ ...r, balancePaise: (bal += r.creditPaise - r.debitPaise) })).reverse();

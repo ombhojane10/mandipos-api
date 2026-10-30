@@ -1257,3 +1257,23 @@ button.chip { border: 0; cursor: pointer; }
 /* Wide sheet (bank jama parchi: cheques, cash notes side by side). */
 .sheet.wide { max-width: 880px; }
 button.link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+
+/* Vouchers: Bikri Entry's grid, a credit note's lines, a JV's two sides. */
+.bikri-grid td, .cn-lines td { padding: 3px 6px; vertical-align: middle; }
+.bikri-grid .field { width: 100%; min-width: 0; }
+.bikri-grid td:nth-child(2) { min-width: 180px; }
+.bikri-grid td:nth-child(3) { min-width: 110px; }
+.bikri-grid td:nth-child(4) { width: 80px; }
+.bikri-grid td:nth-child(5) { width: 110px; }
+.bikri-grid td:nth-child(7) { width: 96px; }
+.bikri-grid .combo-list { top: 30px; min-width: 240px; }
+.bikri-grid .money-in { min-width: 100px; }
+.grahak-cell { display: flex; align-items: center; gap: 4px; }
+.grahak-cell .cell-tag { flex: none; font-size: 10.5px; padding: 0 5px; }
+.field.num-in { width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+.cn-lines .money-in { width: 110px; margin-left: auto; }
+.jv-sides { align-items: start; }
+@media (max-width: 899px) {
+  .bikri-grid table { min-width: 640px; }
+  .jv-sides { grid-template-columns: minmax(0, 1fr); }
+}

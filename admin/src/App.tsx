@@ -27,6 +27,7 @@ import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from
 import { Crates, StoreEntry } from './pages/CrateStore'
 import { Backup, BigTransactions, GeneralLedger, Purcha, SalePurchase, TrialBalance } from './pages/Books'
 import { Chithi, LedgerMultiple } from './pages/Letters'
+import { BikriEntry, CreditNotes, JournalVouchers, TaxInvoices } from './pages/Vouchers'
 import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
 import { openEntry } from './entries/kinds'
@@ -58,6 +59,12 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
     { report: 'bankjama', label: t('Bank Jama Parchi'), key: '', icon: I.IWallet },
     { report: 'register', label: t('Bikri Register'), key: 'R', icon: I.ILedger },
     { report: 'munafa', label: t('Munafa (P&L)'), key: 'M', icon: I.IRupee },
+  ] },
+  { group: t('Vouchers'), items: [
+    { report: 'bikri', label: t('Bikri Entry'), key: '', icon: I.ITruck },
+    { report: 'jv', label: t('Journal Voucher'), key: '', icon: I.IBook },
+    { report: 'cn', label: t('Credit Note'), key: '', icon: I.IUdhaar },
+    { report: 'invoices', label: t('Generate Invoices'), key: '', icon: I.ILedger },
   ] },
   { group: t('Udhaar'), items: [
     { report: 'outstanding', label: t('Outstanding'), key: 'O', icon: I.IUdhaar },
@@ -407,6 +414,10 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'salepurchase': return <SalePurchase key={shopId} shopId={shopId} />
     case 'purcha': return <Purcha key={shopId} shopId={shopId} />
     case 'backup': return <Backup key={shopId} shopId={shopId} />
+    case 'jv': return <JournalVouchers key={shopId} shopId={shopId} />
+    case 'cn': return <CreditNotes key={shopId} shopId={shopId} />
+    case 'invoices': return <TaxInvoices key={shopId} shopId={shopId} />
+    case 'bikri': return <BikriEntry key={shopId} shopId={shopId} />
     case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }

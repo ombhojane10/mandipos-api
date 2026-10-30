@@ -7,6 +7,8 @@ import { booksChanged } from '../useLoad'
 import { BuyerPicker, Chips, Field, isWalkInName, Money, Seg, Sheet, Tick, type PickedBuyer } from './fields'
 import type { EditBill, EditGaadi, EditRaseed, EntryKind, Editing, VoiceDraft } from './kinds'
 import { AngoorGaadiForm, AngoorParchiForm, type AngoorOptions } from './Angoor'
+import { CnSheet, JvSheet } from '../pages/Vouchers'
+import { href, type Report } from '../routes'
 
 type Options = AngoorOptions & {
   commodity: string
@@ -52,11 +54,21 @@ export function EntryForm({ kind, shopId, editing, draft, onClose, onSaved }: {
     case 'supplier': return <SupplierForm shopId={shopId} onClose={onClose} onDone={done} />
     case 'gaadi': return <GaadiForm shopId={shopId} onClose={onClose} onDone={done} editing={editing?.kind === 'gaadi' ? editing.gaadi : undefined} />
     case 'grahak': return <GrahakForm shopId={shopId} onClose={onClose} onDone={done} />
+    case 'jv': return <JvSheet shopId={shopId} jv={null} onClose={onClose} onDone={done} />
+    case 'cn': return <CnSheet shopId={shopId} cn={null} onClose={onClose} onDone={done} />
+    case 'bikri': return <GoTo shopId={shopId} report="bikri" onClose={onClose} />
+    case 'invoice': return <GoTo shopId={shopId} report="invoices" query="?tab=make" onClose={onClose} />
     default: return <UdhaarForm shopId={shopId} onClose={onClose} onDone={done} />
   }
 }
 
 type FormProps = { shopId: string; onClose: () => void; onDone: (msg: string) => void }
+
+/** An entry that is a page of its own (Bikri Entry's grid, Generate Invoices): the menu opens that page. */
+function GoTo({ shopId, report, query = '', onClose }: { shopId: string; report: Report; query?: string; onClose: () => void }) {
+  useEffect(() => { location.hash = href({ page: 'report', shopId, report }) + query; onClose() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
+}
 type Draft<K extends VoiceDraft['kind']> = Extract<VoiceDraft, { kind: K }>
 
 /** Only when the voice draft needs a look (a grahak not on the list). */

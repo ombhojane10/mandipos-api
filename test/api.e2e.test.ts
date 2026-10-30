@@ -3245,3 +3245,272 @@ describe('reports (General Ledger, Trial Balance, Ledger Multiple, big transacti
     expect(led.closingPaise).toBe(-cr.totals.balancePaise);
   });
 });
+
+describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry)', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  async function web(phone: string, body: object) {
+    const s = await login(phone);
+    const res = await createApproved(s.accessToken, { mandi: 'Azadpur', shopNo: 'V-1', role: 'owner', ...body });
+    await http().post('/v1/admin/auth/otp').send({ phone }).expect(204);
+    const w = auth((await http().post('/v1/admin/auth/verify').send({ phone, code: OtpService.issuedForTests.get(phone) }).expect(200)).body.token);
+    return { id: res.me.shop.id as string, term: auth(res.accessToken), w, base: `/v1/admin/shops/${res.me.shop.id}` };
+  }
+  const daysAgo = (k: number) => new Date(Date.now() + 330 * 60_000 - k * 86_400_000).toISOString().slice(0, 10);
+
+  /** Every report that must agree: each grahak's khata, Outstanding, Supplier creditors, Cash/Bank Book and the Trial Balance. */
+  async function books(base: string, w: Record<string, string>) {
+    const d = istDay();
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    const out = (await http().get(`${base}/outstanding`).set(w).expect(200)).body;
+    const fy = Number(d.slice(5, 7)) >= 4 ? Number(d.slice(0, 4)) : Number(d.slice(0, 4)) - 1;
+    const cr = (await http().get(`${base}/creditors?fy=${fy}`).set(w).expect(200)).body;
+    const rows = tb.groups.flatMap((x: any) => x.rows);
+    const pots: Record<string, number> = {};
+    for (const pot of ['galla', 'office', 'bank']) pots[pot] = (await http().get(`${base}/cashbook?pot=${pot}&from=${d}&to=${d}`).set(w).expect(200)).body.closingPaise;
+    return { tb, out, cr, pots, row: (k: string) => rows.find((r: any) => r.key === k), grp: (k: string) => tb.groups.find((x: any) => x.key === k) };
+  }
+  const bal = async (base: string, w: Record<string, string>, id: string) => (await http().get(`${base}/buyers/${id}`).set(w).expect(200)).body.totals.balancePaise as number;
+
+  it('moves amounts by Journal Voucher between grahak, suppliers and heads, and every report agrees through edit and delete', async () => {
+    const { w, term, base } = await web('9845800001', { name: 'JV Angoor', commodity: 'angoor' });
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15', supplier: 'Sai Fruits', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0, boxGrams: 8000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'ramesh' }).expect(201)).body;
+    const b = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Suresh' }).expect(201)).body;
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: a.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit' }).expect(201);
+    await http().post(`${base}/beejak/${lot.truckId}`).set(w).send({ bhav: [{ quality: 'Royal', ratePaise: 90000 }], heads: [] }).expect(201);
+    await http().post(`${base}/creditors`).set(w).send({ name: 'Old Party', openingPaise: 250000, openingOn: '2026-04-01' }).expect(201);
+    const before = await books(base, w);
+    const aWas = await bal(base, w, a.id);
+    expect(aWas).toBe(1010000);
+
+    // Grahak → grahak: Ramesh's ₹3,000 becomes Suresh's.
+    const opt = (await http().get(`${base}/jv/options`).set(w).expect(200)).body;
+    expect(opt.nextNo).toBe(1);
+    expect(opt.suppliers).toEqual(['OLD PARTY', 'SAI FRUITS']);
+    const j1 = (await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'grahak', id: b.id }, cr: { kind: 'grahak', id: a.id }, amountPaise: 300000, narration: 'baaki badla' }).expect(201)).body;
+    expect(j1.no).toBe(1);
+    expect(await bal(base, w, a.id)).toBe(aWas - 300000);
+    expect(await bal(base, w, b.id)).toBe(300000);
+    const khata = (await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.history;
+    expect(khata[0]).toMatchObject({ kind: 'udhaar', title: 'JV #1 · SURESH · baaki badla', creditPaise: 300000 });
+    // The app pulls it as the grahak's jama.
+    const pulled = (await http().get('/v1/sync/pull?after=0&limit=500').set(term).expect(200)).body;
+    expect(pulled.changes.filter((c: any) => c.table === 'udhaar_entries').map((c: any) => [c.row.buyer_id, c.row.amount_paise])).toEqual(expect.arrayContaining([[a.id, -300000], [b.id, 300000]]));
+
+    // Set-off: Ramesh pays Sai Fruits on our behalf — his dues and what we owe Sai Fruits both come down; no cash moves.
+    const j2 = (await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'supplier', name: 'SAI FRUITS' }, cr: { kind: 'grahak', id: a.id }, amountPaise: 200000 }).expect(201)).body;
+    // Discount allowed to Ramesh, to a head; Old Party's balance moved to Sai Fruits.
+    const disc = (await http().post(`${base}/heads`).set(w).send({ name: 'Discount', type: 'expense' }).expect(201)).body;
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'head', key: `h:${disc.id}` }, cr: { kind: 'grahak', id: a.id }, amountPaise: 50000 }).expect(201);
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'supplier', name: 'Old Party' }, cr: { kind: 'supplier', name: 'sai fruits' }, amountPaise: 100000 }).expect(201);
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'grahak', id: a.id }, cr: { kind: 'grahak', id: a.id }, amountPaise: 100 }).expect(400);
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'head', key: 'b:handover' }, cr: { kind: 'grahak', id: a.id }, amountPaise: 100 }).expect(400);
+
+    const now1 = await books(base, w);
+    expect(await bal(base, w, a.id)).toBe(aWas - 550000);
+    expect(now1.tb.totals.dr).toBe(now1.tb.totals.cr);
+    // Grahak → grahak moves nothing in total; the set-off and the discount take ₹2,500 off what grahak owe.
+    expect(now1.grp('debtors').dr - now1.grp('debtors').cr).toBe(before.grp('debtors').dr - before.grp('debtors').cr - 250000);
+    expect(now1.grp('debtors').dr).toBe(now1.out.totals.duePaise);
+    expect(now1.grp('creditors').cr - now1.grp('creditors').dr).toBe(now1.cr.totals.balancePaise);
+    expect(now1.cr.totals.balancePaise).toBe(before.cr.totals.balancePaise - 200000);
+    const sai = now1.cr.rows.find((r: any) => r.name === 'SAI FRUITS'), old = now1.cr.rows.find((r: any) => r.name === 'OLD PARTY');
+    expect(old.balancePaise).toBe(250000 - 100000);
+    expect(sai.balancePaise).toBe(before.cr.rows.find((r: any) => r.name === 'SAI FRUITS').balancePaise - 200000 + 100000);
+    expect(now1.row(`h:${disc.id}`)).toMatchObject({ dr: 50000 });
+    expect(now1.row('diff:voucher')).toBeUndefined();
+    expect(now1.tb.differencePaise).toBe(before.tb.differencePaise);
+    expect(now1.pots).toEqual(before.pots);
+    const khataSai = (await http().get(`${base}/creditors/${encodeURIComponent('saifruits')}?fy=${now1.cr.fy}`).set(w).expect(200)).body;
+    expect(khataSai.lines.filter((l: any) => l.kind === 'jv').map((l: any) => [l.title, l.debitPaise, l.creditPaise])).toEqual([['JV #2', 200000, 0], ['JV #4', 0, 100000]]);
+    const led = (await http().get(`${base}/books/ledger?account=creditors&from=2026-04-01&to=${istDay()}`).set(w).expect(200)).body;
+    expect(led.closingPaise).toBe(-now1.cr.totals.balancePaise);
+    expect((await http().get(`${base}/books/ledger?account=h:${disc.id}&from=2026-04-01&to=${istDay()}`).set(w).expect(200)).body.lines).toEqual([expect.objectContaining({ title: 'JV #3', debitPaise: 50000 })]);
+
+    // Edit: ₹4,000, dated two days back — only the difference is written; the khata and books follow.
+    await http().post(`${base}/jv/${j1.id}`).set(w).send({ day: daysAgo(2), dr: { kind: 'grahak', id: b.id }, cr: { kind: 'grahak', id: a.id }, amountPaise: 400000 }).expect(200);
+    expect(await bal(base, w, a.id)).toBe(aWas - 650000);
+    expect(await bal(base, w, b.id)).toBe(400000);
+    const one = (await http().get(`${base}/jv/${j1.id}`).set(w).expect(200)).body;
+    expect(one).toMatchObject({ no: 1, date: daysAgo(2), amountPaise: 400000 });
+    expect(one.entries.reduce((s: number, e: any) => s + e.amountPaise, 0)).toBe(0);
+    // Delete the set-off: Ramesh owes it again and so do we.
+    await http().post(`${base}/jv/${j2.id}/delete`).set(w).expect(200);
+    await http().post(`${base}/jv/${j2.id}/delete`).set(w).expect(409);
+    await http().post(`${base}/jv/${j2.id}`).set(w).send({ dr: { kind: 'supplier', name: 'Sai Fruits' }, cr: { kind: 'grahak', id: a.id }, amountPaise: 1 }).expect(422);
+    expect(await bal(base, w, a.id)).toBe(aWas - 450000);
+    const now2 = await books(base, w);
+    expect(now2.tb.totals.dr).toBe(now2.tb.totals.cr);
+    expect(now2.grp('debtors').dr).toBe(now2.out.totals.duePaise);
+    expect(now2.grp('creditors').cr - now2.grp('creditors').dr).toBe(now2.cr.totals.balancePaise);
+    expect(now2.cr.totals.balancePaise).toBe(before.cr.totals.balancePaise);
+    expect(now2.row('diff:voucher')).toBeUndefined();
+    expect(now2.pots).toEqual(before.pots);
+
+    const list = (await http().get(`${base}/jv?from=2026-01-01&to=${istDay()}`).set(w).expect(200)).body;
+    expect(list.vouchers.map((v: any) => [v.no, v.voided])).toEqual([[4, false], [3, false], [2, true], [1, false]]);
+    expect((await http().get(`${base}/jv?from=2026-01-01&to=${istDay()}&q=old party`).set(w).expect(200)).body.vouchers.map((v: any) => v.no)).toEqual([4]);
+    // Another shop's owner sees none of it.
+    const other = await web('9845800009', { name: 'Other JV' });
+    await http().get(`${base}/jv?from=2026-01-01&to=${istDay()}`).set(other.w).expect(403);
+  });
+
+  it('keeps a coconut shop\'s Supplier Khata and Trial Balance with a set-off JV', async () => {
+    const { w, base } = await web('9845800002', { name: 'JV Nariyal' });
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA01', supplier: 'Pollachi Traders', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const truckId = (await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0].truckId;
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: g.id, truckId, lines: [{ grade: '1', qty: 10, ratePaise: 2000 }], pay: 'credit', packing: 'loose' }).expect(201);
+    await http().post(`${base}/jv`).set(w).send({ dr: { kind: 'supplier', name: 'pollachi traders' }, cr: { kind: 'grahak', id: g.id }, amountPaise: 5000 }).expect(201);
+    const sup = (await http().get(`${base}/suppliers`).set(w).expect(200)).body;
+    expect(sup.rows[0]).toMatchObject({ name: 'Pollachi Traders', purchasePaise: 100000, duePaise: 95000 });
+    const kh = (await http().get(`${base}/suppliers/pollachitraders`).set(w).expect(200)).body;
+    expect(kh.totals.duePaise).toBe(95000);
+    expect(kh.history[0]).toMatchObject({ kind: 'jv', title: 'JV #1', debitPaise: 5000 });
+    const tb = (await http().get(`${base}/books/trial-balance?on=${istDay()}`).set(w).expect(200)).body;
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+    const grp = (k: string) => tb.groups.find((x: any) => x.key === k);
+    expect(grp('creditors').cr - grp('creditors').dr).toBe(95000);
+    expect(grp('debtors').dr).toBe(15000);
+    expect(tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === 'diff:voucher')).toBeUndefined();
+  });
+
+  it('gives a grahak a credit note against a parchi or flat, with edit and delete, posted as Credit note in the books', async () => {
+    const { w, base } = await web('9845800003', { name: 'CN Angoor', commodity: 'angoor' });
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh16', supplier: 'Sai Fruits', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    const p = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: a.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit' }).expect(201)).body;
+    const owed = await bal(base, w, a.id);
+    const before = await books(base, w);
+    const slips = (await http().get(`${base}/credit-notes/slips/${a.id}`).set(w).expect(200)).body.slips;
+    expect(slips).toEqual([expect.objectContaining({ billId: p.billId, slipNo: p.slipNo, boxes: 10 })]);
+    const slip = (await http().get(`${base}/credit-notes/slip/${p.billId}`).set(w).expect(200)).body;
+    expect(slip.lines).toEqual([{ quality: 'Royal', grade: '1', qty: 10, ratePaise: 100000 }]);
+
+    // Rate farq: 4 boxes ₹50 less each.
+    const cn = (await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'rate', lines: [{ quality: 'Royal', boxes: 4, ratePaise: 5000 }] }).expect(201)).body;
+    expect(cn).toMatchObject({ no: 1, amountPaise: 20000 });
+    expect(await bal(base, w, a.id)).toBe(owed - 20000);
+    const kh = (await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.history;
+    expect(kh[0]).toMatchObject({ title: `CN #1 · Rate farq · Parchi ${p.slipNo}`, creditPaise: 20000 });
+    await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'kharab', lines: [{ quality: 'Royal', boxes: 11, ratePaise: 100 }] }).expect(400);
+    await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'discount', amountPaise: 2000000 }).expect(400);
+    const flat = (await http().post(`${base}/credit-notes`).set(w).send({ buyerId: a.id, reason: 'discount', amountPaise: 7500, note: 'Diwali' }).expect(201)).body;
+    let now = await books(base, w);
+    expect(now.tb.totals.dr).toBe(now.tb.totals.cr);
+    expect(now.row('cnote')).toMatchObject({ dr: 27500 });
+    expect(now.row('diff:voucher')).toBeUndefined();
+    expect(now.grp('debtors').dr).toBe(now.out.totals.duePaise);
+    expect(now.pots).toEqual(before.pots);
+    expect((await http().get(`${base}/books/ledger?account=cnote&from=2026-04-01&to=${istDay()}`).set(w).expect(200)).body.debitPaise).toBe(27500);
+
+    // Edit the parchi one to a flat ₹300, then delete the other.
+    await http().post(`${base}/credit-notes/${cn.id}`).set(w).send({ buyerId: a.id, billId: p.billId, reason: 'kharab', amountPaise: 30000 }).expect(200);
+    await http().post(`${base}/credit-notes/${flat.id}/delete`).set(w).expect(200);
+    expect(await bal(base, w, a.id)).toBe(owed - 30000);
+    const doc = (await http().get(`${base}/credit-notes/${cn.id}`).set(w).expect(200)).body;
+    expect(doc).toMatchObject({ no: 1, reason: 'kharab', amountPaise: 30000, slipNo: p.slipNo, lines: [], buyer: expect.objectContaining({ name: 'RAMESH' }) });
+    now = await books(base, w);
+    expect(now.tb.totals.dr).toBe(now.tb.totals.cr);
+    expect(now.row('cnote')).toMatchObject({ dr: 30000 });
+    expect(now.row('diff:voucher')).toBeUndefined();
+    const list = (await http().get(`${base}/credit-notes?from=2026-01-01&to=${istDay()}`).set(w).expect(200)).body;
+    expect(list.notes.map((x: any) => [x.no, x.voided])).toEqual([[2, true], [1, false]]);
+    expect(list.totalPaise).toBe(30000);
+    expect(list.nextNo).toBe(3);
+  });
+
+  it('generates tax invoices per parchi or consolidated, numbered per year, cancels them and keeps the GSTIN', async () => {
+    const { w, base } = await web('9845800004', { name: 'Inv Angoor', commodity: 'angoor' });
+    await http().post(`${base}/settings`).set(w).send({ companyCode: 'GFA', gstin: '27ABCDE1234F1Z5', address: 'Shed 11, Vashi' }).expect(200);
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh17', supplier: 'Sai Fruits', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0, boxGrams: 8000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh', address: 'Azadpur' }).expect(201)).body;
+    await http().post(`${base}/grahak/${a.id}`).set(w).send({ gstin: 'bad' }).expect(400);
+    expect((await http().post(`${base}/grahak/${a.id}`).set(w).send({ gstin: '07abcde1234f1z5' }).expect(201)).body.gstin).toBe('07ABCDE1234F1Z5');
+    expect((await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.buyer).toMatchObject({ gstin: '07ABCDE1234F1Z5', name: 'RAMESH' });
+    const p1 = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: a.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit', labour: true, labourRatePaise: 1000 }).expect(201)).body;
+    const p2 = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: a.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 5, ratePaise: 90000 }], pay: 'cash' }).expect(201)).body;
+    const d = istDay();
+    const parchis = (await http().get(`${base}/invoices/parchis?from=${d}&to=${d}&buyerId=${a.id}`).set(w).expect(200)).body.parchis;
+    expect(parchis.map((x: any) => [x.slipNo, x.invoice])).toEqual([[p1.slipNo, null], [p2.slipNo, null]]);
+
+    const each = (await http().post(`${base}/invoices`).set(w).send({ billIds: [p1.billId, p2.billId], mode: 'each' }).expect(201)).body.invoices;
+    const fy = Number(d.slice(5, 7)) >= 4 ? Number(d.slice(0, 4)) : Number(d.slice(0, 4)) - 1;
+    const label = `${fy}-${String((fy + 1) % 100).padStart(2, '0')}`;
+    expect(each.map((i: any) => i.number)).toEqual([`GFA/${label}/0001`, `GFA/${label}/0002`]);
+    const inv = (await http().get(`${base}/invoices/${each[0].id}`).set(w).expect(200)).body;
+    expect(inv).toMatchObject({
+      number: `GFA/${label}/0001`, taxRate: 0, taxPaise: 0, goodsPaise: 1000000, chargesPaise: 10000 + 10000, totalPaise: 1020000,
+      seller: expect.objectContaining({ gstin: '27ABCDE1234F1Z5', address: 'Shed 11, Vashi' }), buyer: expect.objectContaining({ name: 'RAMESH', gstin: '07ABCDE1234F1Z5' }),
+      words: 'Rupees Ten Thousand Two Hundred Only',
+    });
+    expect(inv.lines).toEqual([expect.objectContaining({ quality: 'Royal', hsn: '0806 10', qty: 10, kg: 80, ratePaise: 100000, amountPaise: 1000000 })]);
+    expect(inv.charges.map((c: any) => c.label)).toEqual(['APMC (mandi fee)', 'Mazdoori (labour)']);
+    // A parchi on a live invoice is not invoiced again; cancelled, it is free, and the number is kept.
+    await http().post(`${base}/invoices`).set(w).send({ billIds: [p1.billId], mode: 'each' }).expect(409);
+    await http().post(`${base}/invoices/${each[0].id}/cancel`).set(w).send({ reason: 'galat' }).expect(200);
+    await http().post(`${base}/invoices/${each[1].id}/cancel`).set(w).send({}).expect(200);
+    await http().post(`${base}/invoices/${each[1].id}/cancel`).set(w).send({}).expect(409);
+    const one = (await http().post(`${base}/invoices`).set(w).send({ billIds: [p2.billId, p1.billId], mode: 'one' }).expect(201)).body.invoices;
+    expect(one).toEqual([expect.objectContaining({ number: `GFA/${label}/0003` })]);
+    const docs = (await http().post(`${base}/invoices/docs`).set(w).send({ ids: [one[0].id, each[0].id] }).expect(200)).body.invoices;
+    expect(docs.map((x: any) => [x.number, x.voided])).toEqual([[`GFA/${label}/0001`, true], [`GFA/${label}/0003`, false]]);
+    expect(docs[1].slips.map((s: any) => s.slipNo)).toEqual([p1.slipNo, p2.slipNo]);
+    expect(docs[1].totalPaise).toBe(1020000 + 450000 + 4500);
+    const list = (await http().get(`${base}/invoices?from=${d}&to=${d}&q=${p2.slipNo}`).set(w).expect(200)).body;
+    expect(list.invoices.map((x: any) => x.number)).toEqual([`GFA/${label}/0003`, `GFA/${label}/0002`]);
+    expect(list.totalPaise).toBe(docs[1].totalPaise);
+    // Re-printing is the same paper even after the grahak's details change.
+    await http().post(`${base}/grahak/${a.id}`).set(w).send({ gstin: '' }).expect(201);
+    expect((await http().get(`${base}/invoices/${one[0].id}`).set(w).expect(200)).body.buyer.gstin).toBe('07ABCDE1234F1Z5');
+    // Two grahak's parchis never go on one invoice.
+    const b = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Suresh' }).expect(201)).body;
+    const p3 = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: b.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 1, ratePaise: 1000 }], pay: 'credit' }).expect(201)).body;
+    const p4 = (await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: a.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 1, ratePaise: 1000 }], pay: 'credit' }).expect(201)).body;
+    await http().post(`${base}/invoices`).set(w).send({ billIds: [p3.billId, p4.billId], mode: 'one' }).expect(400);
+  });
+
+  it('sells one gaadi to many grahak in a Bikri Entry: a parchi per row, new names once, books consistent', async () => {
+    const { w, base } = await web('9845800005', { name: 'Bikri Angoor', commodity: 'angoor' });
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh18', supplier: 'Sai Fruits', lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0 }, { brandName: 'Sonaka', grade: '1', qty: 50, ratePaise: 0 }] }).expect(201);
+    const lots = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots;
+    const royal = lots.find((l: any) => l.quality === 'Royal'), sonaka = lots.find((l: any) => l.quality === 'Sonaka');
+    const a = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    await http().post(`${base}/bikri`).set(w).send({ truckId: royal.truckId, rows: [{ qty: 5, ratePaise: 1000, brandId: royal.brandId }] }).expect(400);
+    const r = (await http().post(`${base}/bikri`).set(w).send({ truckId: royal.truckId, rows: [
+      { buyerId: a.id, brandId: royal.brandId, qty: 10, ratePaise: 100000 },
+      { buyerName: 'naya bhai', brandId: royal.brandId, qty: 5, ratePaise: 90000 },
+      { buyerName: 'Naya Bhai', brandId: sonaka.brandId, qty: 3, ratePaise: 80000 },
+      { buyerName: '', brandId: sonaka.brandId, qty: 2, ratePaise: 80000, pay: 'cash' },
+      { buyerName: 'kuch nahi', brandId: royal.brandId, qty: 0, ratePaise: 1 },
+    ] }).expect(201)).body;
+    expect(r.failed).toEqual([]);
+    expect(r.made.map((m: any) => [m.line, m.buyerName, m.qty])).toEqual([[1, 'RAMESH', 10], [2, 'NAYA BHAI', 5], [3, 'NAYA BHAI', 3], [4, 'Cash', 2]]);
+    expect(new Set(r.made.map((m: any) => m.slipNo)).size).toBe(4);
+    expect(r.made[1].buyerId).toBe(r.made[2].buyerId);
+    expect(r.boxes).toBe(20);
+    const buyers = (await http().get(`${base}/buyers?q=naya`).set(w).expect(200)).body.buyers;
+    expect(buyers).toHaveLength(1);
+    // APMC 1% rides on each slip, as Nayi Parchi writes it.
+    expect(r.made[0].totalPaise).toBe(1010000);
+    const left = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots;
+    expect(left.find((l: any) => l.quality === 'Royal').left).toBe(85);
+    const now = await books(base, w);
+    expect(now.tb.totals.dr).toBe(now.tb.totals.cr);
+    expect(now.grp('debtors').dr).toBe(now.out.totals.duePaise);
+    expect(now.pots.galla).toBe(r.made[3].totalPaise);
+
+    // Coconut: a gaadi's grades, a parchi per row through the coconut writer.
+    const c = await web('9845800006', { name: 'Bikri Nariyal' });
+    await http().post(`${c.base}/entries/gaadi`).set(c.w).send({ number: 'KA02', supplier: 'Pollachi', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const truckId = (await http().get(`${c.base}/stock`).set(c.w).expect(200)).body.rows[0].truckId;
+    const cr = (await http().post(`${c.base}/bikri`).set(c.w).send({ truckId, rows: [
+      { buyerName: 'Mohan', grade: '1', qty: 20, ratePaise: 2500 }, { buyerName: 'Sohan', grade: '2', qty: 90, ratePaise: 2000 },
+    ] }).expect(201)).body;
+    expect(cr.made).toEqual([expect.objectContaining({ line: 1, buyerName: 'Mohan', totalPaise: 50000 })]);
+    expect(cr.failed).toEqual([{ line: 2, error: expect.stringContaining('80') }]);
+  });
+});

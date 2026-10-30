@@ -1,4 +1,5 @@
 /** SQL and helpers shared by the admin portal's queries; every sum follows the app's Store.kt. */
+import type { Tx } from '../db/db.service';
 
 export const LIVE_BILLS = `(SELECT * FROM bills b WHERE NOT EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id))`;
 export const LIVE_COLS = `(SELECT * FROM collections c WHERE NOT EXISTS (SELECT 1 FROM collection_voids v WHERE v.collection_id = c.id))`;
@@ -25,3 +26,19 @@ export const n = (v: unknown) => Number(v ?? 0);
 export const MOBILE = /^[6-9]\d{9}$/;
 // Dates come back as text (::text in SQL): a DATE parsed into a JS Date shifts with the server's zone.
 export const day = (v: string) => v.slice(0, 10);
+
+/**
+ * Journal vouchers with a supplier on a side (website only, 067): what each did to that supplier.
+ * amountPaise > 0 = the supplier debited (we owe him less, as a payment does); < 0 = credited
+ * (we owe him more, as a beejak does). Supplier creditors, Supplier Khata and the Trial Balance
+ * all read this one list, so they agree.
+ */
+export async function supplierJvs(tx: Tx) {
+  const rows = (await tx.query<{ id: string; no: number; day: string; at: Date; dr_kind: string; dr_ref: string; dr_name: string; cr_kind: string; cr_ref: string; cr_name: string; amount_paise: string; narration: string }>(
+    `SELECT id, no, day::text AS day, created_at AS at, dr_kind, dr_ref, dr_name, cr_kind, cr_ref, cr_name, amount_paise, narration FROM journal_vouchers
+     WHERE voided_at IS NULL AND (dr_kind = 'supplier' OR cr_kind = 'supplier') ORDER BY day, no`)).rows;
+  return rows.flatMap((r) => [
+    ...(r.dr_kind === 'supplier' ? [{ id: r.id, no: r.no, date: r.day, at: r.at, name: r.dr_ref, amountPaise: n(r.amount_paise), other: r.cr_name, narration: r.narration }] : []),
+    ...(r.cr_kind === 'supplier' ? [{ id: r.id, no: r.no, date: r.day, at: r.at, name: r.cr_ref, amountPaise: -n(r.amount_paise), other: r.dr_name, narration: r.narration }] : []),
+  ]);
+}

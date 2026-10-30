@@ -48,7 +48,8 @@ export function NewEntry({ shopId }: { shopId: string }) {
           if (e.key === 'Escape') { e.stopPropagation(); setMenu(false); return }
           // One letter picks the entry, as in Tally's Create menu.
           const k = ENTRY_KEYS[e.key.toLowerCase()]
-          if (k && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setKind(k); setMenu(false) }
+          // Stopped here: an entry that opens a page (Bikri Entry) leaves no sheet up for the page keys to see.
+          if (k && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); setKind(k); setMenu(false) }
         }}>
           <div className="sheet entry-menu" role="dialog" aria-label={t('Nayi entry')} onClick={(e) => e.stopPropagation()}>
             <div className="sheet-hd"><h3>{t('Nayi entry')}</h3><button type="button" className="icon-btn" aria-label={t('Band karein')} onClick={() => setMenu(false)}>✕</button></div>

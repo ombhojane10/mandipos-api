@@ -86,7 +86,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         <div className="head" style={{ marginBottom: 0 }}>
           <div className="grow">
             <h1>{b.code && <span className="code big">{b.code}</span>}{b.name}</h1>
-            <p>{[b.kind, b.address, b.destination && `→ ${b.destination}`, b.vehicle].filter(Boolean).join(' · ')}</p>
+            <p>{[b.kind, b.address, b.destination && `→ ${b.destination}`, b.vehicle, b.gstin && `GSTIN ${b.gstin}`].filter(Boolean).join(' · ')}</p>
           </div>
           {mobile && <a className="call" href={`tel:+91${b.phone}`}>☎ {phone(b.phone)}</a>}
           {mobile && tot.balancePaise > 0 && <button type="button" className="btn ghost wa-btn" onClick={() => openWhatsApp(shopId, buyerId)}>WhatsApp</button>}
@@ -115,7 +115,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
 function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: BuyerDetail['buyer']; balancePaise: number; onClose: () => void }) {
   const { shops } = useSession()
   const caps = shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
-  const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination, area: b.area ?? '' })
+  const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination, area: b.area ?? '', gstin: b.gstin ?? '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const send = async (body: object, then: () => void) => {
@@ -126,7 +126,8 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
   const save = () => {
     if (!f.name.trim()) return setError(t('Naam daalein'))
     if (f.phone && !/^[6-9]\d{9}$/.test(f.phone)) return setError(t('Mobile number 10 ank ka hona chahiye'))
-    void send({ name: caps ? f.name.toUpperCase() : f.name, code: f.code, phone: f.phone, address: f.address, destination: f.destination, area: f.area }, onClose)
+    if (f.gstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(f.gstin)) return setError(t('GSTIN 15 akshar ka hota hai'))
+    void send({ name: caps ? f.name.toUpperCase() : f.name, code: f.code, phone: f.phone, address: f.address, destination: f.destination, area: f.area, gstin: f.gstin }, onClose)
   }
   const hide = () => {
     if (!confirm(t('{name} ko list se hatayein?', { name: b.name }))) return
@@ -146,6 +147,7 @@ function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: B
         <Field label={t('Area')}><input className="field" style={{ textTransform: 'uppercase' }} list="grahak-areas" maxLength={60} value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })} /></Field>
       </div>
       <AreaDatalist shopId={shopId} id="grahak-areas" />
+      <Field label={t('GSTIN (invoice ke liye)')}><input className="field" style={{ textTransform: 'uppercase' }} maxLength={15} value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value.toUpperCase().replace(/\s/g, '') })} /></Field>
       {balancePaise === 0 && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} disabled={saving} onClick={hide}>{t('List se hatayein')}</button>}
     </Sheet>
   )

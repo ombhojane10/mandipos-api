@@ -12,6 +12,7 @@ export const REPORT_KEYS: Record<string, Report> = {
 /** Inside the Nayi entry menu (N): one letter per entry. */
 export const ENTRY_KEYS: Record<string, EntryKind> = {
   p: 'parchi', v: 'vasooli', k: 'kharcha', s: 'supplier', g: 'gaadi', n: 'grahak', u: 'udhaar',
+  b: 'bikri', j: 'jv', c: 'cn', i: 'invoice',
 }
 /** Tally's voucher keys: F8 Sales, F9 Purchase, F6 Receipt. */
 export const F_KEYS: Record<string, EntryKind> = { F8: 'parchi', F9: 'gaadi', F6: 'vasooli' }

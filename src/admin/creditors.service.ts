@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Db, Tx } from '../db/db.service';
 import { nameKey } from './reports.service';
-import { BALANCES, n } from './sql';
+import { BALANCES, n, supplierJvs } from './sql';
 
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
@@ -13,13 +13,13 @@ export function fyOf(day: string): number {
 export const fyRange = (fy: number) => ({ from: `${fy}-04-01`, to: `${fy + 1}-03-31`, label: `${fy}-${String((fy + 1) % 100).padStart(2, '0')}` });
 
 type Master = { id: string; name: string; phone: string; code: string; area: string; opening: number; openingOn: string | null };
-type Move = { at: string; kind: 'opening' | 'beejak' | 'payment'; id: string; title: string; detail: string; creditPaise: number; debitPaise: number };
+type Move = { at: string; kind: 'opening' | 'beejak' | 'payment' | 'jv'; id: string; title: string; detail: string; creditPaise: number; debitPaise: number };
 
 /**
  * Supplier creditors (angoor): what the shop owes each supplier, by financial year. The master
  * (supplier_phones) holds a manual code, area and an opening balance on a date; a saved beejak's
- * net is owed to its party; a supplier payment pays it. A year's opening is everything before
- * 1 April — last year's closing carried forward, never reset.
+ * net is owed to its party; a supplier payment pays it; a journal voucher moves it without cash.
+ * A year's opening is everything before 1 April — last year's closing carried forward, never reset.
  */
 @Injectable()
 export class CreditorsService {
@@ -36,6 +36,7 @@ export class CreditorsService {
       `SELECT id, TRIM(party_name) AS party, amount_paise AS amount, mode, note, business_date::text AS day FROM daybook_entries
        WHERE category = 'supplier' AND direction = 'out' AND hidden = false AND TRIM(party_name) <> ''`)).rows;
     const gaadis = (await tx.query<{ supplier: string }>(`SELECT DISTINCT TRIM(supplier) AS supplier FROM trucks WHERE TRIM(supplier) <> ''`)).rows;
+    const jvs = await supplierJvs(tx);
 
     // One supplier per folded name: the master's spelling first, then what the gaadis and payments say.
     const people = new Map<string, { key: string; name: string; master: Master | null; moves: Move[] }>();
@@ -55,6 +56,8 @@ export class CreditorsService {
     for (const g of gaadis) get(g.supplier);
     for (const b of beejaks) get(b.party)?.moves.push({ at: b.day, kind: 'beejak', id: b.id, title: `Beejak #${b.beejak_no}`, detail: `Gaadi ${b.gaadi} · ${b.boxes} box`, creditPaise: n(b.net_paise), debitPaise: 0 });
     for (const x of payments) get(x.party)?.moves.push({ at: x.day, kind: 'payment', id: x.id, title: 'Payment', detail: [x.mode, x.note].filter(Boolean).join(' · '), creditPaise: 0, debitPaise: n(x.amount) });
+    for (const j of jvs) get(j.name)?.moves.push({ at: j.date, kind: 'jv', id: j.id, title: `JV #${j.no}`, detail: [j.other, j.narration].filter(Boolean).join(' · '),
+      creditPaise: Math.max(0, -j.amountPaise), debitPaise: Math.max(0, j.amountPaise) });
     return [...people.values()];
   }
 

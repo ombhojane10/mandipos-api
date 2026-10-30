@@ -21,6 +21,8 @@ import { MastersService } from './masters.service';
 import { CratesService } from './crates.service';
 import { ColdStoreService } from './cold-store.service';
 import { BooksService } from './books.service';
+import { CN_REASONS, VouchersService } from './vouchers.service';
+import { GSTIN, InvoicesService } from './invoices.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -149,6 +151,8 @@ const GrahakBody = z.object({
 const GrahakPatchBody = z.object({
   name: z.string().trim().min(1).max(120).optional(), phone: z.string().trim().max(15).optional(), address: z.string().max(200).optional(),
   destination: z.string().max(120).optional(), code: z.string().max(20).optional(), kind: z.enum(['', 'laddan']).optional(), hidden: z.boolean().optional(), ...LaddanCols,
+  // Website only (for tax invoices): kept beside the grahak, never synced.
+  gstin: z.string().trim().toUpperCase().max(15).optional(),
 });
 const SupplierBody = z.object({
   id: z.uuid().optional(), name: z.string().trim().min(1).max(120), code: z.string().max(20).optional(), area: z.string().max(60).optional(),
@@ -234,12 +238,37 @@ const StoreMovesQuery = Range.extend({ store: z.uuid().optional() });
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
 // The old software's Reports menu: General Ledger, Trial Balance, Ledger Multiple, Chithi, big transactions, Sale Purchase, Purcha, Backup.
-const AccountKey = z.string().regex(/^(pot:(galla|office|bank)|sales|purchase|bhada_in|apmc|chungi|mazdoori|labour|creditors|b:[a-z_]{1,30}|bj:[a-z_]{1,20}|diff:[a-z_]{1,30}|h:[0-9a-f-]{36})$/, 'khata');
+const AccountKey = z.string().regex(/^(pot:(galla|office|bank)|sales|cnote|purchase|bhada_in|apmc|chungi|mazdoori|labour|creditors|b:[a-z_]{1,30}|bj:[a-z_]{1,20}|diff:[a-z_]{1,30}|h:[0-9a-f-]{36})$/, 'khata');
 const LedgerQuery = Range.extend({ account: AccountKey, daily: z.enum(['0', '1']).default('0') });
 const OnQuery = z.object({ on: z.iso.date().optional() });
 const KhatasBody = z.object({ ids: z.array(z.uuid()).min(1).max(2000), from: z.iso.date(), to: z.iso.date(), last: z.number().int().min(1).max(100).optional() });
 const BigQuery = Range.extend({ min: z.coerce.number().int().min(0).max(1_000_000_000_00).default(2_00_000_00) });
 const SalePurchaseQuery = Range.extend({ by: z.enum(['day', 'month']).default('day') });
+
+// The old software's remaining Transactions: Journal Voucher, Credit Note, Generate Invoices, Bikri Entry.
+const SearchQuery = Range.extend({ q: z.string().max(60).default('') });
+const JvAccountBody = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('grahak'), id: z.uuid() }),
+  z.object({ kind: z.literal('supplier'), name: z.string().trim().min(1).max(120) }),
+  z.object({ kind: z.literal('head'), key: z.string().regex(/^(h:[0-9a-f-]{36}|b:[a-z_]{1,30})$/) }),
+]);
+const JvBody = z.object({ day: DayIso, dr: JvAccountBody, cr: JvAccountBody, amountPaise: paise.positive(), narration: z.string().max(200).optional() });
+const CnBody = z.object({
+  day: DayIso, buyerId: z.uuid(), billId: z.uuid().nullable().optional(), reason: z.enum(Object.keys(CN_REASONS) as [keyof typeof CN_REASONS, ...(keyof typeof CN_REASONS)[]]),
+  lines: z.array(z.object({ quality: z.string().trim().min(1).max(60), grade: z.string().max(4).optional(), boxes: z.number().int().positive().max(10_000_000), ratePaise: paise.positive() })).max(30).optional(),
+  amountPaise: paise.optional(), note: z.string().max(200).optional(),
+});
+const InvoiceParchiQuery = Range.extend({ buyerId: z.uuid().optional() });
+const InvoiceBody = z.object({ billIds: z.array(z.uuid()).min(1).max(500), mode: z.enum(['each', 'one']), day: DayIso });
+const IdsBody = z.object({ ids: z.array(z.uuid()).min(1).max(500) });
+const CancelBody = z.object({ reason: z.string().max(200).default('') });
+const BikriBody = z.object({
+  truckId: z.uuid().optional(), labour: z.boolean().optional(), labourRatePaise: z.number().int().min(0).max(100_000).optional(), staff: z.string().max(60).optional(),
+  rows: z.array(z.object({
+    buyerId: z.uuid().optional(), buyerName: z.string().trim().max(120).optional(), truckId: z.uuid().optional(), brandId: z.uuid().optional(), grade: grade.optional(),
+    qty: z.number().int().min(0).max(10_000_000), ratePaise: paise, pay: z.enum(['credit', 'cash', 'upi']).optional(),
+  })).min(1).max(200),
+});
 
 /** Sign-in: OTP to a MandiPlus admin number, or to the owner of an approved shop. */
 @Controller('v1/admin/auth')
@@ -283,7 +312,129 @@ export class AdminController {
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
     private readonly machines: MachinesService, private readonly deposits: DepositsService, private readonly masters: MastersService,
     private readonly crates: CratesService, private readonly coldStore: ColdStoreService, private readonly books: BooksService,
+    private readonly vouchers: VouchersService, private readonly invoices: InvoicesService,
   ) {}
+
+  // ---------------------------------------------------------------- Journal Voucher
+
+  @Get('shops/:id/jv/options')
+  jvOptions(@See() v: Viewer, @Param('id') id: string) {
+    return this.vouchers.jvOptions(mine(v, id));
+  }
+
+  @Get('shops/:id/jv')
+  jvList(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(SearchQuery, query);
+    return this.vouchers.jvList(mine(v, id), r.from, r.to, r.q);
+  }
+
+  @Get('shops/:id/jv/:jid')
+  jvOne(@See() v: Viewer, @Param('id') id: string, @Param('jid') jid: string) {
+    return this.vouchers.jvOne(mine(v, id), parse(Id, jid));
+  }
+
+  @Post('shops/:id/jv')
+  newJv(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.vouchers.jvSave(v.phone, mine(v, id), null, parse(JvBody, body));
+  }
+
+  @Post('shops/:id/jv/:jid')
+  @HttpCode(200)
+  editJv(@See() v: Viewer, @Param('id') id: string, @Param('jid') jid: string, @Body() body: unknown) {
+    return this.vouchers.jvSave(v.phone, mine(v, id), parse(Id, jid), parse(JvBody, body));
+  }
+
+  @Post('shops/:id/jv/:jid/delete')
+  @HttpCode(200)
+  removeJv(@See() v: Viewer, @Param('id') id: string, @Param('jid') jid: string) {
+    return this.vouchers.jvRemove(v.phone, mine(v, id), parse(Id, jid));
+  }
+
+  // ---------------------------------------------------------------- Credit Note
+
+  @Get('shops/:id/credit-notes')
+  cnList(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(SearchQuery, query);
+    return this.vouchers.cnList(mine(v, id), r.from, r.to, r.q);
+  }
+
+  /** A grahak's parchis to pick one from, and one parchi's lines. */
+  @Get('shops/:id/credit-notes/slips/:buyerId')
+  cnSlips(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string) {
+    return this.vouchers.cnSlips(mine(v, id), parse(Id, buyerId));
+  }
+
+  @Get('shops/:id/credit-notes/slip/:billId')
+  cnSlip(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string) {
+    return this.vouchers.cnSlip(mine(v, id), parse(Id, billId));
+  }
+
+  @Get('shops/:id/credit-notes/:cid')
+  cnOne(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string) {
+    return this.vouchers.cnOne(mine(v, id), parse(Id, cid));
+  }
+
+  @Post('shops/:id/credit-notes')
+  newCn(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.vouchers.cnSave(v.phone, mine(v, id), null, parse(CnBody, body));
+  }
+
+  @Post('shops/:id/credit-notes/:cid')
+  @HttpCode(200)
+  editCn(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown) {
+    return this.vouchers.cnSave(v.phone, mine(v, id), parse(Id, cid), parse(CnBody, body));
+  }
+
+  @Post('shops/:id/credit-notes/:cid/delete')
+  @HttpCode(200)
+  removeCn(@See() v: Viewer, @Param('id') id: string, @Param('cid') cid: string) {
+    return this.vouchers.cnRemove(v.phone, mine(v, id), parse(Id, cid));
+  }
+
+  // ---------------------------------------------------------------- Generate Invoices
+
+  @Get('shops/:id/invoices/parchis')
+  invoiceParchis(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(InvoiceParchiQuery, query);
+    return this.invoices.parchis(mine(v, id), r.from, r.to, r.buyerId);
+  }
+
+  @Get('shops/:id/invoices')
+  invoiceList(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(SearchQuery, query);
+    return this.invoices.list(mine(v, id), r.from, r.to, r.q);
+  }
+
+  /** Several invoices in full, for one print. */
+  @Post('shops/:id/invoices/docs')
+  @HttpCode(200)
+  invoiceDocs(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.invoices.docs(mine(v, id), parse(IdsBody, body).ids);
+  }
+
+  @Get('shops/:id/invoices/:iid')
+  invoice(@See() v: Viewer, @Param('id') id: string, @Param('iid') iid: string) {
+    return this.invoices.one(mine(v, id), parse(Id, iid));
+  }
+
+  @Post('shops/:id/invoices')
+  generateInvoices(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.invoices.generate(v.phone, mine(v, id), parse(InvoiceBody, body));
+  }
+
+  @Post('shops/:id/invoices/:iid/cancel')
+  @HttpCode(200)
+  cancelInvoice(@See() v: Viewer, @Param('id') id: string, @Param('iid') iid: string, @Body() body: unknown) {
+    return this.invoices.cancel(mine(v, id), parse(Id, iid), parse(CancelBody, body ?? {}).reason);
+  }
+
+  // ---------------------------------------------------------------- Bikri Entry
+
+  /** One gaadi to many grahak: a parchi per row, through the parchi writer. */
+  @Post('shops/:id/bikri')
+  bikri(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    return this.vouchers.bikri(v.phone, mine(v, id), parse(BikriBody, body));
+  }
 
   // ---------------------------------------------------------------- Crate In / Crate Out
 
@@ -606,8 +757,13 @@ export class AdminController {
 
   /** Changes a grahak or laddan party's details (only what is sent). */
   @Post('shops/:id/grahak/:buyerId')
-  editGrahak(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string, @Body() body: unknown) {
-    return this.entries.updateGrahak(v.phone, mine(v, id), parse(z.uuid(), buyerId), parse(GrahakPatchBody, body));
+  async editGrahak(@See() v: Viewer, @Param('id') id: string, @Param('buyerId') buyerId: string, @Body() body: unknown) {
+    const shopId = mine(v, id), bid = parse(z.uuid(), buyerId);
+    const { gstin, ...patch } = parse(GrahakPatchBody, body);
+    if (gstin && !GSTIN.test(gstin)) throw new BadRequestException('GSTIN 15 akshar ka hota hai (jaise 07ABCDE1234F1Z5)');
+    const done = Object.keys(patch).length || gstin === undefined ? await this.entries.updateGrahak(v.phone, shopId, bid, patch) : { id: bid };
+    if (gstin === undefined) return done;
+    return { ...done, gstin: (await this.invoices.setGstin(shopId, bid, gstin)).gstin };
   }
 
   // ---------------------------------------------------------------- Bolo (voice), as on the terminal

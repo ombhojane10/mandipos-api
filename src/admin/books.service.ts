@@ -29,6 +29,11 @@ const POTS: Pot[] = ['galla', 'office', 'bank'];
  *  - bj:<head>    — a beejak's deductions (commission, loading…): the shop's income;
  *  - b:<category> — a Day Book head (committee di/mili and udhaar diya/wapas paired); h:<id> — a head from the
  *                   General Ledger master, claimed by name exactly as MastersService does;
+ *  - cnote        — credit notes (rate farq, maal kharab, wapsi, discount): bikri given back, so a sales-side debit;
+ *  - journal vouchers (website, 067) post each side to its own account: a grahak through the synced udhaar
+ *    entries the voucher wrote (voucher_udhaar), a supplier to creditors, a head to h:/b:. Every side goes
+ *    against diff:voucher, which a voucher's two sides (and a credit note's) bring back to zero — so it only
+ *    shows when an entry went astray;
  *  - diff:*       — the other side of what the books hold with no contra: openings (grahak purana udhaar,
  *                   supplier and head openings, a stated Cash/Bank opening) and entries whose two sides
  *                   don't meet (a slip paid ≠ cash + UPI, a supplier payment without a name…).
@@ -45,7 +50,7 @@ const DIFF: Record<string, string> = {
   'diff:opening_grahak': 'Grahak opening (purana udhaar)', 'diff:udhaar': 'Grahak udhaar/jama entry', 'diff:opening_supplier': 'Supplier opening',
   'diff:opening_head': 'Head opening', 'diff:opening_cash': 'Cash/Bank opening', 'diff:bill': 'Parchi: paid ≠ cash + UPI', 'diff:raseed': 'Raseed: amount ≠ cash + UPI',
   'diff:transfer': 'Transfer ek hi book mein', 'diff:supplier': 'Supplier payment bina naam', 'diff:beejak': 'Beejak bina party', 'diff:gaadi': 'Gaadi bina supplier',
-  'diff:mode': 'Day Book: mode nahi', 'diff:other': 'Supplier khata se farq',
+  'diff:mode': 'Day Book: mode nahi', 'diff:other': 'Supplier khata se farq', 'diff:voucher': 'JV / Credit note farq',
 };
 const PAIRED: Record<string, string> = { committee_di: 'committee', committee_mili: 'committee', udhaar_diya: 'udhaar_diya', udhaar_wapas: 'udhaar_diya' };
 const TRANSFERS = ['handover', 'float', 'bank_jama', 'bank_nikala'];
@@ -87,10 +92,11 @@ const FRAGMENTS = {
   udhaar: `
     SELECT u.business_date AS day, v.acct, v.dr, v.cr, 'udhaar' AS kind, u.id AS ref, u.buyer_id AS ref2, u.created_at AS at,
            COALESCE(NULLIF(u.note, ''), CASE WHEN u.amount_paise < 0 THEN 'Jama' ELSE 'Udhaar' END) AS title, COALESCE(g.name, '') AS detail
-    FROM udhaar_entries u LEFT JOIN buyers g ON g.id = u.buyer_id
+    FROM udhaar_entries u LEFT JOIN buyers g ON g.id = u.buyer_id LEFT JOIN voucher_udhaar vu ON vu.udhaar_id = u.id
     CROSS JOIN LATERAL (VALUES
       ('g:' || u.buyer_id, GREATEST(u.amount_paise, 0), GREATEST(-u.amount_paise, 0)),
-      (CASE WHEN u.note = ANY($2::text[]) THEN 'diff:opening_grahak' ELSE 'diff:udhaar' END, GREATEST(-u.amount_paise, 0), GREATEST(u.amount_paise, 0))
+      (CASE WHEN vu.udhaar_id IS NOT NULL THEN 'diff:voucher' WHEN u.note = ANY($2::text[]) THEN 'diff:opening_grahak' ELSE 'diff:udhaar' END,
+       GREATEST(-u.amount_paise, 0), GREATEST(u.amount_paise, 0))
     ) v(acct, dr, cr)
     WHERE u.business_date <= $1`,
   // A Day Book line moves its own book (Store.book's mode → book) and, for a transfer, the book it
@@ -138,6 +144,23 @@ const FRAGMENTS = {
     CROSS JOIN LATERAL (VALUES ('purchase', x.goods, 0::bigint), ('bhada_in', t.freight_paise, 0),
       (CASE WHEN trim(t.supplier) <> '' THEN 'creditors' ELSE 'diff:gaadi' END, 0, x.goods + t.freight_paise)) v(acct, dr, cr)
     WHERE NOT $3 AND ${IST_DAY('t.arrived_at')} <= $1`,
+  // A journal voucher's supplier and head sides (its grahak sides are udhaar entries), and a credit note's
+  // bikri side; each against diff:voucher, which the grahak's udhaar entries bring back to zero.
+  vouchers: `
+    SELECT j.day AS day, v.acct, v.dr, v.cr, 'jv' AS kind, j.id AS ref, NULL::uuid AS ref2, j.created_at AS at, 'JV #' || j.no AS title,
+           concat_ws(' · ', j.dr_name || ' / ' || j.cr_name, NULLIF(trim(j.narration), '')) AS detail
+    FROM journal_vouchers j CROSS JOIN LATERAL (VALUES
+      (CASE j.dr_kind WHEN 'supplier' THEN 'creditors' WHEN 'head' THEN j.dr_ref END, j.amount_paise, 0::bigint),
+      (CASE WHEN j.dr_kind <> 'grahak' THEN 'diff:voucher' END, 0, j.amount_paise),
+      (CASE j.cr_kind WHEN 'supplier' THEN 'creditors' WHEN 'head' THEN j.cr_ref END, 0, j.amount_paise),
+      (CASE WHEN j.cr_kind <> 'grahak' THEN 'diff:voucher' END, j.amount_paise, 0)
+    ) v(acct, dr, cr)
+    WHERE j.voided_at IS NULL AND j.day <= $1
+    UNION ALL
+    SELECT c.day, v.acct, v.dr, v.cr, 'cn', c.id, c.buyer_id, c.created_at, 'Credit note #' || c.no, concat_ws(' · ', g.name, 'Parchi ' || c.slip_no, NULLIF(trim(c.note), ''))
+    FROM credit_notes c LEFT JOIN buyers g ON g.id = c.buyer_id
+    CROSS JOIN LATERAL (VALUES ('cnote', c.amount_paise, 0::bigint), ('diff:voucher', 0, c.amount_paise)) v(acct, dr, cr)
+    WHERE c.voided_at IS NULL AND c.day <= $1`,
   headOpenings: `
     SELECT COALESCE(h.opening_on, '0001-01-01'::date) AS day, v.acct, v.dr, v.cr, 'opening' AS kind, h.id AS ref, h.id AS ref2, h.created_at AS at, 'Opening balance' AS title, h.name AS detail
     FROM ledger_heads h CROSS JOIN LATERAL (SELECT CASE WHEN h.type IN ('expense', 'asset') THEN h.opening_paise ELSE -h.opening_paise END AS amt) x
@@ -159,10 +182,11 @@ function sourcesOf(key: string): Fragment[] {
   if (key === 'labour') return ['bills', 'labourAdj', 'daybook'];
   if (key === 'purchase') return ['beejaks', 'gaadis'];
   if (key === 'bhada_in') return ['gaadis'];
-  if (key === 'creditors') return ['beejaks', 'gaadis', 'daybook', 'supplierOpenings'];
+  if (key === 'creditors') return ['beejaks', 'gaadis', 'daybook', 'supplierOpenings', 'vouchers'];
+  if (key === 'cnote') return ['vouchers'];
   if (key.startsWith('bj:')) return ['beejaks'];
-  if (key.startsWith('h:')) return ['daybook', 'headOpenings'];
-  if (key.startsWith('b:')) return ['daybook'];
+  if (key.startsWith('h:')) return ['daybook', 'headOpenings', 'vouchers'];
+  if (key.startsWith('b:')) return ['daybook', 'vouchers'];
   if (key.startsWith('g:')) return ['bills', 'cols', 'udhaar'];
   return Object.keys(FRAGMENTS) as Fragment[];
 }
@@ -199,6 +223,9 @@ const BACKUP: { sheet: string; sql: string }[] = [
   { sheet: 'Day Book', sql: `SELECT * FROM daybook_entries` },
   { sheet: 'Beejak', sql: `SELECT * FROM beejaks` },
   { sheet: 'Bank jama', sql: `SELECT * FROM deposit_slips` },
+  { sheet: 'Journal voucher', sql: `SELECT * FROM journal_vouchers` },
+  { sheet: 'Credit note', sql: `SELECT c.*, g.name AS grahak FROM credit_notes c LEFT JOIN buyers g ON g.id = c.buyer_id` },
+  { sheet: 'Tax invoice', sql: `SELECT i.id, i.number, i.day, i.buyer_name, i.total_paise, i.bill_ids, i.voided_at, i.void_reason, i.created_at FROM tax_invoices i` },
   { sheet: 'Cheque', sql: `SELECT d.*, g.name AS grahak FROM deposit_cheques d LEFT JOIN buyers g ON g.id = d.buyer_id` },
   { sheet: 'Crate type', sql: `SELECT * FROM crate_types` },
   { sheet: 'Crate in-out', sql: `SELECT m.*, t.name AS crate, g.name AS grahak FROM crate_moves m LEFT JOIN crate_types t ON t.id = m.crate_type_id LEFT JOIN buyers g ON g.id = m.buyer_id` },
@@ -238,6 +265,7 @@ export class BooksService {
       sales: ['Bikri', 'sales', true], purchase: [grapes ? 'Kharid (beejak)' : 'Kharid (gaadi)', 'purchase', true], bhada_in: ['Gaadi bhada', 'purchase', true],
       apmc: ['APMC', 'liabilities', false], chungi: ['Chungi', 'liabilities', false], labour: ['Mazdoori dena', 'liabilities', false],
       mazdoori: ['Mazdoori', 'expense', true], creditors: ['Sundry creditors', 'creditors', false],
+      cnote: ['Credit note (bikri kam)', 'sales', true],
       'b:committee': ['Committee', 'assets', false], 'b:udhaar_diya': ['Udhaar diya (loan)', 'assets', false],
       capital: ['Pichhle saalon ka munafa', 'capital', false],
     };
@@ -270,7 +298,7 @@ export class BooksService {
     return this.db.withShop(shopId, async (tx) => {
       const heads = await this.customHeads(tx);
       const keys = [
-        'pot:galla', 'pot:office', 'pot:bank', 'sales', 'purchase', ...(grapes ? [] : ['bhada_in']), 'apmc', 'chungi', 'mazdoori', 'labour', 'creditors',
+        'pot:galla', 'pot:office', 'pot:bank', 'sales', 'cnote', 'purchase', ...(grapes ? [] : ['bhada_in']), 'apmc', 'chungi', 'mazdoori', 'labour', 'creditors',
         ...BUILTIN_HEADS.filter((h) => !TRANSFERS.includes(h.key) && !['supplier', 'mazdoori', ...Object.keys(PAIRED)].includes(h.key)).map((h) => `b:${h.key}`),
         'b:committee', 'b:udhaar_diya',
         ...heads.rows.map((h) => `h:${h.id}`),
@@ -366,7 +394,8 @@ export class BooksService {
           balance: -p.moves.filter((m) => m.at <= on).reduce((t, m) => t + m.creditPaise - m.debitPaise, 0) }));
       } else {
         suppliers = (await this.reports.supplierBooks(tx)).map((s) => ({ key: s.key, name: s.name,
-          balance: -(s.gaadis.filter((g) => istDay(g.arrivedAt) <= on).reduce((t, g) => t + g.purchasePaise, 0) - s.payments.filter((x) => x.date <= on).reduce((t, x) => t + x.amountPaise, 0)) }));
+          balance: -(s.gaadis.filter((g) => istDay(g.arrivedAt) <= on).reduce((t, g) => t + g.purchasePaise, 0) - s.payments.filter((x) => x.date <= on).reduce((t, x) => t + x.amountPaise, 0)
+            - s.jvs.filter((j) => j.date <= on).reduce((t, j) => t + j.amountPaise, 0)) }));
       }
       const owed = suppliers.reduce((t, s) => t + s.balance, 0);
       if (owed !== closing('creditors')) { const d = owed - closing('creditors'); add('creditors', d); add('diff:other', -d); }
