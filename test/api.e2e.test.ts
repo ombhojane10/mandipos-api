@@ -614,6 +614,11 @@ describe('angoor on the website', () => {
       expect((await http().get(`${base}/print-station`).set(web).expect(200)).body).toMatchObject({ online: true, name: 'P052' });
       expect((await http().post(`${base}/bills/${b.billId}/print`).set(web).expect(201)).body).toEqual({ slipNo: b.slipNo, station: { name: 'P052' } });
       expect(await jobs()).toBe(before + 2);
+      // A MandiPlus admin is no member of the shop: printing from the website works for them too.
+      await http().post('/v1/admin/auth/otp').send({ phone: '9876500077' }).expect(204);
+      const boss = { Authorization: `Bearer ${(await http().post('/v1/admin/auth/verify').send({ phone: '9876500077', code: OtpService.issuedForTests.get('9876500077') }).expect(200)).body.token}` };
+      expect((await http().post(`${base}/bills/${b.billId}/print`).set(boss).expect(201)).body).toEqual({ slipNo: b.slipNo, station: { name: 'P052' } });
+      expect((await http().get(`${base}/print-station`).set(boss).expect(200)).body).toMatchObject({ online: true });
 
       // The floor, asked: where gaadi 3289 stands, and a slip's dispatch — said in boxes.
       const q1 = (await http().post(`${base}/voice`).set(web).send({ text: 'gaadi kahan', session: 'ang3' }).expect(200)).body;

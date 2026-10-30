@@ -107,8 +107,13 @@ export class PrintService {
 
   /** Whether the shop has a station listening right now, and how wide its printer is. */
   async station(p: Principal): Promise<Station | null> {
+    const shopId = await this.db.tx((tx) => this.member(tx, p));
+    return this.stationOf(shopId, p.deviceId);
+  }
+
+  /** The shop's print machine, for the website (whose admins are not shop members). */
+  async stationOf(shopId: string, deviceId: string | null = null): Promise<Station | null> {
     return this.db.tx(async (tx) => {
-      const shopId = await this.member(tx, p);
       // A station sitting out (it couldn't reach the printer) is not "on": prefer one that is.
       const r = (await tx.query<{ device_id: string; name: string; width_dots: number; roll: string; last_poll_at: Date; online: boolean }>(
         `SELECT device_id, name, width_dots, roll, last_poll_at,
@@ -118,7 +123,7 @@ export class PrintService {
         [shopId, ONLINE_SECONDS],
       )).rows[0];
       if (!r) return null;
-      return { online: r.online, name: r.name, widthDots: r.width_dots, roll: r.roll, lastSeenAt: r.last_poll_at.toISOString(), thisDevice: r.device_id === p.deviceId };
+      return { online: r.online, name: r.name, widthDots: r.width_dots, roll: r.roll, lastSeenAt: r.last_poll_at.toISOString(), thisDevice: r.device_id === deviceId };
     });
   }
 
