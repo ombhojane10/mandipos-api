@@ -41,6 +41,15 @@ export type ExportDoc = {
   firm?: string
   /** File name without extension. */
   file: string
+  /**
+   * Several documents in one print (Ledger Multiple, Chithi): each starts on its own page with
+   * its own head and page count. The parts carry the rows; this doc's own rows are ignored.
+   */
+  parts?: ExportDoc[]
+  /** A letter's lines (Chithi), printed under the head, before the table. */
+  letter?: string[]
+  /** The firm's licence, phone, GSTIN and contact person under its name (a letterhead). */
+  contact?: boolean
 }
 
 type Builder = () => ExportDoc | null
@@ -119,3 +128,35 @@ export const dayRange = (from: string, to: string) => (from === to ? longDay(fro
 /** A balance in whole rupees with its word, for the book-style registers. */
 export const balRs = (paise: number, who: 'grahak' | 'supplier' = 'grahak') =>
   paise === 0 ? 'Clear' : `${rs(Math.abs(paise))} ${who === 'grahak' ? (paise > 0 ? 'baaki' : 'jama') : (paise > 0 ? 'dena' : 'advance')}`
+
+/** A khata line as the CUSTOMER LEDGER prints it. */
+export type KhataLine = { date: string; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; balancePaise: number; void?: boolean; shop?: string }
+
+/**
+ * The app's LedgerPdf for one party, oldest first: the opening balance, each line with its
+ * running balance, TOTAL ruled off. The single khata and Ledger Multiple print through this.
+ */
+export function customerLedgerDoc(o: {
+  title: string; party: NonNullable<ExportDoc['party']>; banks?: boolean; firm?: string; from: string; to: string
+  openingPaise: number; closingPaise: number; rows: KhataLine[]; who?: 'grahak' | 'supplier'; withShop?: boolean
+}): ExportDoc {
+  const live = o.rows.filter((r) => !r.void)
+  const sum = (k: 'debitPaise' | 'creditPaise' | 'nags') => live.reduce((s, r) => s + r[k], 0)
+  const [owe, ahead] = (o.who ?? 'grahak') === 'grahak' ? ['baaki', 'jama'] : ['dena', 'advance']
+  const opening = o.openingPaise
+  const shop = o.withShop ? [''] : []
+  return {
+    style: 'ledger', title: o.title, party: o.party, banks: o.banks, firm: o.firm, from: o.from, to: o.to, file: fileName(o.title, o.party.description),
+    columns: [{ label: 'Date' }, { label: 'Particulars', wide: true }, ...(o.withShop ? [{ label: 'Shop' }] : []),
+      { label: 'Qty', num: true }, { label: 'DEBIT', num: true }, { label: 'CREDIT', num: true }, { label: 'Balance', num: true }],
+    rows: [
+      { cells: [dmy(o.from), 'Opening Balance...', ...shop, '', opening > 0 ? amt(opening) : '', opening < 0 ? amt(-opening) : '', bal(opening, owe, ahead)] },
+      ...o.rows.map((r) => ({
+        strike: r.void,
+        cells: [dmy(r.date), [r.title, r.detail].filter(Boolean).join(' · '), ...(o.withShop ? [r.shop ?? ''] : []),
+          qty(r.nags), amt(r.debitPaise), amt(r.creditPaise), bal(r.balancePaise, owe, ahead)],
+      })),
+    ],
+    foot: ['', 'TOTAL...', ...shop, qty(sum('nags')), amt(sum('debitPaise') + Math.max(0, opening)), amt(sum('creditPaise') + Math.max(0, -opening)), bal(o.closingPaise, owe, ahead)],
+  }
+}

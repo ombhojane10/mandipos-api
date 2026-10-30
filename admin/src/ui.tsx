@@ -4,7 +4,7 @@ import { addDays, count, dayHeader, rate, rupees, shortDate, spanDays, todayIst 
 import { PRESETS, periodLabel, type Period } from './period'
 import type { Buckets } from './api'
 import { t } from './i18n'
-import { amt, bal, dmy, fileName, qty, useExport } from './export/doc'
+import { customerLedgerDoc, useExport } from './export/doc'
 
 /**
  * An amount that is owed, in words as well as colour. [who] says whose side it is on:
@@ -173,25 +173,8 @@ export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId, e
   // Printed as the app's LedgerPdf: oldest first, opening balance, the running baaki, TOTAL.
   useExport(exportAs ? () => {
     const live = rows.filter((r) => !r.void)
-    const sum = (k: 'debitPaise' | 'creditPaise' | 'nags') => live.reduce((s, r) => s + r[k], 0)
-    const [owe, ahead] = who === 'grahak' ? ['baaki', 'jama'] : ['dena', 'advance']
-    const opening = closingPaise - sum('debitPaise') + sum('creditPaise')
-    const oldest = rows.at(-1)?.date ?? todayIst()
-    return {
-      style: 'ledger' as const, title: exportAs.title, party: exportAs.party, banks: exportAs.banks, firm: exportAs.firm,
-      from: oldest, to: todayIst(), file: fileName(exportAs.title, exportAs.party.description),
-      columns: [{ label: 'Date' }, { label: 'Particulars', wide: true }, ...(withShop ? [{ label: 'Shop' }] : []),
-        { label: 'Qty', num: true }, { label: 'DEBIT', num: true }, { label: 'CREDIT', num: true }, { label: 'Balance', num: true }],
-      rows: [
-        { cells: [dmy(oldest), 'Opening Balance...', ...(withShop ? [''] : []), '', opening > 0 ? amt(opening) : '', opening < 0 ? amt(-opening) : '', bal(opening, owe, ahead)] },
-        ...[...rows].reverse().map((r) => ({
-          strike: r.void,
-          cells: [dmy(r.date), [r.title, r.detail].filter(Boolean).join(' · '), ...(withShop ? [r.shop ?? ''] : []),
-            qty(r.nags), amt(r.debitPaise), amt(r.creditPaise), bal(r.balancePaise, owe, ahead)],
-        })),
-      ],
-      foot: ['', 'TOTAL...', ...(withShop ? [''] : []), qty(sum('nags')), amt(sum('debitPaise') + Math.max(0, opening)), amt(sum('creditPaise') + Math.max(0, -opening)), bal(closingPaise, owe, ahead)],
-    }
+    const opening = closingPaise - live.reduce((s, r) => s + r.debitPaise, 0) + live.reduce((s, r) => s + r.creditPaise, 0)
+    return customerLedgerDoc({ ...exportAs, from: rows.at(-1)?.date ?? todayIst(), to: todayIst(), openingPaise: opening, closingPaise, rows: [...rows].reverse(), who, withShop })
   } : null, [rows, closingPaise, exportAs?.party.description])
   const hasLines = rows.some((r) => r.lines?.length)
   const totals = rows.reduce((t, r) => ({ dr: t.dr + r.debitPaise, cr: t.cr + r.creditPaise }), { dr: 0, cr: 0 })

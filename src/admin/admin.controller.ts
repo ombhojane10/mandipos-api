@@ -20,6 +20,7 @@ import { DepositsService, NOTES } from './deposits.service';
 import { MastersService } from './masters.service';
 import { CratesService } from './crates.service';
 import { ColdStoreService } from './cold-store.service';
+import { BooksService } from './books.service';
 import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
@@ -232,6 +233,14 @@ const StoreMovesQuery = Range.extend({ store: z.uuid().optional() });
 
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 
+// The old software's Reports menu: General Ledger, Trial Balance, Ledger Multiple, Chithi, big transactions, Sale Purchase, Purcha, Backup.
+const AccountKey = z.string().regex(/^(pot:(galla|office|bank)|sales|purchase|bhada_in|apmc|chungi|mazdoori|labour|creditors|b:[a-z_]{1,30}|bj:[a-z_]{1,20}|diff:[a-z_]{1,30}|h:[0-9a-f-]{36})$/, 'khata');
+const LedgerQuery = Range.extend({ account: AccountKey, daily: z.enum(['0', '1']).default('0') });
+const OnQuery = z.object({ on: z.iso.date().optional() });
+const KhatasBody = z.object({ ids: z.array(z.uuid()).min(1).max(2000), from: z.iso.date(), to: z.iso.date(), last: z.number().int().min(1).max(100).optional() });
+const BigQuery = Range.extend({ min: z.coerce.number().int().min(0).max(1_000_000_000_00).default(2_00_000_00) });
+const SalePurchaseQuery = Range.extend({ by: z.enum(['day', 'month']).default('day') });
+
 /** Sign-in: OTP to a MandiPlus admin number, or to the owner of an approved shop. */
 @Controller('v1/admin/auth')
 export class AdminAuthController {
@@ -273,7 +282,7 @@ export class AdminController {
     private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
     private readonly machines: MachinesService, private readonly deposits: DepositsService, private readonly masters: MastersService,
-    private readonly crates: CratesService, private readonly coldStore: ColdStoreService,
+    private readonly crates: CratesService, private readonly coldStore: ColdStoreService, private readonly books: BooksService,
   ) {}
 
   // ---------------------------------------------------------------- Crate In / Crate Out
@@ -1016,6 +1025,77 @@ export class AdminController {
   items(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
     const r = parse(Range, query);
     return this.reports.items(mine(v, id), r.from, r.to);
+  }
+
+  // ---------------------------------------------------------------- Reports: ledgers, trial balance, letters, backup
+
+  @Get('shops/:id/books/accounts')
+  bookAccounts(@See() v: Viewer, @Param('id') id: string) {
+    return this.books.accounts(mine(v, id));
+  }
+
+  /** One account over a period: brought forward, every entry, carried forward. */
+  @Get('shops/:id/books/ledger')
+  bookLedger(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(LedgerQuery, query);
+    return this.books.ledger(mine(v, id), r.account, r.from, r.to, r.daily === '1');
+  }
+
+  @Get('shops/:id/books/trial-balance')
+  trialBalance(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    return this.books.trialBalance(mine(v, id), parse(OnQuery, query).on ?? todayIst());
+  }
+
+  /** Every grahak and laddan party with area and baaki as on a date (Ledger Multiple's list, the Schedule). */
+  @Get('shops/:id/books/parties')
+  bookParties(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    return this.books.parties(mine(v, id), parse(OnQuery, query).on ?? todayIst());
+  }
+
+  /** Many grahak's khatas over a period, for one print. */
+  @Post('shops/:id/books/khatas')
+  @HttpCode(200)
+  khatas(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    const b = parse(KhatasBody, body);
+    return this.admin.khatas(mine(v, id), b.ids, b.from, b.to, b.last).then((khatas) => ({ from: b.from, to: b.to, khatas }));
+  }
+
+  @Get('shops/:id/books/big')
+  bigTransactions(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(BigQuery, query);
+    return this.books.big(mine(v, id), r.from, r.to, r.min);
+  }
+
+  @Get('shops/:id/books/sale-purchase')
+  salePurchase(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(SalePurchaseQuery, query);
+    return this.books.salePurchase(mine(v, id), r.from, r.to, r.by);
+  }
+
+  @Get('shops/:id/books/purcha')
+  purcha(@See() v: Viewer, @Param('id') id: string, @Query() query: unknown) {
+    const r = parse(Range, query);
+    return this.books.purcha(mine(v, id), r.from, r.to);
+  }
+
+  /** The shop's complete books as one Excel workbook, streamed. Read-only. */
+  @Get('shops/:id/books/backup')
+  async backup(@See() v: Viewer, @Param('id') id: string, @Res() res: Response) {
+    const shopId = mine(v, id);
+    const shop = await this.admin.shop(shopId);
+    const file = `${shop.name.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'shop'}-backup-${todayIst()}.xlsx`;
+    res.status(200).set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${file.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(file)}`,
+      'Cache-Control': 'no-store',
+    });
+    try {
+      await this.books.backup(shopId, res);
+      res.end();
+    } catch (e) {
+      // Headers are gone; a cut-off file is better refused than half-saved as a backup.
+      res.destroy(e as Error);
+    }
   }
 }
 

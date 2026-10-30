@@ -25,6 +25,8 @@ import { Machines } from './pages/Machines'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from './pages/Masters'
 import { Crates, StoreEntry } from './pages/CrateStore'
+import { Backup, BigTransactions, GeneralLedger, Purcha, SalePurchase, TrialBalance } from './pages/Books'
+import { Chithi, LedgerMultiple } from './pages/Letters'
 import { Apmc, Beejaks, Commission, Dispatch, GaadiPata, Mazdoori } from './pages/Angoor'
 import { NewEntry } from './entries/NewEntry'
 import { openEntry } from './entries/kinds'
@@ -77,13 +79,23 @@ export const REPORTS: { group: string; items: { report: Report; label: string; k
     { report: 'nigrani', label: t('Nigrani'), key: 'X', icon: I.IInbox },
     { report: 'team', label: t('Team & Machine'), key: 'T', icon: I.ITeam },
   ] },
+  { group: t('Reports'), items: [
+    { report: 'gl', label: t('General Ledger'), key: '', icon: I.ILedger },
+    { report: 'tb', label: t('Trial Balance'), key: '', icon: I.IRupee },
+    { report: 'multi', label: t('Ledger Multiple'), key: '', icon: I.IBook },
+    { report: 'chithi', label: t('Chithi / Schedule'), key: '', icon: I.IInbox },
+    { report: 'big', label: t('Bade len-den'), key: '', icon: I.IWallet },
+    { report: 'salepurchase', label: t('Sale Purchase'), key: '', icon: I.IChart },
+    { report: 'purcha', label: t('Purcha'), key: '', icon: I.ITruck },
+    { report: 'backup', label: t('Backup'), key: '', icon: I.IExport },
+  ] },
   { group: t('Masters'), items: [
     { report: 'company', label: t('Company'), key: '', icon: I.IStore },
     { report: 'products', label: t('Product Master'), key: '', icon: I.ITag },
     { report: 'groups', label: t('Product Group'), key: '', icon: I.ITag },
     { report: 'areas', label: t('Area Master'), key: '', icon: I.IPin },
     { report: 'stores', label: t('Store Master'), key: '', icon: I.IBox },
-    { report: 'heads', label: t('General Ledger'), key: '', icon: I.ILedger },
+    { report: 'heads', label: t('Ledger Master'), key: '', icon: I.ILedger },
     { report: 'openings', label: t('Opening balance'), key: '', icon: I.IRupee },
   ] },
 ]
@@ -387,6 +399,14 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'openings': return <Openings key={shopId} shopId={shopId} />
     case 'crates': return <Crates key={shopId} shopId={shopId} />
     case 'coldstore': return <StoreEntry key={shopId} shopId={shopId} />
+    case 'gl': return <GeneralLedger key={shopId} shopId={shopId} />
+    case 'tb': return <TrialBalance key={shopId} shopId={shopId} />
+    case 'multi': return <LedgerMultiple key={shopId} shopId={shopId} />
+    case 'chithi': return <Chithi key={shopId} shopId={shopId} />
+    case 'big': return <BigTransactions key={shopId} shopId={shopId} />
+    case 'salepurchase': return <SalePurchase key={shopId} shopId={shopId} />
+    case 'purcha': return <Purcha key={shopId} shopId={shopId} />
+    case 'backup': return <Backup key={shopId} shopId={shopId} />
     case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }

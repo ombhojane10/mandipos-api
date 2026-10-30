@@ -3067,3 +3067,181 @@ describe('voice (Bolo)', () => {
   });
 });
 
+
+describe('reports (General Ledger, Trial Balance, Ledger Multiple, big transactions, Sale Purchase, Purcha, Backup)', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  async function web(phone: string, body: object) {
+    const s = await login(phone);
+    const res = await createApproved(s.accessToken, { mandi: 'Azadpur', shopNo: 'R-1', role: 'owner', ...body });
+    await http().post('/v1/admin/auth/otp').send({ phone }).expect(204);
+    const w = auth((await http().post('/v1/admin/auth/verify').send({ phone, code: OtpService.issuedForTests.get(phone) }).expect(200)).body.token);
+    return { id: res.me.shop.id as string, term: auth(res.accessToken), w, base: `/v1/admin/shops/${res.me.shop.id}` };
+  }
+  /** The files of a zip, inflated (enough to read back an .xlsx). */
+  function unzip(buf: Buffer): Record<string, string> {
+    const { inflateRawSync } = require('node:zlib') as typeof import('node:zlib');
+    const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    const count = buf.readUInt16LE(eocd + 10);
+    let at = buf.readUInt32LE(eocd + 16);
+    const out: Record<string, string> = {};
+    for (let i = 0; i < count; i++) {
+      const csize = buf.readUInt32LE(at + 20), nameLen = buf.readUInt16LE(at + 28), local = buf.readUInt32LE(at + 42);
+      const name = buf.subarray(at + 46, at + 46 + nameLen).toString();
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      out[name] = inflateRawSync(buf.subarray(start, start + csize)).toString();
+      at += 46 + nameLen + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32);
+    }
+    return out;
+  }
+
+  it('balances a coconut shop\'s Trial Balance against its own reports, and opens any account as a ledger', async () => {
+    const { w, base } = await web('9845700001', { name: 'TB Nariyal' });
+    const d = istDay();
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh', openingPaise: 500000 }).expect(201)).body;
+    const l = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Laddan Co', kind: 'laddan' }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA01', supplier: 'Pollachi Traders', freightPaise: 20000, lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const truckId = (await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0].truckId;
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: g.id, truckId, lines: [{ grade: '1', qty: 10, ratePaise: 2000 }], pay: 'credit', packing: 'loose' }).expect(201);
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: l.id, truckId, lines: [{ grade: '1', qty: 5, ratePaise: 2000 }], pay: 'split', cashPaise: 4000, upiPaise: 2000, packing: 'loose' }).expect(201);
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerName: 'Cash', truckId, lines: [{ grade: '1', qty: 5, ratePaise: 2000 }], pay: 'cash', packing: 'loose' }).expect(201);
+    await http().post(`${base}/entries/vasooli`).set(w).send({ buyerId: g.id, cashPaise: 5000, upiPaise: 0 }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'kharcha', mode: 'cash', amountPaise: 700 }).expect(201);
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'bank_jama', mode: 'cash', amountPaise: 3000 }).expect(201);
+    await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'pollachi traders', mode: 'cash', amountPaise: 30000 }).expect(201);
+    const diesel = (await http().post(`${base}/heads`).set(w).send({ name: 'Diesel', type: 'expense' }).expect(201)).body;
+    await http().post(`${base}/entries/daybook`).set(w).send({ direction: 'out', category: 'kharcha', mode: 'office', amountPaise: 900, headId: diesel.id }).expect(201);
+
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+    const grp = (k: string) => tb.groups.find((x: any) => x.key === k);
+    const row = (k: string) => tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === k);
+    // Debtors and laddan parties together are the Outstanding report.
+    const out = (await http().get(`${base}/outstanding`).set(w).expect(200)).body;
+    expect(grp('debtors').dr + (grp('laddan')?.dr ?? 0)).toBe(out.totals.duePaise);
+    expect(row(`g:${g.id}`)).toMatchObject({ dr: 500000 + 20000 - 5000, cr: 0 });
+    // Cash and Bank are the Cash/Bank Book's closing for the day.
+    for (const pot of ['galla', 'office', 'bank']) {
+      const book = (await http().get(`${base}/cashbook?pot=${pot}&from=${d}&to=${d}`).set(w).expect(200)).body.closingPaise;
+      const r = row(`pot:${pot}`);
+      expect(r ? r.dr - r.cr : 0).toBe(book);
+    }
+    // Creditors are Supplier Khata's dues: gaadi ₹1,000 + bhada ₹200 − paid ₹300.
+    const sup = (await http().get(`${base}/suppliers`).set(w).expect(200)).body;
+    expect(grp('creditors').cr - grp('creditors').dr).toBe(sup.rows.reduce((t: number, r: any) => t + r.duePaise, 0));
+    expect(grp('creditors').cr).toBe(90000);
+    expect(row('sales')).toMatchObject({ cr: 40000 });
+    expect(row('purchase')).toMatchObject({ dr: 100000 });
+    expect(row('bhada_in')).toMatchObject({ dr: 20000 });
+    expect(row('b:kharcha')).toMatchObject({ dr: 700 });
+    expect(row(`h:${diesel.id}`)).toMatchObject({ dr: 900 });
+    // The purana udhaar has no other side: it is the opening difference, said as such.
+    expect(row('diff:opening_grahak')).toMatchObject({ cr: 500000 });
+    expect(tb.differencePaise).toBe(-500000);
+
+    // General Ledger: bikri entry by entry, the galla as its Cash Book, a head.
+    const sales = (await http().get(`${base}/books/ledger?account=sales&from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(sales).toMatchObject({ name: 'Bikri', openingPaise: 0, creditPaise: 40000, closingPaise: -40000 });
+    expect(sales.lines).toHaveLength(3);
+    expect(sales.lines[0]).toMatchObject({ kind: 'bill', title: expect.stringMatching(/^Parchi /) });
+    expect((await http().get(`${base}/books/ledger?account=sales&from=${d}&to=${d}&daily=1`).set(w).expect(200)).body.lines).toEqual([expect.objectContaining({ creditPaise: 40000, count: 3 })]);
+    const galla = (await http().get(`${base}/books/ledger?account=pot:galla&from=${d}&to=${d}`).set(w).expect(200)).body;
+    const cb = (await http().get(`${base}/cashbook?pot=galla&from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(galla.closingPaise).toBe(cb.closingPaise);
+    expect((await http().get(`${base}/books/ledger?account=h:${diesel.id}&from=${d}&to=${d}`).set(w).expect(200)).body).toMatchObject({ name: 'Diesel', debitPaise: 900, closingPaise: 900 });
+    expect((await http().get(`${base}/books/accounts`).set(w).expect(200)).body.accounts.map((a: any) => a.key)).toEqual(expect.arrayContaining(['pot:bank', 'sales', 'b:kiraya', `h:${diesel.id}`]));
+    await http().get(`${base}/books/ledger?account=drop table&from=${d}&to=${d}`).set(w).expect(400);
+
+    // A day before anything: nothing but zeros, and still balanced.
+    const before = (await http().get(`${base}/books/trial-balance?on=2020-01-01`).set(w).expect(200)).body;
+    expect(before.totals).toEqual({ dr: 0, cr: 0 });
+
+    // Ledger Multiple: each khata for the period as the single khata has it.
+    const k = (await http().post(`${base}/books/khatas`).set(w).send({ ids: [l.id, g.id], from: d, to: d }).expect(200)).body;
+    expect(k.khatas.map((x: any) => x.buyer.name)).toEqual(['Laddan Co', 'Ramesh']);
+    const one = (await http().get(`${base}/buyers/${g.id}`).set(w).expect(200)).body;
+    expect(k.khatas[1].closingPaise).toBe(one.totals.balancePaise);
+    expect(k.khatas[1].rows).toHaveLength(one.history.length);
+    const chithi = (await http().post(`${base}/books/khatas`).set(w).send({ ids: [g.id], from: '2000-01-01', to: d, last: 1 }).expect(200)).body.khatas[0];
+    expect(chithi.rows).toHaveLength(1);
+    expect(chithi.openingPaise + chithi.rows[0].debitPaise - chithi.rows[0].creditPaise).toBe(chithi.closingPaise);
+    const parties = (await http().get(`${base}/books/parties?on=${d}`).set(w).expect(200)).body.parties;
+    expect(parties.find((p: any) => p.id === g.id)).toMatchObject({ balancePaise: 515000 });
+
+    // Transactions above ₹X: the ₹5,000 udhaar entry is not a transaction; the slips, raseed and payments are.
+    const big = (await http().get(`${base}/books/big?from=${d}&to=${d}&min=20000`).set(w).expect(200)).body;
+    expect(big.rows.map((r: any) => [r.type, r.amountPaise])).toEqual([['supplier', 30000], ['parchi', 20000]]);
+    const all = (await http().get(`${base}/books/big?from=${d}&to=${d}&min=0`).set(w).expect(200)).body;
+    expect(all.rows.find((r: any) => r.type === 'parchi' && r.partyId === l.id)).toMatchObject({ cashPaise: 4000, upiPaise: 2000, udhaarPaise: 4000 });
+    expect(all.months.find((m: any) => m.type === 'parchi' && m.partyId === g.id)).toMatchObject({ entries: 1, amountPaise: 20000 });
+
+    // Sale Purchase Summary adds up to Munafa.
+    const sp = (await http().get(`${base}/books/sale-purchase?from=${d}&to=${d}`).set(w).expect(200)).body;
+    const m = (await http().get(`${base}/munafa?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(sp.totals).toMatchObject({ salesPaise: m.salesPaise, grossPaise: m.grossPaise, netPaise: m.netPaise, kharidPaise: 120000 });
+    expect(sp.rows).toEqual([expect.objectContaining({ key: d, salesPaise: 40000 })]);
+    expect(sp.suppliers[0]).toMatchObject({ name: 'Pollachi Traders', gaadis: 1, kharidPaise: 120000, soldQty: 20, salesPaise: 40000 });
+    expect(sp.qualities[0]).toMatchObject({ name: 'Pollachi', inQty: 100, soldQty: 20 });
+    expect((await http().get(`${base}/books/sale-purchase?from=${d}&to=${d}&by=month`).set(w).expect(200)).body.rows[0].key).toBe(d.slice(0, 7));
+
+    // Purcha: the gaadi, its maal and kharid as Supplier Khata has it.
+    const pu = (await http().get(`${base}/books/purcha?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(pu.gaadis[0]).toMatchObject({ number: 'KA01', supplier: 'Pollachi Traders', boxes: 100, kharidPaise: 100000, freightPaise: 20000, beejak: null });
+    expect(pu.suppliers).toEqual([expect.objectContaining({ name: 'Pollachi Traders', gaadis: 1, boxes: 100, pending: 1 })]);
+
+    // Backup: one workbook, a sheet per table, the grahak and the slips in it.
+    const bk = await http().get(`${base}/books/backup`).set(w).buffer(true).parse((res, cb) => {
+      const parts: Buffer[] = [];
+      res.on('data', (c: Buffer) => parts.push(c));
+      res.on('end', () => cb(null, Buffer.concat(parts)));
+    }).expect(200);
+    expect(bk.headers['content-type']).toContain('spreadsheetml');
+    const files = unzip(bk.body as Buffer);
+    expect(files['xl/workbook.xml']).toContain('name="Grahak"');
+    const sheets = files['xl/workbook.xml'].match(/<sheet /g)!.length;
+    expect(Object.keys(files).filter((f) => f.startsWith('xl/worksheets/'))).toHaveLength(sheets);
+    const grahak = files[`xl/worksheets/sheet${files['xl/workbook.xml'].split('<sheet ').findIndex((x) => x.includes('name="Grahak"'))}.xml`];
+    expect(grahak).toContain('Ramesh');
+    expect(grahak).toContain('<v>5150</v>');
+    expect(grahak).not.toContain('shop_id');
+
+    // Another shop's owner gets none of it.
+    const other = await web('9845700009', { name: 'Other Books' });
+    await http().get(`${base}/books/trial-balance`).set(other.w).expect(403);
+    await http().get(`${base}/books/backup`).set(other.w).expect(403);
+    await http().post(`${base}/books/khatas`).set(other.w).send({ ids: [g.id], from: d, to: d }).expect(403);
+  });
+
+  it('balances a grapes shop on beejaks: creditors as Supplier creditors, deductions as income, openings as the difference', async () => {
+    const { w, base } = await web('9845700002', { name: 'TB Angoor', commodity: 'angoor' });
+    const d = istDay();
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15', supplier: 'Sai Fruits', freightPaise: 50000, lots: [{ brandName: 'Royal', grade: '1', qty: 100, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const lot = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots[0];
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: g.id, lots: [{ truckId: lot.truckId, brandId: lot.brandId, qty: 10, ratePaise: 100000 }], pay: 'credit' }).expect(201);
+    const bj = (await http().post(`${base}/beejak/${lot.truckId}`).set(w).send({ bhav: [{ quality: 'Royal', ratePaise: 90000 }], heads: [{ key: 'commission', rate: 600 }] }).expect(201)).body;
+    await http().post(`${base}/entries/supplier-payment`).set(w).send({ supplier: 'SAI FRUITS', mode: 'cash', amountPaise: 400000 }).expect(201);
+    await http().post(`${base}/creditors`).set(w).send({ name: 'Old Party', openingPaise: 250000, openingOn: '2026-04-01' }).expect(201);
+
+    const tb = (await http().get(`${base}/books/trial-balance?on=${d}`).set(w).expect(200)).body;
+    expect(tb.totals.dr).toBe(tb.totals.cr);
+    const grp = (k: string) => tb.groups.find((x: any) => x.key === k);
+    const row = (k: string) => tb.groups.flatMap((x: any) => x.rows).find((r: any) => r.key === k);
+    const fy = Number(d.slice(5, 7)) >= 4 ? Number(d.slice(0, 4)) : Number(d.slice(0, 4)) - 1;
+    const cr = (await http().get(`${base}/creditors?fy=${fy}`).set(w).expect(200)).body;
+    expect(grp('creditors').cr - grp('creditors').dr).toBe(cr.totals.balancePaise);
+    expect(row('purchase')).toMatchObject({ dr: bj.grossPaise });
+    expect(row('bj:commission')).toMatchObject({ cr: bj.grossPaise - bj.netPaise });
+    expect(row('diff:opening_supplier')).toMatchObject({ dr: 250000 });
+    // No gaadi kharid for grapes: the beejak is the purchase.
+    expect(row('bhada_in')).toBeUndefined();
+    // APMC and mazdoori ride on the slip, outside bikri.
+    const slip = (await http().get(`${base}/daybook?from=${d}&to=${d}`).set(w).expect(200)).body.entries.find((e: any) => e.kind === 'slip');
+    expect(row('sales').cr).toBe(1000000);
+    expect(row('sales').cr + (row('apmc')?.cr ?? 0) + (row('labour')?.cr ?? 0)).toBe(slip.amountPaise);
+
+    const pu = (await http().get(`${base}/books/purcha?from=${d}&to=${d}`).set(w).expect(200)).body;
+    expect(pu.gaadis[0]).toMatchObject({ boxes: 100, kg: 1000, beejak: expect.objectContaining({ no: bj.no, netPaise: bj.netPaise }) });
+    const led = (await http().get(`${base}/books/ledger?account=creditors&from=2026-04-01&to=${d}`).set(w).expect(200)).body;
+    expect(led.closingPaise).toBe(-cr.totals.balancePaise);
+  });
+});

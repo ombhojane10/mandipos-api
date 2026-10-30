@@ -144,7 +144,8 @@ export class ReportsService {
     return this.db.withShop(shopId, (tx) => this.payables(tx, today));
   }
 
-  private async supplierBooks(tx: Tx) {
+  /** Every supplier with its gaadis and payments; the Trial Balance reads it as on a date. */
+  async supplierBooks(tx: Tx) {
     const gaadis = (await tx.query<{ id: string; number: string; supplier: string; arrived_at: Date; closed: boolean; freight: string; received: string; billed: string; goods: string; brands: string | null; sold: string; spoiled: string; corrected: string }>(
       `SELECT t.id, t.number, TRIM(t.supplier) AS supplier, t.arrived_at, t.closed_at IS NOT NULL AS closed, t.freight_paise AS freight,
               COALESCE(g.received, 0) AS received, COALESCE(g.billed, 0) AS billed, COALESCE(g.goods, 0) AS goods, g.brands,

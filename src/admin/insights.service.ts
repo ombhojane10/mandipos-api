@@ -38,7 +38,7 @@ const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0
  */
 
 /** Landed cost and what came in, per gaadi. */
-const TRUCK_COST = `
+export const TRUCK_COST = `
   SELECT t.id,
          (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id)
            + t.freight_paise + t.labour_paise + t.commission_paise AS cost,
@@ -47,7 +47,7 @@ const TRUCK_COST = `
   FROM trucks t`;
 
 /** Money moved between the shop's own books, loans, chit and supplier payments: not kharcha. */
-const NOT_EXPENSE = ['handover', 'float', 'bank_jama', 'bank_nikala', 'supplier', 'udhaar_diya', 'committee_di', 'bhada', 'mazdoori', 'opening'];
+export const NOT_EXPENSE = ['handover', 'float', 'bank_jama', 'bank_nikala', 'supplier', 'udhaar_diya', 'committee_di', 'bhada', 'mazdoori', 'opening'];
 /** Mazdoori is counted as earned (on the slips), not as paid out, so paying it is not counted twice. */
 
 const BIG_KHARCHA_PAISE = 500_000;

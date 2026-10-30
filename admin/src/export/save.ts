@@ -2,6 +2,11 @@ import type { ExportDoc } from './doc'
 
 /** Excel opens a UTF-8 CSV with a BOM as a sheet, Hindi and all. */
 export function csv(doc: ExportDoc): Blob {
+  const lines = (doc.parts?.length ? doc.parts : [doc]).flatMap((d, i) => [...(i ? ['', ''] : []), ...csvLines(d)])
+  return new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+}
+
+function csvLines(doc: ExportDoc): string[] {
   const q = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s)
   const line = (cells: string[]) => cells.map(q).join(',')
   const out = [
@@ -13,7 +18,7 @@ export function csv(doc: ExportDoc): Blob {
     ...doc.rows.map((r) => line(r.kind === 'band' || r.kind === 'heading' ? [r.cells[0]] : r.cells)),
     ...(doc.foot ? [line(doc.foot)] : []),
   ]
-  return new Blob(['\ufeff' + out.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  return out
 }
 
 /**

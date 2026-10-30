@@ -481,6 +481,9 @@ a.kpi:hover { border-color: #cfd3da; }
 .lh-firm b { font-size: 20px; font-weight: 900; letter-spacing: 0.01em; }
 .lh-firm span { font-size: 11.5px; font-weight: 800; }
 .lh-firm em { font-size: 13.5px; font-weight: 900; margin-top: 26px; letter-spacing: 0.02em; }
+.lh-firm .lh-contact { font-size: 10.5px; font-weight: 700; }
+.lh-letter { margin: 18px 0 0 26px; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; max-width: 640px; }
+.lh-letter p { margin: 0; }
 .lh-banks { display: grid; justify-items: center; text-align: center; }
 .lh-banks > div { display: grid; gap: 3px; padding: 8px 0; width: 280px; }
 .lh-banks > div + div { border-top: 1px solid var(--pi); }

@@ -25,7 +25,8 @@ type Move = { at: string; kind: 'opening' | 'beejak' | 'payment'; id: string; ti
 export class CreditorsService {
   constructor(private readonly db: Db) {}
 
-  private async books(tx: Tx) {
+  /** Every supplier with its moves (opening, beejaks, payments); the Trial Balance reads it as on a date. */
+  async books(tx: Tx) {
     const masters = (await tx.query<{ id: string; name: string; phone: string; code: string; area: string; opening_paise: string; opening_on: string | null }>(
       `SELECT id, name, phone, code, area, opening_paise, opening_on::text AS opening_on FROM supplier_phones ORDER BY name`)).rows
       .map((r): Master => ({ id: r.id, name: r.name, phone: r.phone, code: r.code, area: r.area, opening: n(r.opening_paise), openingOn: r.opening_on }));

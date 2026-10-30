@@ -15,7 +15,7 @@ const ROW_H: Record<NonNullable<ExportRow['kind']> | 'row', number> = { row: 22,
 const FOOT_H = 26
 const SIGN_H = 120
 
-type Firm = { name: string; place: string; address: string; banks: ShopSettings['bankAccounts'] }
+type Firm = { name: string; place: string; address: string; banks: ShopSettings['bankAccounts']; contact?: string }
 
 const canShareFiles = () => {
   try { return !!navigator.canShare?.({ files: [new File([''], 'x.pdf', { type: 'application/pdf' })] }) } catch { return false }
@@ -43,7 +43,8 @@ export function ExportHost({ shopId, fallback }: { shopId: string | null; fallba
     setFirm(basic)
     api<ShopSettings>(`/v1/admin/shops/${shopId}/settings`).then((s) => {
       const mandi = s.mandi && !/mandi/i.test(s.mandi) ? `${s.mandi} Mandi` : s.mandi
-      setFirm({ name: s.name, place: [s.shopNo, mandi].filter(Boolean).join(', ') + (s.phad ? `  ·  Phad ${s.phad}` : ''), address: s.address, banks: s.bankAccounts })
+      setFirm({ name: s.name, place: [s.shopNo, mandi].filter(Boolean).join(', ') + (s.phad ? `  ·  Phad ${s.phad}` : ''), address: s.address, banks: s.bankAccounts,
+        contact: [s.licenceNo && `Lic. ${s.licenceNo}`, s.gstin && `GSTIN ${s.gstin}`, s.phone && `Ph. ${s.phone}`, s.contactPerson, s.email].filter(Boolean).join('  ·  ') })
     }).catch(() => {})
   }, [doc, shopId]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!doc) return null
@@ -75,7 +76,12 @@ function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; aut
   // shop's bank accounts), estimated until then.
   const [budget, setBudget] = useState(doc.style === 'ledger' ? 560 : 780)
   const sharing = canShareFiles()
-  const pages = paginate(doc, budget)
+  // Several documents in one print: each its own pages; a little room kept, as their heads differ.
+  const docs = doc.parts?.length ? doc.parts : [doc]
+  const sheets = docs.flatMap((d) => {
+    const pages = paginate(d, docs.length > 1 ? budget - 24 : budget)
+    return pages.map((rows, i) => ({ d, rows, i, of: pages.length }))
+  })
   const printed = new Date().toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })
 
   useLayoutEffect(() => {
@@ -119,7 +125,6 @@ function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; aut
     return () => clearTimeout(id)
   }, [auto]) // eslint-disable-line react-hooks/exhaustive-deps
   const print = () => window.print()
-  const cols = doc.columns
 
   return (
     <div className="export-root" role="dialog" aria-label={t('Export')}
@@ -139,13 +144,14 @@ function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; aut
       </div>
       <div className="export-scroll">
         <div className="paper-stack" ref={stack} style={{ zoom }}>
-          {pages.map((rows, i) => {
-            const last = i === pages.length - 1
+          {sheets.map(({ d, rows, i, of }, key) => {
+            const last = i === of - 1
+            const cols = d.columns
             return (
-              <section key={i} className={`paper ${doc.style}`}>
-                {doc.style === 'ledger'
-                  ? <LedgerHead doc={doc} firm={firm} page={i + 1} pages={pages.length} />
-                  : <BookHead doc={doc} firm={firm} page={i + 1} pages={pages.length} />}
+              <section key={key} className={`paper ${d.style}`}>
+                {d.style === 'ledger'
+                  ? <LedgerHead doc={d} firm={firm} page={i + 1} pages={of} />
+                  : <BookHead doc={d} firm={firm} page={i + 1} pages={of} />}
                 {cols ? (
                   <table className="pt">
                     <thead><tr>{cols.map((c, j) => <th key={j} className={c.wide ? 'wide' : undefined}>{c.label}</th>)}</tr></thead>
@@ -158,8 +164,8 @@ function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; aut
                           </tr>
                         ))}
                     </tbody>
-                    {last && doc.foot && (
-                      <tfoot><tr>{doc.foot.map((c, k) => <td key={k} className={cols[k]?.num ? 'num' : undefined}>{c}</td>)}</tr></tfoot>
+                    {last && d.foot && (
+                      <tfoot><tr>{d.foot.map((c, k) => <td key={k} className={cols[k]?.num ? 'num' : undefined}>{c}</td>)}</tr></tfoot>
                     )}
                   </table>
                 ) : (
@@ -172,9 +178,9 @@ function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; aut
                     ))}
                   </div>
                 )}
-                {doc.rows.length === 0 && i === 0 && <p className="paper-empty">{t('Koi entry nahi')}</p>}
-                {last && doc.note && <p className="pnote">{doc.note}</p>}
-                {last && doc.sign && (
+                {d.rows.length === 0 && i === 0 && <p className="paper-empty">{t('Koi entry nahi')}</p>}
+                {last && d.note && <p className="pnote">{d.note}</p>}
+                {last && d.sign && (
                   <div className="psign"><span>MALIK</span><span>MUNIM</span></div>
                 )}
                 <footer className="pf"><span>{t('Print')}: {printed}</span><span>MandiPlus</span></footer>
@@ -196,6 +202,7 @@ function LedgerHead({ doc, firm, page, pages }: { doc: ExportDoc; firm: Firm; pa
         <div className="lh-firm">
           <b>{firm.name.toUpperCase()}</b>
           <span>{(firm.address || firm.place).toUpperCase()}</span>
+          {doc.contact && firm.contact && <span className="lh-contact">{firm.contact}</span>}
           <em>{doc.title}</em>
         </div>
         {banks.length > 0 && (
@@ -222,6 +229,7 @@ function LedgerHead({ doc, firm, page, pages }: { doc: ExportDoc; firm: Firm; pa
         {doc.to && <b>To : {dmyLong(doc.to)}</b>}
         <span>Page {page} of {pages}</span>
       </div>
+      {page === 1 && doc.letter && <div className="lh-letter">{doc.letter.map((l, i) => <p key={i}>{l}</p>)}</div>}
     </header>
   )
 }

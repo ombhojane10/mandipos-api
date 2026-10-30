@@ -56,6 +56,15 @@ export async function apiFile(path: string): Promise<string> {
   return URL.createObjectURL(await res.blob())
 }
 
+/** A file to save (the backup workbook), with the name the API gave it. */
+export async function apiDownload(path: string): Promise<{ blob: Blob; name: string | null }> {
+  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } })
+  if (res.status === 401 && getToken()) { setToken(null); onSignedOut() }
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  const name = /filename\*=UTF-8''([^;]+)/.exec(res.headers.get('Content-Disposition') ?? '')?.[1]
+  return { blob: await res.blob(), name: name ? decodeURIComponent(name) : null }
+}
+
 export async function apiStream(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const token = getToken()
   const res = await fetch(`${BASE}${path}`, {

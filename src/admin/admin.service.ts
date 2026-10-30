@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Db } from '../db/db.service';
+import { Db, Tx } from '../db/db.service';
 
 /**
  * What the MandiPlus admin portal reads. Every figure follows the app's own sums (Store.kt), so
@@ -10,6 +10,8 @@ import { Db } from '../db/db.service';
  */
 
 import { BALANCES, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, MOBILE, UPI_PART, day, n } from './sql';
+
+type KhataRow = { id: string; at: string; date: string; kind: 'slip' | 'payment' | 'udhaar'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[] };
 
 export type ShopRow = {
   id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string;
@@ -201,53 +203,7 @@ export class AdminService {
         `SELECT id, name, phone, code, kind, address, destination, area, vehicle, credit_limit_paise, market_paise, created_at FROM buyers WHERE id = $1`, [buyerId])).rows[0];
       if (!g) throw new NotFoundException('Grahak nahi mila');
 
-      const bills = (await tx.query<{ id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string }>(
-        `SELECT id, created_at, business_date::text AS business_date, slip_no, number, pay_mode, total_paise, paid_paise, cash_paise, upi_paise, packing, staff_name
-         FROM ${LIVE_BILLS} lb WHERE buyer_id = $1`, [buyerId])).rows;
-      const lines = (await tx.query<{ bill_id: string; brand: string | null; grade: string; qty: number; rate_paise: string; leak: boolean }>(
-        `SELECT l.bill_id, br.name AS brand, l.grade, l.qty, l.rate_paise, l.leak FROM bill_lines l
-         LEFT JOIN brands br ON br.id = l.brand_id
-         WHERE l.bill_id = ANY($1::uuid[]) ORDER BY l.created_at`, [bills.map((b) => b.id)])).rows;
-      const cols = (await tx.query<{ id: string; created_at: Date; business_date: string; amount_paise: string; pay_mode: string; receipt_no: number | null; cash: string; upi: string }>(
-        `SELECT id, created_at, business_date::text AS business_date, amount_paise, pay_mode, receipt_no, ${CASH_PART} AS cash, ${UPI_PART} AS upi
-         FROM ${LIVE_COLS} lc WHERE buyer_id = $1`, [buyerId])).rows;
-      const entries = (await tx.query<{ id: string; created_at: Date; business_date: string; amount_paise: string; note: string }>(
-        `SELECT id, created_at, business_date::text AS business_date, amount_paise, note FROM udhaar_entries WHERE buyer_id = $1`, [buyerId])).rows;
-
-      type Row = { id: string; at: string; date: string; kind: 'slip' | 'payment' | 'udhaar'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[] };
-      const mode = (cash: number, upi: number) => (cash && upi ? 'Cash + UPI' : upi ? 'UPI' : 'Cash');
-      const byBill = new Map<string, Row['lines']>();
-      for (const l of lines) {
-        const list = byBill.get(l.bill_id) ?? [];
-        list.push({ brand: l.brand ?? '', grade: l.grade, qty: l.qty, ratePaise: n(l.rate_paise), leak: l.leak });
-        byBill.set(l.bill_id, list);
-      }
-      const rows: Row[] = [
-        ...bills.map((b): Row => {
-          const ls = byBill.get(b.id) ?? [];
-          const paid = n(b.paid_paise);
-          return {
-            id: b.id, at: b.created_at.toISOString(), date: day(b.business_date), kind: 'slip',
-            title: `Parchi ${b.slip_no ?? b.number}`,
-            detail: paid > 0 ? (paid >= n(b.total_paise) ? `Nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}` : `Kuch nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}`) : b.pay_mode === 'free' ? 'Free' : 'Udhaar',
-            nags: ls.reduce((s, l) => s + l.qty, 0), debitPaise: n(b.total_paise), creditPaise: paid, lines: ls,
-          };
-        }),
-        ...cols.map((c): Row => ({
-          id: c.id, at: c.created_at.toISOString(), date: day(c.business_date), kind: 'payment',
-          title: c.receipt_no ? `Vasooli · Raseed ${c.receipt_no}` : 'Vasooli', detail: mode(n(c.cash), n(c.upi)),
-          nags: 0, debitPaise: 0, creditPaise: n(c.amount_paise),
-        })),
-        ...entries.map((e): Row => {
-          const amt = n(e.amount_paise);
-          return {
-            id: e.id, at: e.created_at.toISOString(), date: day(e.business_date), kind: 'udhaar',
-            title: e.note || (amt < 0 ? 'Jama' : 'Udhaar'), detail: amt < 0 ? 'Jama' : 'Udhaar',
-            nags: 0, debitPaise: Math.max(0, amt), creditPaise: Math.max(0, -amt),
-          };
-        }),
-      ].sort((a, b) => a.at.localeCompare(b.at));
-
+      const { rows, bills, cols } = (await this.histories(tx, [buyerId])).get(buyerId)!;
       let bal = 0;
       const history = rows.map((r) => ({ ...r, balancePaise: (bal += r.debitPaise - r.creditPaise) })).reverse();
       return {
@@ -266,6 +222,97 @@ export class AdminService {
         },
         history,
       };
+    });
+  }
+
+  /**
+   * Each grahak's khata rows, oldest first (the same rows the single khata shows), with their
+   * slips and payments for the totals: one set of queries for any number of grahak, so the
+   * Ledger Multiple and Chithi prints don't run four queries per grahak.
+   */
+  private async histories(tx: Tx, buyerIds: string[]) {
+    const bills = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string }>(
+      `SELECT id, buyer_id, created_at, business_date::text AS business_date, slip_no, number, pay_mode, total_paise, paid_paise, cash_paise, upi_paise, packing, staff_name
+       FROM ${LIVE_BILLS} lb WHERE buyer_id = ANY($1::uuid[])`, [buyerIds])).rows;
+    const lines = (await tx.query<{ bill_id: string; brand: string | null; grade: string; qty: number; rate_paise: string; leak: boolean }>(
+      `SELECT l.bill_id, br.name AS brand, l.grade, l.qty, l.rate_paise, l.leak FROM bill_lines l
+       LEFT JOIN brands br ON br.id = l.brand_id
+       WHERE l.bill_id = ANY($1::uuid[]) ORDER BY l.created_at`, [bills.map((b) => b.id)])).rows;
+    const cols = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; amount_paise: string; pay_mode: string; receipt_no: number | null; cash: string; upi: string }>(
+      `SELECT id, buyer_id, created_at, business_date::text AS business_date, amount_paise, pay_mode, receipt_no, ${CASH_PART} AS cash, ${UPI_PART} AS upi
+       FROM ${LIVE_COLS} lc WHERE buyer_id = ANY($1::uuid[])`, [buyerIds])).rows;
+    const entries = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; amount_paise: string; note: string }>(
+      `SELECT id, buyer_id, created_at, business_date::text AS business_date, amount_paise, note FROM udhaar_entries WHERE buyer_id = ANY($1::uuid[])`, [buyerIds])).rows;
+
+    const mode = (cash: number, upi: number) => (cash && upi ? 'Cash + UPI' : upi ? 'UPI' : 'Cash');
+    const byBill = new Map<string, KhataRow['lines']>();
+    for (const l of lines) {
+      const list = byBill.get(l.bill_id) ?? [];
+      list.push({ brand: l.brand ?? '', grade: l.grade, qty: l.qty, ratePaise: n(l.rate_paise), leak: l.leak });
+      byBill.set(l.bill_id, list);
+    }
+    const out = new Map(buyerIds.map((id) => [id, { rows: [] as KhataRow[], bills: [] as typeof bills, cols: [] as typeof cols }]));
+    for (const b of bills) {
+      const ls = byBill.get(b.id) ?? [];
+      const paid = n(b.paid_paise);
+      const o = out.get(b.buyer_id)!;
+      o.bills.push(b);
+      o.rows.push({
+        id: b.id, at: b.created_at.toISOString(), date: day(b.business_date), kind: 'slip',
+        title: `Parchi ${b.slip_no ?? b.number}`,
+        detail: paid > 0 ? (paid >= n(b.total_paise) ? `Nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}` : `Kuch nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}`) : b.pay_mode === 'free' ? 'Free' : 'Udhaar',
+        nags: ls.reduce((s, l) => s + l.qty, 0), debitPaise: n(b.total_paise), creditPaise: paid, lines: ls,
+      });
+    }
+    for (const c of cols) {
+      const o = out.get(c.buyer_id)!;
+      o.cols.push(c);
+      o.rows.push({
+        id: c.id, at: c.created_at.toISOString(), date: day(c.business_date), kind: 'payment',
+        title: c.receipt_no ? `Vasooli · Raseed ${c.receipt_no}` : 'Vasooli', detail: mode(n(c.cash), n(c.upi)),
+        nags: 0, debitPaise: 0, creditPaise: n(c.amount_paise),
+      });
+    }
+    for (const e of entries) {
+      const amt = n(e.amount_paise);
+      out.get(e.buyer_id)!.rows.push({
+        id: e.id, at: e.created_at.toISOString(), date: day(e.business_date), kind: 'udhaar',
+        title: e.note || (amt < 0 ? 'Jama' : 'Udhaar'), detail: amt < 0 ? 'Jama' : 'Udhaar',
+        nags: 0, debitPaise: Math.max(0, amt), creditPaise: Math.max(0, -amt),
+      });
+    }
+    for (const o of out.values()) o.rows.sort((a, b) => a.at.localeCompare(b.at));
+    return out;
+  }
+
+  /**
+   * Many grahak's khatas over business dates [from, to], for one print (Ledger Multiple, Chithi):
+   * the balance brought forward to [from], the rows in the period with the running balance, the
+   * closing. [last] keeps only the period's last few rows (a chithi), the rest folded into the
+   * opening. Rows are ordered by date, then as entered, as the khata prints them.
+   */
+  async khatas(shopId: string, buyerIds: string[], from: string, to: string, last?: number) {
+    if (from > to) throw new BadRequestException('from must be on or before to');
+    await this.requireApproved(shopId);
+    return this.db.withShop(shopId, async (tx) => {
+      const people = (await tx.query<{ id: string; name: string; phone: string; code: string; kind: string; address: string; destination: string; area: string; city: string }>(
+        `SELECT id, name, phone, code, kind, address, destination, area, city FROM buyers WHERE id = ANY($1::uuid[])`, [buyerIds])).rows;
+      const hist = await this.histories(tx, people.map((p) => p.id));
+      const order = new Map(buyerIds.map((id, i) => [id, i]));
+      return people.sort((a, b) => order.get(a.id)! - order.get(b.id)!).map((p) => {
+        const all = hist.get(p.id)!.rows.filter((r) => r.date <= to).sort((a, b) => a.date.localeCompare(b.date) || a.at.localeCompare(b.at));
+        let inPeriod = all.filter((r) => r.date >= from);
+        if (last !== undefined) inPeriod = inPeriod.slice(-last);
+        const firstShown = inPeriod[0];
+        const before = firstShown ? all.slice(0, all.indexOf(firstShown)) : all;
+        let bal = before.reduce((s, r) => s + r.debitPaise - r.creditPaise, 0);
+        const openingPaise = bal;
+        const rows = inPeriod.map((r) => ({ ...r, balancePaise: (bal += r.debitPaise - r.creditPaise) }));
+        return {
+          buyer: { id: p.id, name: p.name, phone: p.phone, code: p.code, kind: p.kind, address: p.address, destination: p.destination, area: p.area, city: p.city },
+          openingPaise, rows, closingPaise: bal,
+        };
+      });
     });
   }
 
