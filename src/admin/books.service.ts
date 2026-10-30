@@ -6,7 +6,7 @@ import { fyOf, fyRange, CreditorsService } from './creditors.service';
 import { BEEJAK_HEADS, NOT_EXPENSE, TRUCK_COST } from './insights.service';
 import { BUILTIN_HEADS, OPENING_NOTES, type HeadType } from './masters.service';
 import { ReportsService, nameKey, type Pot } from './reports.service';
-import { CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, STORE_BACK, UPI_PART, n } from './sql';
+import { BOUGHT, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, UPI_PART, n } from './sql';
 import { writeXlsx, type Cell } from './xlsx';
 
 const istDay = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10);
@@ -64,8 +64,11 @@ const FRAGMENTS = {
     SELECT lb.business_date AS day, v.acct, v.dr, v.cr, 'bill' AS kind, lb.id AS ref, lb.buyer_id AS ref2, lb.created_at AS at,
            'Parchi ' || COALESCE(lb.slip_no::text, lb.number) AS title, lb.buyer_name AS detail
     FROM ${LIVE_BILLS} lb
-    CROSS JOIN LATERAL (SELECT LEAST(lb.apmc_paise, lb.chungi_paise) AS ap, GREATEST(lb.chungi_paise - lb.apmc_paise, 0) AS ch,
-                               CASE WHEN lb.buyer_id IS NOT NULL AND lb.total_paise > lb.paid_paise THEN lb.total_paise - lb.paid_paise ELSE 0 END AS ud) x
+    -- APMC as the slip prints it (chungi less labour, Slips.kt): slips from before APMC rode on the
+    -- total keep apmc_paise for the APMC desk with nothing collected for it.
+    CROSS JOIN LATERAL (SELECT LEAST(lb.apmc_paise, GREATEST(lb.chungi_paise - lb.labour_paise, 0)) AS ap0,
+                               CASE WHEN lb.buyer_id IS NOT NULL AND lb.total_paise > lb.paid_paise THEN lb.total_paise - lb.paid_paise ELSE 0 END AS ud) x0
+    CROSS JOIN LATERAL (SELECT x0.ap0 AS ap, lb.chungi_paise - x0.ap0 AS ch, x0.ud) x
     CROSS JOIN LATERAL (VALUES
       ('pot:galla', lb.cash_paise, 0::bigint), ('pot:bank', lb.upi_paise, 0), ('g:' || lb.buyer_id, x.ud, 0),
       ('sales', 0, lb.total_paise - x.ap - x.ch), ('apmc', 0, x.ap),
@@ -103,7 +106,7 @@ const FRAGMENTS = {
   // went into; whatever is left over is the other side: the head, the supplier, the labour.
   daybook: `
     SELECT e.business_date AS day, v.acct, v.dr, v.cr, 'daybook' AS kind, e.id AS ref, h.id AS ref2, e.created_at AS at, COALESCE(h.name, e.category) AS title,
-           concat_ws(' · ', NULLIF(trim(e.party_name), ''), NULLIF(trim(e.note), ''), e.mode) AS detail
+           concat_ws(' · ', NULLIF(trim(e.party_name), ''), NULLIF(NULLIF(trim(e.note), ''), trim(e.party_name)), e.mode) AS detail
     FROM daybook_entries e
     LEFT JOIN ledger_heads h ON upper(trim(h.name)) = upper(trim(e.party_name)) AND e.category = ANY(${HEAD_CATS})
     CROSS JOIN LATERAL (SELECT
@@ -137,7 +140,7 @@ const FRAGMENTS = {
   gaadis: `
     SELECT ${IST_DAY('t.arrived_at')} AS day, v.acct, v.dr, v.cr, 'gaadi' AS kind, t.id AS ref, t.id AS ref2, t.arrived_at AS at, 'Gaadi ' || t.number AS title, trim(t.supplier) AS detail
     FROM trucks t
-    LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades GROUP BY truck_id) g ON g.truck_id = t.id
+    LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades tg WHERE ${BOUGHT('tg')} GROUP BY truck_id) g ON g.truck_id = t.id
     LEFT JOIN (SELECT truck_id, SUM(qty) corrected FROM spoilage WHERE kind = 'correction' GROUP BY truck_id) sp ON sp.truck_id = t.id
     CROSS JOIN LATERAL (SELECT GREATEST(0, COALESCE(g.goods, 0) - CASE WHEN COALESCE(g.billed, 0) > 0 AND COALESCE(sp.corrected, 0) > 0
                                  THEN ROUND(g.goods::numeric * sp.corrected / g.billed)::bigint ELSE 0 END) AS goods) x
@@ -210,17 +213,27 @@ const BACKUP: { sheet: string; sql: string }[] = [
     FROM shops s WHERE s.id = nullif(current_setting('app.shop_id', true), '')::uuid` },
   { sheet: 'Grahak', sql: `SELECT g.*, (SELECT COALESCE(SUM(lb.total_paise - lb.paid_paise), 0) FROM ${LIVE_BILLS} lb WHERE lb.buyer_id = g.id AND lb.total_paise > lb.paid_paise)
       + (SELECT COALESCE(SUM(u.amount_paise), 0) FROM udhaar_entries u WHERE u.buyer_id = g.id)
-      - (SELECT COALESCE(SUM(lc.amount_paise), 0) FROM ${LIVE_COLS} lc WHERE lc.buyer_id = g.id) AS baaki_paise FROM buyers g` },
+      - (SELECT COALESCE(SUM(lc.amount_paise), 0) FROM ${LIVE_COLS} lc WHERE lc.buyer_id = g.id) AS baaki_paise, gs.gstin
+    FROM buyers g LEFT JOIN buyer_gstin gs ON gs.buyer_id = g.id` },
   { sheet: 'Supplier', sql: `SELECT * FROM supplier_phones` },
   { sheet: 'Gaadi', sql: `SELECT * FROM trucks` },
   { sheet: 'Gaadi maal', sql: `SELECT g.*, t.number AS gaadi, br.name AS maal FROM truck_grades g LEFT JOIN trucks t ON t.id = g.truck_id LEFT JOIN brands br ON br.id = g.brand_id` },
-  { sheet: 'Parchi', sql: `SELECT b.*, (SELECT v.reason FROM bill_voids v WHERE v.bill_id = b.id LIMIT 1) AS delete_reason FROM bills b` },
+  { sheet: 'Parchi', sql: `SELECT b.*, t.number AS gaadi, (SELECT v.reason FROM bill_voids v WHERE v.bill_id = b.id LIMIT 1) AS delete_reason
+    FROM bills b LEFT JOIN trucks t ON t.id = b.truck_id` },
   { sheet: 'Parchi maal', sql: `SELECT l.*, br.name AS maal, t.number AS gaadi FROM bill_lines l LEFT JOIN brands br ON br.id = l.brand_id LEFT JOIN trucks t ON t.id = l.truck_id` },
   { sheet: 'Parchi delete', sql: `SELECT * FROM bill_voids` },
+  { sheet: 'Toote box', sql: `SELECT k.*, t.number AS gaadi, br.name AS maal FROM breakages k LEFT JOIN trucks t ON t.id = k.truck_id LEFT JOIN brands br ON br.id = k.brand_id` },
+  { sheet: 'Delivery parchi', sql: `SELECT * FROM delivery_slips` },
+  { sheet: 'Laddan parchi', sql: `SELECT * FROM lading_slips` },
+  { sheet: 'Maal liya', sql: `SELECT * FROM receivings` },
   { sheet: 'Vasooli', sql: `SELECT c.*, g.name AS grahak, (SELECT v.reason FROM collection_voids v WHERE v.collection_id = c.id LIMIT 1) AS delete_reason
     FROM collections c LEFT JOIN buyers g ON g.id = c.buyer_id` },
+  { sheet: 'Vasooli delete', sql: `SELECT * FROM collection_voids` },
   { sheet: 'Udhaar', sql: `SELECT u.*, g.name AS grahak FROM udhaar_entries u LEFT JOIN buyers g ON g.id = u.buyer_id` },
   { sheet: 'Day Book', sql: `SELECT * FROM daybook_entries` },
+  { sheet: 'Galla band', sql: `SELECT * FROM day_closes` },
+  { sheet: 'Card payment', sql: `SELECT p.id, p.purpose, p.ref_id, p.pay_mode, p.amount_paise, p.billing_ref, p.rrn, p.approval_code, p.response_code, p.response_msg, p.created_at
+    FROM terminal_payments p` },
   { sheet: 'Beejak', sql: `SELECT * FROM beejaks` },
   { sheet: 'Bank jama', sql: `SELECT * FROM deposit_slips` },
   { sheet: 'Journal voucher', sql: `SELECT * FROM journal_vouchers` },
@@ -232,7 +245,8 @@ const BACKUP: { sheet: string; sql: string }[] = [
   { sheet: 'Store', sql: `SELECT * FROM stores` },
   { sheet: 'Store in-out', sql: `SELECT m.*, s.name AS store, t.number AS gaadi, br.name AS maal FROM store_moves m LEFT JOIN stores s ON s.id = m.store_id
     LEFT JOIN trucks t ON t.id = m.truck_id LEFT JOIN brands br ON br.id = m.brand_id` },
-  { sheet: 'Maal (product)', sql: `SELECT b.*, pg.name AS product_group FROM brands b LEFT JOIN brand_groups bg ON bg.brand_id = b.id LEFT JOIN product_groups pg ON pg.id = bg.group_id` },
+  { sheet: 'Maal (product)', sql: `SELECT b.*, (SELECT string_agg(pg.name, ', ' ORDER BY pg.name) FROM brand_groups bg JOIN product_groups pg ON pg.id = bg.group_id
+      WHERE bg.brand_id = b.id) AS product_group FROM brands b` },
   { sheet: 'Product group', sql: `SELECT * FROM product_groups` },
   { sheet: 'Area', sql: `SELECT * FROM areas` },
   { sheet: 'Ledger heads', sql: `SELECT * FROM ledger_heads` },
@@ -323,7 +337,7 @@ export class BooksService {
       if (!POTS.includes(pot)) throw new NotFoundException('Khata nahi mila');
       const b = await this.reports.cashbook(shopId, pot, from, to);
       const lines = b.lines.map((l) => ({ id: l.id, date: l.date, kind: l.kind === 'bikri' || l.kind === 'vasooli' ? 'day' : 'daybook', ref: null, ref2: null,
-        title: l.kind === 'in' || l.kind === 'out' ? (BUILTIN_NAME.get(l.title) ?? l.title) : l.title, detail: [l.party, l.note].filter(Boolean).join(' · '),
+        title: l.kind === 'in' || l.kind === 'out' ? (BUILTIN_NAME.get(l.title) ?? l.title) : l.title, detail: [...new Set([l.party, l.note].filter(Boolean))].join(' · '),
         debitPaise: l.inPaise, creditPaise: l.outPaise, balancePaise: l.balancePaise, count: 1 }));
       return { ...this.describe(key, grapes, new Map()), from, to, openingPaise: b.openingPaise, debitPaise: b.inPaise, creditPaise: b.outPaise, closingPaise: b.closingPaise, lines };
     }
@@ -342,12 +356,26 @@ export class BooksService {
         : `SELECT day::text AS day, acct, dr, cr, kind, ref, ref2, title, detail FROM (${sql}) q WHERE q.acct = $4 AND q.day >= $5 ORDER BY day, at`,
         [to, OPENING_NOTES, grapes, key, from])).rows;
       let bal = opening;
-      const lines = rows.map((r, i) => {
+      // A P&L ledger starts again each 1 April (the year closed into capital), so its closing is the Trial Balance's.
+      let fy = fyOf(from);
+      const lines: { id: string; date: string; kind: string; ref: string | null; ref2: string | null; title: string; detail: string;
+        debitPaise: number; creditPaise: number; balancePaise: number; count: number }[] = [];
+      rows.forEach((r, i) => {
+        if (acct.pl && fyOf(r.day) > fy) {
+          fy = fyOf(r.day);
+          lines.push({ id: `fy-${fy}`, date: fyRange(fy).from, kind: 'fy', ref: null, ref2: null, title: `Saal ${fyRange(fy).label}`, detail: '',
+            debitPaise: 0, creditPaise: 0, balancePaise: (bal = 0), count: 0 });
+        }
         const dr = n(r.dr), cr = n(r.cr);
-        const title = r.kind === 'day' ? `${n(r.n)} entry` : r.kind === 'daybook' ? (BUILTIN_NAME.get(r.title) ?? r.title) : r.title;
-        return { id: r.ref ?? `${r.day}-${i}`, date: r.day, kind: r.kind, ref: r.ref, ref2: r.ref2, title, detail: r.detail,
-          debitPaise: dr, creditPaise: cr, balancePaise: (bal += dr - cr), count: n(r.n ?? 1) };
+        const title = r.kind === 'day' ? '' : r.kind === 'daybook' ? (BUILTIN_NAME.get(r.title) ?? r.title) : r.title;
+        lines.push({ id: r.ref ?? `${r.day}-${i}`, date: r.day, kind: r.kind, ref: r.ref, ref2: r.ref2, title, detail: r.detail,
+          debitPaise: dr, creditPaise: cr, balancePaise: (bal += dr - cr), count: n(r.n ?? 1) });
       });
+      if (acct.pl && fyOf(to) > fy) {
+        fy = fyOf(to);
+        lines.push({ id: `fy-${fy}`, date: fyRange(fy).from, kind: 'fy', ref: null, ref2: null, title: `Saal ${fyRange(fy).label}`, detail: '',
+          debitPaise: 0, creditPaise: 0, balancePaise: (bal = 0), count: 0 });
+      }
       return { ...acct, from, to, openingPaise: opening,
         debitPaise: lines.reduce((s, l) => s + l.debitPaise, 0), creditPaise: lines.reduce((s, l) => s + l.creditPaise, 0), closingPaise: bal, lines };
     });
@@ -394,7 +422,7 @@ export class BooksService {
           balance: -p.moves.filter((m) => m.at <= on).reduce((t, m) => t + m.creditPaise - m.debitPaise, 0) }));
       } else {
         suppliers = (await this.reports.supplierBooks(tx)).map((s) => ({ key: s.key, name: s.name,
-          balance: -((s.opening && s.opening.date <= on ? s.opening.paise : 0)
+          balance: -(s.openings.filter((o) => o.date <= on).reduce((t, o) => t + o.paise, 0)
             + s.gaadis.filter((g) => istDay(g.arrivedAt) <= on).reduce((t, g) => t + g.purchasePaise, 0) - s.payments.filter((x) => x.date <= on).reduce((t, x) => t + x.amountPaise, 0)
             - s.jvs.filter((j) => j.date <= on).reduce((t, j) => t + j.amountPaise, 0)) }));
       }
@@ -427,7 +455,8 @@ export class BooksService {
 
       const out = GROUPS.map((g) => {
         const rows = groups.get(g.key)!.sort((a, b) => (g.key === 'debtors' || g.key === 'laddan' || g.key === 'creditors' ? b.dr + b.cr - a.dr - a.cr : 0) || a.name.localeCompare(b.name));
-        return { key: g.key, name: g.name, dr: rows.reduce((t, r) => t + r.dr, 0), cr: rows.reduce((t, r) => t + r.cr, 0), rows };
+        // A group closes on one side, as Tally shows it: its ledgers' Dr less their Cr.
+        return { key: g.key, name: g.name, ...side(rows.reduce((t, r) => t + r.dr - r.cr, 0)), rows };
       }).filter((g) => g.rows.length);
       const dr = out.reduce((t, g) => t + g.dr, 0), cr = out.reduce((t, g) => t + g.cr, 0);
       const suspense = out.find((g) => g.key === 'suspense');
@@ -537,7 +566,7 @@ export class BooksService {
           SUM(GREATEST(0, COALESCE(g.goods, 0) - CASE WHEN COALESCE(g.billed, 0) > 0 AND COALESCE(sp.corrected, 0) > 0
                 THEN ROUND(g.goods::numeric * sp.corrected / g.billed) ELSE 0 END) + t.freight_paise) AS s
         FROM trucks t
-        LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades GROUP BY truck_id) g ON g.truck_id = t.id
+        LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades tg WHERE ${BOUGHT('tg')} GROUP BY truck_id) g ON g.truck_id = t.id
         LEFT JOIN (SELECT truck_id, SUM(qty) corrected FROM spoilage WHERE kind = 'correction' GROUP BY truck_id) sp ON sp.truck_id = t.id
         WHERE ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2 GROUP BY 1`);
       const beejak = await q(`SELECT ${bucket('day')} AS b, SUM(net_paise) AS s FROM beejaks WHERE day BETWEEN $1 AND $2 GROUP BY 1`);
@@ -568,7 +597,8 @@ export class BooksService {
                 SUM(GREATEST(0, COALESCE(g.goods, 0) - CASE WHEN COALESCE(g.billed, 0) > 0 AND COALESCE(sp.corrected, 0) > 0
                       THEN ROUND(g.goods::numeric * sp.corrected / g.billed) ELSE 0 END) + t.freight_paise) AS kharid
          FROM trucks t
-         LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(received_qty) recv, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades GROUP BY truck_id) g ON g.truck_id = t.id
+         LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(received_qty) recv, SUM(billed_qty::bigint * rate_paise) goods
+                    FROM truck_grades tg WHERE ${BOUGHT('tg')} GROUP BY truck_id) g ON g.truck_id = t.id
          LEFT JOIN (SELECT truck_id, SUM(qty) corrected FROM spoilage WHERE kind = 'correction' GROUP BY truck_id) sp ON sp.truck_id = t.id
          WHERE ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2 GROUP BY 1`, [from, to])).rows;
       const sold = (await tx.query<{ supplier: string; qty: string; amount: string }>(
@@ -590,7 +620,7 @@ export class BooksService {
       const qIn = (await tx.query<{ q: string | null; qty: string; amount: string }>(
         `SELECT br.name AS q, SUM(g.received_qty) AS qty, SUM(g.billed_qty::bigint * g.rate_paise) AS amount
          FROM truck_grades g JOIN trucks t ON t.id = g.truck_id LEFT JOIN brands br ON br.id = g.brand_id
-         WHERE ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2 AND NOT EXISTS (SELECT 1 FROM store_sync x WHERE x.id = g.id) GROUP BY 1`, [from, to])).rows;
+         WHERE ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2 AND ${BOUGHT('g')} GROUP BY 1`, [from, to])).rows;
       const qOut = (await tx.query<{ q: string | null; qty: string; amount: string }>(
         `SELECT br.name AS q, SUM(l.qty) AS qty, SUM(l.qty::bigint * l.rate_paise) AS amount
          FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id LEFT JOIN brands br ON br.id = l.brand_id
@@ -620,13 +650,12 @@ export class BooksService {
     if (from > to) throw new BadRequestException('from must be on or before to');
     return this.db.withShop(shopId, async (tx) => {
       const lots = (await tx.query<{ id: string; number: string; supplier: string; location: string; arrived: string; freight: string; closed: boolean;
-        brand_id: string | null; quality: string | null; received: string; billed: string; free: string; grams: number; goods: string; corrected: string; back: string }>(
+        brand_id: string | null; quality: string | null; received: string; billed: string; free: string; grams: number; goods: string; corrected: string }>(
         `SELECT t.id, t.number, trim(t.supplier) AS supplier, t.location, ${IST_DAY('t.arrived_at')}::text AS arrived, t.freight_paise AS freight, t.closed_at IS NOT NULL AS closed,
                 g.brand_id, br.name AS quality, SUM(g.received_qty) AS received, SUM(g.billed_qty) AS billed, SUM(g.free_qty) AS free, MAX(g.box_grams) AS grams,
                 SUM(g.billed_qty::bigint * g.rate_paise) AS goods,
-                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.brand_id IS NOT DISTINCT FROM g.brand_id AND s.kind = 'correction') AS corrected,
-                ${STORE_BACK('t.id', 'g.brand_id')} AS back
-         FROM trucks t JOIN truck_grades g ON g.truck_id = t.id LEFT JOIN brands br ON br.id = g.brand_id
+                (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.brand_id IS NOT DISTINCT FROM g.brand_id AND s.kind = 'correction') AS corrected
+         FROM trucks t JOIN truck_grades g ON g.truck_id = t.id AND ${BOUGHT('g')} LEFT JOIN brands br ON br.id = g.brand_id
          WHERE ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2
          GROUP BY t.id, g.brand_id, br.name ORDER BY t.arrived_at, t.number, MIN(g.created_at)`, [from, to])).rows;
       const beejaks = new Map((await tx.query<{ truck_id: string; id: string; no: number; day: string; net: string; gross: string }>(
@@ -638,7 +667,7 @@ export class BooksService {
       for (const l of lots) {
         const g = gaadis.get(l.id) ?? gaadis.set(l.id, { truckId: l.id, number: l.number, supplier: l.supplier, supplierKey: nameKey(l.supplier), location: l.location, date: l.arrived,
           closed: l.closed, freightPaise: n(l.freight), boxes: 0, kg: 0, goodsPaise: 0, billed: 0, corrected: 0, qualities: [], beejak: beejaks.get(l.id) ?? null }).get(l.id)!;
-        const boxes = Math.max(0, n(l.received) - n(l.corrected) - n(l.back));
+        const boxes = Math.max(0, n(l.received) - n(l.corrected));
         const kg = Math.round((boxes * (l.grams ?? 0)) / 10) / 100;
         g.qualities.push({ name: l.quality ?? 'Maal', boxes, kg, amountPaise: n(l.goods), ratePaise: n(l.billed) ? Math.round(n(l.goods) / n(l.billed)) : 0 });
         g.boxes += boxes; g.kg += kg; g.goodsPaise += n(l.goods); g.billed += n(l.billed); g.corrected += n(l.corrected);

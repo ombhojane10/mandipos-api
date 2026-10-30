@@ -14,12 +14,14 @@ export function Suppliers({ shopId }: { shopId: string }) {
   const query = q.trim().toLowerCase()
   const rows = (data?.rows ?? []).filter((r) => !query || r.name.toLowerCase().includes(query))
   const open = (key: string) => { location.hash = href({ page: 'supplier', shopId, key }) }
+  // An opening column only where a supplier has one (Masters › Openings).
+  const op = rows.some((r) => r.openingPaise)
   useExport(data ? () => ({
     style: 'book' as const, title: t('Supplier Khata'), file: fileName(t('Supplier Khata')),
     summary: [[t('Supplier ko dena'), rs(data.totals.duePaise)], [t('Supplier'), count(data.totals.count)]],
-    columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), num: true }, { label: t('Kharid'), num: true }, { label: t('Diya'), num: true }, { label: t('Baaki'), num: true }],
-    rows: rows.map((r) => ({ cells: [r.name, count(r.gaadis), rs(r.purchasePaise), rs(r.paidPaise), balRs(r.duePaise, 'supplier')] })),
-    foot: [t('Kul'), count(rows.reduce((s, r) => s + r.gaadis, 0)), rs(rows.reduce((s, r) => s + r.purchasePaise, 0)), rs(rows.reduce((s, r) => s + r.paidPaise, 0)), balRs(rows.reduce((s, r) => s + r.duePaise, 0), 'supplier')],
+    columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), num: true }, ...(op ? [{ label: t('Opening'), num: true }] : []), { label: t('Kharid'), num: true }, { label: t('Diya'), num: true }, { label: t('Baaki'), num: true }],
+    rows: rows.map((r) => ({ cells: [r.name, count(r.gaadis), ...(op ? [rs(r.openingPaise)] : []), rs(r.purchasePaise), rs(r.paidPaise), balRs(r.duePaise, 'supplier')] })),
+    foot: [t('Kul'), count(rows.reduce((s, r) => s + r.gaadis, 0)), ...(op ? [rs(rows.reduce((s, r) => s + r.openingPaise, 0))] : []), rs(rows.reduce((s, r) => s + r.purchasePaise, 0)), rs(rows.reduce((s, r) => s + r.paidPaise, 0)), balRs(rows.reduce((s, r) => s + r.duePaise, 0), 'supplier')],
   }) : null, [data, query])
 
   return (
@@ -36,12 +38,13 @@ export function Suppliers({ shopId }: { shopId: string }) {
           </div>
           <div className="card wrap-x">
             <table className="tbl fold">
-              <thead><tr><th>{t('Supplier')}</th><th className="num">{t('Gaadi')}</th><th className="num">{t('Kharid')}</th><th className="num">{t('Diya')}</th><th className="num">{t('Baaki')}</th><th>{t('Aakhri')}</th></tr></thead>
+              <thead><tr><th>{t('Supplier')}</th><th className="num">{t('Gaadi')}</th>{op && <th className="num">{t('Opening')}</th>}<th className="num">{t('Kharid')}</th><th className="num">{t('Diya')}</th><th className="num">{t('Baaki')}</th><th>{t('Aakhri')}</th></tr></thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.key} data-row tabIndex={0} onClick={() => open(r.key)} onKeyDown={(e) => { if (e.key === 'Enter') open(r.key) }}>
                     <td className="main-col"><b>{r.name}</b></td>
                     <td className="num opt-col">{count(r.gaadis)}</td>
+                    {op && <td className="num opt-col money">{r.openingPaise ? rupees(r.openingPaise) : ''}</td>}
                     <td className="num opt-col money">{rupees(r.purchasePaise)}</td>
                     <td className="num opt-col money">{rupees(r.paidPaise)}</td>
                     <td className="num amt-col"><Bal paise={r.duePaise} who="supplier" /></td>
@@ -73,7 +76,7 @@ export function SupplierKhata({ shopId, supplierKey }: { shopId: string; supplie
       </div>
       <div className="card sum">
         <div><span className="lb">{t('Baaki')}</span><span className="v"><Bal paise={tot.duePaise} who="supplier" /></span></div>
-        {tot.openingPaise !== 0 && <div><span className="lb">{t('Opening')}</span><span className="v"><Bal paise={tot.openingPaise} who="supplier" /></span></div>}
+        {!!tot.openingPaise && <div><span className="lb">{t('Opening')}</span><span className="v"><Bal paise={tot.openingPaise} who="supplier" /></span></div>}
         <div><span className="lb">{t('Kharid')}</span><span className="v">{rupees(tot.purchasePaise)}</span></div>
         <div><span className="lb">{t('Diya')}</span><span className="v">{rupees(tot.paidPaise)}</span></div>
         <div><span className="lb">{t('Gaadi')}</span><span className="v">{count(tot.gaadis)} · {t('{n} nag', { n: count(tot.dana) })}</span></div>

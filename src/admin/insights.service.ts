@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Db } from '../db/db.service';
-import { BALANCES, IST_DAY, LIVE_BILLS, STORE_BACK, n } from './sql';
+import { BALANCES, BOUGHT, IST_DAY, LIVE_BILLS, STORE_BACK, n } from './sql';
 import { nameKey } from './reports.service';
 import { uuidv7 } from '../common/uuid';
 
@@ -37,13 +37,18 @@ const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0
  * nag it brought (billed + free − corrections), the same base the stock summary values at.
  */
 
-/** Landed cost and what came in, per gaadi. */
+/**
+ * Landed cost and what came in, per gaadi (cost / recv is a box's laagat); boxes = what is on the
+ * gaadi's books, boxes a cold store put back included (the app's stock counts them).
+ */
 export const TRUCK_COST = `
   SELECT t.id,
-         (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id)
+         (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')})
            + t.freight_paise + t.labour_paise + t.commission_paise AS cost,
+         (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')})
+           - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv,
          (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id)
-           - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS recv
+           - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS boxes
   FROM trucks t`;
 
 /** Money moved between the shop's own books, loans, chit and supplier payments: not kharcha. */
@@ -82,12 +87,12 @@ export class InsightsService {
    */
   async gaadiHisab(shopId: string, view: 'active' | 'past') {
     return this.db.withShop(shopId, async (tx) => {
-      const rows = (await tx.query<{ id: string; number: string; supplier: string; arrived: string; closed: string | null; brands: string | null; cost: string; recv: string; billed: string; buy: string; sold: string; sales: string; spoiled: string }>(
+      const rows = (await tx.query<{ id: string; number: string; supplier: string; arrived: string; closed: string | null; brands: string | null; cost: string; recv: string; bought: string; billed: string; buy: string; sold: string; sales: string; spoiled: string }>(
         `SELECT t.id, t.number, t.supplier, ${IST_DAY('t.arrived_at')}::text AS arrived, ${IST_DAY('t.closed_at')}::text AS closed,
                 (SELECT string_agg(DISTINCT br.name, ', ') FROM truck_grades g JOIN brands br ON br.id = g.brand_id WHERE g.truck_id = t.id) AS brands,
-                tc.cost, tc.recv,
-                (SELECT COALESCE(SUM(billed_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id) AS billed,
-                (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id) AS buy,
+                tc.cost, tc.recv AS bought, tc.boxes AS recv,
+                (SELECT COALESCE(SUM(billed_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')}) AS billed,
+                (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')}) AS buy,
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
                 (SELECT COALESCE(SUM(l.qty::bigint * l.rate_paise), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sales,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS spoiled
@@ -96,7 +101,7 @@ export class InsightsService {
          ORDER BY ${view === 'past' ? 't.closed_at DESC LIMIT 300' : 't.arrived_at'}`)).rows;
       const out = rows.map((r) => {
         const cost = n(r.cost), recv = n(r.recv), sold = n(r.sold), spoiled = n(r.spoiled), sales = n(r.sales);
-        const per = recv > 0 ? cost / recv : 0;
+        const per = n(r.bought) > 0 ? cost / n(r.bought) : 0;
         const left = Math.max(0, recv - sold - spoiled);
         const gone = Math.round(per * (sold + spoiled));
         return {

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Db, Tx } from '../db/db.service';
-import { CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, UPI_PART, n, supplierJvs } from './sql';
+import { BOUGHT, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, UPI_PART, n, supplierJvs } from './sql';
 
 /**
  * Tally's reports for one shop, read off the books the terminals sync. Each one ports the
@@ -154,7 +154,7 @@ export class ReportsService {
        FROM trucks t
        LEFT JOIN (SELECT gr.truck_id, SUM(gr.received_qty) received, SUM(gr.billed_qty) billed, SUM(gr.billed_qty::bigint * gr.rate_paise) goods,
                          string_agg(DISTINCT br.name, ', ') brands
-                  FROM truck_grades gr LEFT JOIN brands br ON br.id = gr.brand_id GROUP BY gr.truck_id) g ON g.truck_id = t.id
+                  FROM truck_grades gr LEFT JOIN brands br ON br.id = gr.brand_id WHERE ${BOUGHT('gr')} GROUP BY gr.truck_id) g ON g.truck_id = t.id
        LEFT JOIN (SELECT l.truck_id, SUM(l.qty) sold FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id GROUP BY l.truck_id) s ON s.truck_id = t.id
        LEFT JOIN (SELECT truck_id, SUM(CASE WHEN kind = 'correction' THEN 0 ELSE qty END) spoiled,
                          SUM(CASE WHEN kind = 'correction' THEN qty ELSE 0 END) corrected FROM spoilage GROUP BY truck_id) sp ON sp.truck_id = t.id
@@ -172,13 +172,13 @@ export class ReportsService {
        WHERE category = 'supplier' AND direction = 'out' AND hidden = false AND TRIM(party_name) <> ''
        ORDER BY business_date DESC, created_at DESC`)).rows;
     const jvs = await supplierJvs(tx);
-    // The supplier master's opening (Opening balance page): what the shop owed him on that day (− = he owes).
-    const openings = (await tx.query<{ name: string; paise: string; on: string | null; at: Date }>(
-      `SELECT TRIM(name) AS name, opening_paise AS paise, opening_on::text AS on, created_at AS at FROM supplier_phones WHERE opening_paise <> 0`)).rows
-      .map((o) => ({ name: o.name, paise: n(o.paise), date: o.on ?? '0001-01-01', at: o.on ? new Date(`${o.on}T00:00:00+05:30`) : o.at }));
+    // What the shop owed each supplier when it started on the books (Masters › Openings).
+    const openings = (await tx.query<{ name: string; paise: string; day: string | null; at: Date }>(
+      `SELECT name, opening_paise AS paise, opening_on::text AS day, created_at AS at FROM supplier_phones WHERE opening_paise <> 0`)).rows;
     const names = new Map<string, string>();
     for (const o of openings) if (!names.has(nameKey(o.name))) names.set(nameKey(o.name), o.name);
     for (const g of gaadis) if (!names.has(nameKey(g.supplier))) names.set(nameKey(g.supplier), g.supplier);
+    for (const o of openings) if (!names.has(nameKey(o.name))) names.set(nameKey(o.name), o.name);
     for (const p of payments) if (!names.has(nameKey(p.party))) names.set(nameKey(p.party), p.party);
     for (const j of jvs) if (!names.has(nameKey(j.name))) names.set(nameKey(j.name), j.name);
     return [...names].filter(([k]) => k).map(([key, name]) => ({
@@ -187,7 +187,8 @@ export class ReportsService {
       payments: payments.filter((p) => nameKey(p.party) === key).map((p) => ({ id: p.id, amountPaise: n(p.amount), mode: p.mode, note: p.note, date: p.day, at: p.at })),
       // + = he is debited (owed less, as a payment), − = credited (owed more).
       jvs: jvs.filter((j) => nameKey(j.name) === key),
-      opening: openings.find((o) => nameKey(o.name) === key) ?? null,
+      // + = the shop owed him; dated its opening day (none: before everything).
+      openings: openings.filter((o) => nameKey(o.name) === key).map((o) => ({ paise: n(o.paise), date: o.day ?? '0001-01-01', at: o.day ? new Date(`${o.day}T00:00:00+05:30`) : new Date(0) })),
     }));
   }
 
@@ -196,10 +197,10 @@ export class ReportsService {
       const purchase = s.gaadis.reduce((t, g) => t + g.purchasePaise, 0);
       const paid = s.payments.reduce((t, p) => t + p.amountPaise, 0);
       const jv = s.jvs.reduce((t, j) => t + j.amountPaise, 0);
-      const opening = s.opening?.paise ?? 0;
-      const a = age([...(opening > 0 ? [{ at: s.opening!.at, amount: opening }] : []), ...s.gaadis.map((g) => ({ at: g.arrivedAt, amount: g.purchasePaise })),
-        ...s.jvs.filter((j) => j.amountPaise < 0).map((j) => ({ at: j.at, amount: -j.amountPaise }))],
-        paid + Math.max(0, -opening) + s.jvs.filter((j) => j.amountPaise > 0).reduce((t, j) => t + j.amountPaise, 0), today);
+      const opening = s.openings.reduce((t, o) => t + o.paise, 0);
+      const a = age([...s.openings.filter((o) => o.paise > 0).map((o) => ({ at: o.at, amount: o.paise })),
+        ...s.gaadis.map((g) => ({ at: g.arrivedAt, amount: g.purchasePaise })), ...s.jvs.filter((j) => j.amountPaise < 0).map((j) => ({ at: j.at, amount: -j.amountPaise }))],
+        paid + s.jvs.filter((j) => j.amountPaise > 0).reduce((t, j) => t + j.amountPaise, 0) - s.openings.filter((o) => o.paise < 0).reduce((t, o) => t + o.paise, 0), today);
       const last = [...s.gaadis.map((g) => g.arrivedAt.getTime()), ...s.payments.map((p) => p.at.getTime())].sort().at(-1);
       return { key: s.key, name: s.name, gaadis: s.gaadis.length, openGaadis: s.gaadis.filter((g) => !g.closed).length,
         openingPaise: opening, purchasePaise: purchase, paidPaise: paid, jvPaise: jv, duePaise: opening + purchase - paid - jv, d0_7: a.d0_7, d8_30: a.d8_30, d31: a.d31,
@@ -215,10 +216,9 @@ export class ReportsService {
     return this.db.withShop(shopId, async (tx) => {
       const s = (await this.supplierBooks(tx)).find((x) => x.key === key);
       if (!s) throw new NotFoundException('Supplier nahi mila');
-      const o = s.opening;
       const rows = [
-        ...(o ? [{ id: `opening:${s.key}`, at: o.at.toISOString(), date: o.date === '0001-01-01' ? istDay(o.at) : o.date, kind: 'opening' as const, title: 'Opening balance', detail: '',
-          nags: 0, debitPaise: Math.max(0, -o.paise), creditPaise: Math.max(0, o.paise), open: false, sold: 0, left: 0 }] : []),
+        ...s.openings.map((o, i) => ({ id: `opening-${i}`, at: o.at.toISOString(), date: o.date, kind: 'opening' as const, title: 'Opening balance', detail: '',
+          nags: 0, debitPaise: Math.max(0, -o.paise), creditPaise: Math.max(0, o.paise), open: false, sold: 0, left: 0 })),
         ...s.gaadis.map((g) => ({ id: g.truckId, at: g.arrivedAt.toISOString(), date: istDay(g.arrivedAt), kind: 'gaadi' as const,
           title: `Gaadi ${g.number}`, detail: [g.brands, g.freightPaise ? `bhada ₹${Math.round(g.freightPaise / 100).toLocaleString('en-IN')}` : ''].filter(Boolean).join(' · '),
           nags: g.dana, debitPaise: 0, creditPaise: g.purchasePaise, open: !g.closed, sold: g.sold, left: Math.max(0, g.dana - g.sold - g.spoiled) })),
@@ -232,7 +232,7 @@ export class ReportsService {
       const history = rows.map((r) => ({ ...r, balancePaise: (bal += r.creditPaise - r.debitPaise) })).reverse();
       return {
         key: s.key, name: s.name,
-        totals: { openingPaise: o?.paise ?? 0, purchasePaise: s.gaadis.reduce((t, g) => t + g.purchasePaise, 0), paidPaise: s.payments.reduce((t, p) => t + p.amountPaise, 0),
+        totals: { openingPaise: s.openings.reduce((t, o) => t + o.paise, 0), purchasePaise: s.gaadis.reduce((t, g) => t + g.purchasePaise, 0), paidPaise: s.payments.reduce((t, p) => t + p.amountPaise, 0),
           duePaise: bal, gaadis: s.gaadis.length, dana: s.gaadis.reduce((t, g) => t + g.dana, 0) },
         history,
       };
@@ -245,7 +245,7 @@ export class ReportsService {
   /** [view] 'active': the open gaadis (Tally's stock summary); 'past': closed ones, newest first. */
   async stock(shopId: string, today: string, view: 'active' | 'past' = 'active') {
     return this.db.withShop(shopId, async (tx) => {
-      const rows = (await tx.query<{ id: string; number: string; supplier: string; arrived_at: Date; closed_at: Date | null; brands: string | null; recv: string; sold: string; spoiled: string; stored: string; cost: string; shelf: number | null }>(
+      const rows = (await tx.query<{ id: string; number: string; supplier: string; arrived_at: Date; closed_at: Date | null; brands: string | null; recv: string; sold: string; spoiled: string; stored: string; cost: string; bought: string; shelf: number | null }>(
         `SELECT t.id, t.number, t.supplier, t.arrived_at, t.closed_at,
                 (SELECT string_agg(DISTINCT br.name, ', ') FROM truck_grades g JOIN brands br ON br.id = g.brand_id WHERE g.truck_id = t.id) AS brands,
                 (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id)
@@ -253,8 +253,10 @@ export class ReportsService {
                 (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind NOT IN ('correction', 'store')) AS spoiled,
                 (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'store') - b.back AS stored,
-                (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id)
+                (SELECT COALESCE(SUM(billed_qty::bigint * rate_paise), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')})
                   + t.freight_paise + t.labour_paise + t.commission_paise AS cost,
+                (SELECT COALESCE(SUM(billed_qty + free_qty), 0) FROM truck_grades g WHERE g.truck_id = t.id AND ${BOUGHT('g')})
+                  - (SELECT COALESCE(SUM(qty), 0) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction') AS bought,
                 (SELECT MIN(br.shelf_days) FROM truck_grades g JOIN brands br ON br.id = g.brand_id WHERE g.truck_id = t.id) AS shelf
          FROM trucks t
          -- Boxes a cold store gave back (Store Out) are not more maal: off what came, off what is in store.
@@ -266,7 +268,7 @@ export class ReportsService {
         return { truckId: r.id, number: r.number, supplier: r.supplier, brands: r.brands ?? '', arrivedOn: istDay(r.arrived_at), ageDays,
           closedOn: r.closed_at ? istDay(r.closed_at) : null,
           stale: r.shelf !== null && ageDays >= r.shelf, received: recv, sold: n(r.sold), spoiled: n(r.spoiled), stored: n(r.stored), left,
-          valuePaise: recv > 0 ? Math.round((n(r.cost) * left) / recv) : 0 };
+          valuePaise: n(r.bought) > 0 ? Math.round((n(r.cost) * left) / n(r.bought)) : 0 };
       });
       return {
         totals: { left: rows.reduce((t, r) => t + r.left, 0), valuePaise: rows.reduce((t, r) => t + r.valuePaise, 0), gaadis: rows.length, stale: rows.filter((r) => r.stale && r.left > 0).length },
@@ -353,7 +355,7 @@ export class ReportsService {
               SUM(GREATEST(0, COALESCE(g.goods, 0) - CASE WHEN COALESCE(g.billed, 0) > 0 AND COALESCE(sp.corrected, 0) > 0
                     THEN ROUND(g.goods::numeric * sp.corrected / g.billed) ELSE 0 END) + t.freight_paise) AS paise
        FROM trucks t
-       LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades GROUP BY truck_id) g ON g.truck_id = t.id
+       LEFT JOIN (SELECT truck_id, SUM(billed_qty) billed, SUM(billed_qty::bigint * rate_paise) goods FROM truck_grades tg WHERE ${BOUGHT('tg')} GROUP BY truck_id) g ON g.truck_id = t.id
        LEFT JOIN (SELECT truck_id, SUM(qty) corrected FROM spoilage WHERE kind = 'correction' GROUP BY truck_id) sp ON sp.truck_id = t.id
        WHERE ${IST_DAY('t.arrived_at')} BETWEEN $1 AND $2 GROUP BY 1`, [from, to])).rows
       .map((r) => ({ day: r.day, paise: n(r.paise), gaadis: n(r.gaadis) }));

@@ -7,6 +7,7 @@ import { hashQuery, href, setHashQuery } from '../routes'
 import { useLoad } from '../useLoad'
 import { Bal, PeriodBar, Skeleton } from '../ui'
 import { amt, bal, customerLedgerDoc, dmy, dmyLong, fileName, openExport, rs, useExport, type ExportDoc, type KhataLine } from '../export/doc'
+import { FyButton } from './Books'
 
 type Party = { id: string; code: string; name: string; kind: string; area: string; phone: string; address: string; hidden: boolean; balancePaise: number }
 type Khata = {
@@ -126,6 +127,7 @@ export function LedgerMultiple({ shopId }: { shopId: string }) {
     <>
       <div className="toolbar">
         <PeriodBar value={period} onChange={setPeriod} />
+        <FyButton value={period} onChange={setPeriod} />
         <button type="button" className="btn primary" disabled={!picked.length || busy} onClick={() => void print()}>{busy ? '…' : `${t('Print')} (${count(picked.length)})`}</button>
         {picked.length > 0 && <button type="button" className="btn ghost sm" onClick={() => setSel(new Set())}>{t('Hatayein')}</button>}
       </div>
@@ -161,7 +163,8 @@ export function Chithi({ shopId }: { shopId: string }) {
   const total = due.reduce((s, p) => s + p.balancePaise, 0)
   useEffect(() => setDocs(null), [sel, on, last])
 
-  useExport(tab === 'chithi' && docs ? () => docs : list.data ? () => {
+  // Chithi: the letters once printed (nothing before — Export is not the schedule there).
+  useExport(tab === 'chithi' ? (docs ? () => docs : null) : list.data ? () => {
     // Without an area chosen, the schedule goes area by area, each with its own total.
     const byArea = !area && due.some((p) => p.area)
     const out: ExportDoc['rows'] = []

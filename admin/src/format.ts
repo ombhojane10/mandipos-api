@@ -3,8 +3,8 @@ import { t } from './i18n'
 const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 })
 const inr2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
-/** ₹1,23,456 — paise rounded to the rupee. */
-export const rupees = (paise: number) => `₹${inr.format(Math.round(paise / 100))}`
+/** ₹1,23,456 — paise rounded to the rupee; −₹500 when negative (never "₹-500"). */
+export const rupees = (paise: number) => { const r = Math.round(paise / 100); return `${r < 0 ? '−' : ''}₹${inr.format(Math.abs(r))}` }
 /** ₹25.50 — for rates, where paise matter. */
 export const rate = (paise: number) => `₹${inr2.format(paise / 100)}`
 export const count = (n: number) => inr.format(n)

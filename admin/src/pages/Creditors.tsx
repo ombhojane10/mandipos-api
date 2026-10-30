@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import { count, phone as fmtPhone, rupees, shortDate, todayIst } from '../format'
 import { t } from '../i18n'
-import { href } from '../routes'
+import { hashQuery, href, setHashQuery } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { Skeleton } from '../ui'
 import { fileName, rs, useExport } from '../export/doc'
@@ -43,7 +43,14 @@ function FyStep({ fy, onChange }: { fy: number; onChange: (y: number) => void })
 export function Creditors({ shopId }: { shopId: string }) {
   const [fy, setFy] = useState(fyNow)
   const [q, setQ] = useState('')
-  const [open, setOpen] = useState<string | null>(null)
+  // ?k= opens one supplier's khata straight away (the Trial Balance and Sale Purchase link here).
+  const [open, setOpenState] = useState<string | null>(() => hashQuery().get('k'))
+  const setOpen = (k: string | null) => {
+    setOpenState(k)
+    const q = Object.fromEntries(hashQuery())
+    delete q.k
+    setHashQuery(k ? { ...q, k } : q)
+  }
   const [edit, setEdit] = useState<Creditor | 'new' | null>(null)
   const { data, error, loading } = useLoad(() => api<Creditors>(`/v1/admin/shops/${shopId}/creditors?fy=${fy}`), [shopId, fy])
   const f = q.trim().toLowerCase()

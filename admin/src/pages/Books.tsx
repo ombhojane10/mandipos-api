@@ -23,12 +23,16 @@ const drcrRs = (p: number) => (p === 0 ? '0' : `${rs(Math.abs(p))} ${p > 0 ? 'Dr
 const fyStart = (day: string) => { const [y, m] = day.split('-').map(Number); return `${m >= 4 ? y : y - 1}-04-01` }
 /** "Pintu Gujarat" and "PINTU GUJARAT." are one supplier (the server's nameKey). */
 const nameKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+/** A column's total over a list. */
+const sum = <T,>(xs: T[], k: { [K in keyof T]: T[K] extends number ? K : never }[keyof T]) => xs.reduce((a, x) => a + (x[k] as number), 0)
 const has = (q: string, ...xs: (string | undefined | null)[]) => { const f = q.trim().toLowerCase(); return !f || xs.some((x) => (x ?? '').toLowerCase().includes(f)) }
 const dayBookOn = (shopId: string, day: string) => `${href({ page: 'report', shopId, report: 'daybook' })}?p=custom&from=${day}&to=${day}`
+/** A grapes supplier's khata in Supplier creditors. */
+const creditorHref = (shopId: string, key: string) => `${href({ page: 'report', shopId, report: 'creditors' })}?k=${encodeURIComponent(key)}`
 const ledgerHref = (shopId: string, key: string, from: string, to: string) => `${href({ page: 'report', shopId, report: 'gl' })}?a=${encodeURIComponent(key)}&p=custom&from=${from}&to=${to}`
 
 /** This financial year so far: the period most of these reports are read for. */
-function FyButton({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+export function FyButton({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
   const today = todayIst()
   const on = value.from === fyStart(today) && value.to === today
   return <button type="button" className="btn ghost sm" aria-pressed={on} onClick={() => onChange({ key: 'fy', from: fyStart(today), to: today })}>{t('Is saal')}</button>
@@ -46,6 +50,8 @@ const GROUP_NAMES: Record<string, string> = {
 }
 /** Accounts with an entry per slip: shown a line a day unless asked for every entry. */
 const BUSY = new Set(['sales', 'apmc', 'chungi', 'mazdoori', 'labour'])
+/** A ledger line's name: a day's total ("12 entry"), a Day Book head, or the entry's own title. */
+const lineTitle = (l: GLine) => (l.kind === 'day' && !l.title ? t('{n} entry', { n: count(l.count) }) : l.kind === 'daybook' ? (HEADS[l.title] ?? t(l.title)) : t(l.title))
 
 /** Any account — a Day Book head, cash, bank, bikri, kharid, APMC, mazdoori — over a period, entry by entry. */
 export function GeneralLedger({ shopId }: { shopId: string }) {
@@ -67,7 +73,7 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
     summary: [[t('Opening'), drcrRs(data.openingPaise)], ['Dr', rs(data.debitPaise)], ['Cr', rs(data.creditPaise)], [t('Closing'), drcrRs(data.closingPaise)]],
     columns: [{ label: t('Tarikh') }, { label: t('Vivaran'), wide: true }, { label: 'Dr', num: true }, { label: 'Cr', num: true }, { label: t('Baaki'), num: true }],
     rows: [{ cells: [dmy(data.from), t('Opening'), '', '', drcrRs(data.openingPaise)], bold: true },
-      ...lines.map((l) => ({ cells: [dmy(l.date), [l.title, l.detail].filter(Boolean).join(' · '), l.debitPaise ? rs(l.debitPaise) : '', l.creditPaise ? rs(l.creditPaise) : '', drcrRs(l.balancePaise)] }))],
+      ...lines.map((l) => ({ bold: l.kind === 'fy', cells: [dmy(l.date), [lineTitle(l), l.detail].filter(Boolean).join(' · '), l.debitPaise ? rs(l.debitPaise) : '', l.creditPaise ? rs(l.creditPaise) : '', drcrRs(l.balancePaise)] }))],
     foot: ['', t('Closing'), rs(data.debitPaise), rs(data.creditPaise), drcrRs(data.closingPaise)],
   }) : null, [data, q])
 
@@ -78,6 +84,7 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
     else if (l.kind === 'beejak' && l.ref2) setBeejak(l.ref2)
     else if (l.kind === 'gaadi' && l.detail) location.hash = href({ page: 'supplier', shopId, key: nameKey(l.detail) })
     else if (l.kind === 'daybook' || l.kind === 'day') location.hash = dayBookOn(shopId, l.date)
+    else if (l.kind === 'jv' || l.kind === 'cn') location.hash = `${href({ page: 'report', shopId, report: l.kind })}?p=custom&from=${l.date}&to=${l.date}`
   }
   const groups = useMemo(() => {
     const m = new Map<string, Account[]>()
@@ -119,10 +126,17 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
               <tbody>
                 <tr><td className="opt-col muted">{shortDate(data.from)}</td><td className="main-col"><b>{t('Opening')}</b><small className="show-sm">{shortDate(data.from)}</small></td><td className="num opt-col" /><td className="num opt-col" /><td className="num amt-col money b">{drcr(data.openingPaise)}</td></tr>
                 {lines.map((l) => (
+                  l.kind === 'fy' ? (
+                    <tr key={l.id}>
+                      <td className="opt-col muted">{shortDate(l.date)}</td>
+                      <td className="main-col"><b>{l.title}</b><small className="show-sm">{shortDate(l.date)}</small></td>
+                      <td className="num opt-col" /><td className="num opt-col" /><td className="num amt-col money b">{drcr(0)}</td>
+                    </tr>
+                  ) : (
                   <tr key={`${l.id}-${l.date}`} data-row tabIndex={0} onClick={() => open(l)} onKeyDown={(e) => { if (e.key === 'Enter') open(l) }}>
                     <td className="opt-col muted">{shortDate(l.date)}</td>
                     <td className="main-col">
-                      <b className="name">{l.kind === 'day' ? t('{n} entry', { n: count(l.count) }) : l.kind === 'daybook' ? (HEADS[l.title] ?? t(l.title)) : t(l.title)}</b>
+                      <b className="name">{lineTitle(l)}</b>
                       <small><span className="show-sm">{shortDate(l.date)} · </span>{l.detail}</small>
                     </td>
                     <td className="num opt-col money">{l.debitPaise ? rupees(l.debitPaise) : ''}</td>
@@ -132,6 +146,7 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
                       <span className="money">{drcr(l.balancePaise)}</span>
                     </td>
                   </tr>
+                  )
                 ))}
               </tbody>
               <tfoot><tr><td className="opt-col" /><td className="main-col">{t('Closing')}</td><td className="num opt-col money">{rupees(data.debitPaise)}</td><td className="num opt-col money">{rupees(data.creditPaise)}</td><td className="num amt-col money">{drcr(data.closingPaise)}</td></tr></tfoot>
@@ -169,7 +184,7 @@ export function TrialBalance({ shopId }: { shopId: string }) {
   const go = (r: TbRow) => {
     if (!r.link || !data) return
     if (r.link.kind === 'grahak') location.hash = href({ page: 'grahak', shopId, buyerId: r.link.id })
-    else if (r.link.kind === 'supplier') location.hash = data.grapes ? href({ page: 'report', shopId, report: 'creditors' }) : href({ page: 'supplier', shopId, key: r.link.id })
+    else if (r.link.kind === 'supplier') location.hash = data.grapes ? creditorHref(shopId, r.link.id) : href({ page: 'supplier', shopId, key: r.link.id })
     else location.hash = ledgerHref(shopId, r.link.id, data.fy.from, data.on)
   }
 
@@ -180,7 +195,8 @@ export function TrialBalance({ shopId }: { shopId: string }) {
       { cells: [t(g.name), g.dr ? rs(g.dr) : '', g.cr ? rs(g.cr) : ''], bold: true },
       ...(isOpen(g) ? g.shown.map((r) => ({ cells: [`    ${t(r.name)}${r.sub ? ` (${r.sub})` : ''}`, r.dr ? rs(r.dr) : '', r.cr ? rs(r.cr) : ''] })) : []),
     ]),
-    foot: [t('Kul'), rs(data.totals.dr), rs(data.totals.cr)],
+    // A search prints only some ledgers: no grand total under them.
+    foot: q.trim() ? undefined : [t('Kul'), rs(data.totals.dr), rs(data.totals.cr)],
   }) : null, [data, q, opened])
 
   return (
@@ -268,15 +284,19 @@ export function BigTransactions({ shopId }: { shopId: string }) {
   const rows = (data?.rows ?? []).filter(keep)
   const months = (data?.months ?? []).filter(keep)
   const label = (r: BigRow) => (r.type === 'daybook' ? dbTitle(r.title) : r.type === 'supplier' ? t('Supplier payment') : r.title)
+  const shown: (BigRow | BigMonth)[] = view === 'entries' ? rows : months
+  const tot = (k: 'amountPaise' | 'cashPaise' | 'upiPaise' | 'udhaarPaise') => shown.reduce((s, r) => s + r[k], 0)
 
   useExport(data ? () => ({
     style: 'book' as const, title: `${t('Bade len-den')} ≥ ${rs(minAsked)}`, dateLine: dayRange(period.from, period.to), file: fileName('Bade-len-den', period.from, period.to),
     ...(view === 'entries' ? {
       columns: [{ label: t('Tarikh') }, { label: t('Type') }, { label: t('Party'), wide: true }, { label: t('Vivaran') }, { label: t('Rakam'), num: true }, { label: 'Cash', num: true }, { label: 'UPI/Bank', num: true }, { label: t('Udhaar'), num: true }],
       rows: rows.map((r) => ({ bold: r.cashPaise >= CASH_LIMIT, cells: [dmy(r.date), t(TYPES[r.type]), r.party, label(r), rs(r.amountPaise), r.cashPaise ? rs(r.cashPaise) : '', r.upiPaise ? rs(r.upiPaise) : '', r.udhaarPaise ? rs(r.udhaarPaise) : ''] })),
+      foot: ['', '', t('Kul'), count(rows.length), rs(tot('amountPaise')), rs(tot('cashPaise')), rs(tot('upiPaise')), rs(tot('udhaarPaise'))],
     } : {
       columns: [{ label: t('Mahina') }, { label: t('Type') }, { label: t('Party'), wide: true }, { label: t('Entry'), num: true }, { label: t('Rakam'), num: true }, { label: 'Cash', num: true }, { label: 'UPI/Bank', num: true }, { label: t('Udhaar'), num: true }],
       rows: months.map((m) => ({ bold: m.cashPaise >= CASH_LIMIT, cells: [month(m.month), t(TYPES[m.type]), m.party, count(m.entries), rs(m.amountPaise), m.cashPaise ? rs(m.cashPaise) : '', m.upiPaise ? rs(m.upiPaise) : '', m.udhaarPaise ? rs(m.udhaarPaise) : ''] })),
+      foot: ['', '', t('Kul'), count(months.reduce((s, m) => s + m.entries, 0)), rs(tot('amountPaise')), rs(tot('cashPaise')), rs(tot('upiPaise')), rs(tot('udhaarPaise'))],
     }),
   }) : null, [data, view, type, mode, q])
 
@@ -316,17 +336,18 @@ export function BigTransactions({ shopId }: { shopId: string }) {
                     <td className="opt-col muted">{shortDate(r.date)}</td>
                     <td className="main-col"><b className="name">{r.party || '—'}</b><small><span className="show-sm">{shortDate(r.date)} · {t(TYPES[r.type])} · </span>{label(r)}</small></td>
                     <td className="opt-col"><span className="chip grey">{t(TYPES[r.type])}</span></td>
-                    <td className="num amt-col money b">{rupees(r.amountPaise)}<small className="show-sm inline">{r.cashPaise ? ` · cash ${rupees(r.cashPaise)}` : ''}</small></td>
+                    <td className="num amt-col money b">{rupees(r.amountPaise)}<small className="show-sm">{r.cashPaise ? `cash ${rupees(r.cashPaise)}` : ''}</small></td>
                     <td className={`num opt-col money${r.cashPaise >= CASH_LIMIT ? ' due b' : ''}`}>{r.cashPaise ? rupees(r.cashPaise) : ''}</td>
                     <td className="num opt-col money">{r.upiPaise ? rupees(r.upiPaise) : ''}</td>
                     <td className="num opt-col money">{r.udhaarPaise ? rupees(r.udhaarPaise) : ''}</td>
                   </tr>
                 ))}
               </tbody>
+              {rows.length > 1 && <BigFoot gap={1} tot={tot} />}
             </table>
           ) : (
             <table className="tbl fold">
-              <thead><tr><th className="opt-col">{t('Mahina')}</th><th>{t('Party')}</th><th className="opt-col">{t('Type')}</th><th className="num opt-col">{t('Entry')}</th><th className="num">{t('Rakam')}</th><th className="num opt-col">Cash</th><th className="num opt-col">UPI/Bank</th></tr></thead>
+              <thead><tr><th className="opt-col">{t('Mahina')}</th><th>{t('Party')}</th><th className="opt-col">{t('Type')}</th><th className="num opt-col">{t('Entry')}</th><th className="num">{t('Rakam')}</th><th className="num opt-col">Cash</th><th className="num opt-col">UPI/Bank</th><th className="num opt-col">{t('Udhaar')}</th></tr></thead>
               <tbody>
                 {months.map((m) => (
                   <tr key={`${m.type}-${m.partyId ?? m.party}-${m.month}`}>
@@ -337,15 +358,28 @@ export function BigTransactions({ shopId }: { shopId: string }) {
                     <td className="num amt-col money b">{rupees(m.amountPaise)}</td>
                     <td className={`num opt-col money${m.cashPaise >= CASH_LIMIT ? ' due b' : ''}`}>{m.cashPaise ? rupees(m.cashPaise) : ''}</td>
                     <td className="num opt-col money">{m.upiPaise ? rupees(m.upiPaise) : ''}</td>
+                    <td className="num opt-col money">{m.udhaarPaise ? rupees(m.udhaarPaise) : ''}</td>
                   </tr>
                 ))}
               </tbody>
+              {months.length > 1 && <BigFoot gap={2} tot={tot} />}
             </table>
           )}
           {(view === 'entries' ? rows : months).length === 0 && <p className="empty">{t('Kuch nahi mila')}</p>}
         </div>
       )}
     </>
+  )
+}
+
+/** Bade len-den's total row: date, "Kul" under the party, [gap] empty columns, then the amounts. */
+function BigFoot({ gap, tot }: { gap: number; tot: (k: 'amountPaise' | 'cashPaise' | 'upiPaise' | 'udhaarPaise') => number }) {
+  return (
+    <tfoot><tr>
+      <td className="opt-col" /><td className="main-col">{t('Kul')}</td>{Array.from({ length: gap }, (_, i) => <td key={i} className="opt-col" />)}
+      <td className="num amt-col money">{rupees(tot('amountPaise'))}</td><td className="num opt-col money">{rupees(tot('cashPaise'))}</td>
+      <td className="num opt-col money">{rupees(tot('upiPaise'))}</td><td className="num opt-col money">{rupees(tot('udhaarPaise'))}</td>
+    </tr></tfoot>
   )
 }
 
@@ -378,9 +412,11 @@ export function SalePurchase({ shopId }: { shopId: string }) {
   useExport(data ? () => {
     const base = { style: 'book' as const, title: t('Sale Purchase'), dateLine: dayRange(data.from, data.to), file: fileName('Sale-Purchase', data.from, data.to) }
     if (view === 'supplier') return { ...base, columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), num: true }, { label: t('Box aaye'), num: true }, { label: t('Kharid'), num: true }, ...(bj ? [{ label: t('Beejak'), num: true }] : []), { label: t('Bika'), num: true }, { label: t('Bikri'), num: true }],
-      rows: sups.map((s) => ({ cells: [s.name, count(s.gaadis), count(s.boxesIn), rs(s.kharidPaise), ...(bj ? [rs(s.beejakPaise)] : []), count(s.soldQty), rs(s.salesPaise)] })) }
+      rows: sups.map((s) => ({ cells: [s.name, count(s.gaadis), count(s.boxesIn), rs(s.kharidPaise), ...(bj ? [rs(s.beejakPaise)] : []), count(s.soldQty), rs(s.salesPaise)] })),
+      foot: [t('Kul'), count(sum(sups, 'gaadis')), count(sum(sups, 'boxesIn')), rs(sum(sups, 'kharidPaise')), ...(bj ? [rs(sum(sups, 'beejakPaise'))] : []), count(sum(sups, 'soldQty')), rs(sum(sups, 'salesPaise'))] }
     if (view === 'quality') return { ...base, columns: [{ label: t('Maal'), wide: true }, { label: t('Aaya'), num: true }, { label: t('Kharid'), num: true }, { label: t('Bika'), num: true }, { label: t('Bikri'), num: true }, { label: t('Bhav'), num: true }],
-      rows: quals.map((x) => ({ cells: [x.name, count(x.inQty), rs(x.inPaise), count(x.soldQty), rs(x.salesPaise), x.soldQty ? rs(Math.round(x.salesPaise / x.soldQty)) : ''] })) }
+      rows: quals.map((x) => ({ cells: [x.name, count(x.inQty), rs(x.inPaise), count(x.soldQty), rs(x.salesPaise), x.soldQty ? rs(Math.round(x.salesPaise / x.soldQty)) : ''] })),
+      foot: [t('Kul'), count(sum(quals, 'inQty')), rs(sum(quals, 'inPaise')), count(sum(quals, 'soldQty')), rs(sum(quals, 'salesPaise')), ''] }
     const tt = data.totals
     return { ...base,
       columns: [{ label: by === 'day' ? t('Tarikh') : t('Mahina') }, { label: t('Kharid'), num: true }, ...(bj ? [{ label: t('Beejak'), num: true }] : []), { label: t('Bikri'), num: true }, { label: t('Laagat'), num: true },
@@ -413,7 +449,7 @@ export function SalePurchase({ shopId }: { shopId: string }) {
             {bj && <div><span className="lb">{t('Beejak')}</span><span className="v">{rupees(data.totals.beejakPaise)}</span></div>}
             <div><span className="lb">{t('Bikri')}</span><span className="v">{rupees(data.totals.salesPaise)}</span></div>
             <div><span className="lb">{t('Kul munafa')}</span><span className="v">{rupees(data.totals.grossPaise)}</span></div>
-            <div><span className="lb">{t('Shuddh munafa')}</span><span className={`v${data.totals.netPaise < 0 ? ' due' : ''}`}>{data.totals.netPaise < 0 ? '−' : ''}{rupees(Math.abs(data.totals.netPaise))}</span></div>
+            <div><span className="lb">{t('Shuddh munafa')}</span><span className={`v${data.totals.netPaise < 0 ? ' due' : ''}`}>{rupees(data.totals.netPaise)}</span></div>
           </div>
           <div className={`card wrap-x${loading ? ' dim' : ''}`}>
             {view === 'summary' && (
@@ -423,7 +459,7 @@ export function SalePurchase({ shopId }: { shopId: string }) {
                 <tbody>
                   {data.rows.map((r) => (
                     <tr key={r.key} data-row tabIndex={0} onClick={() => drill(r)} onKeyDown={(e) => { if (e.key === 'Enter') drill(r) }}>
-                      <td className="main-col"><b>{keyLabel(r.key)}</b><small className="show-sm">{t('Kharid')} {rupees(r.kharidPaise)} · {t('Shuddh')} {rupees(r.netPaise)}</small></td>
+                      <td className="main-col"><b style={{ whiteSpace: 'nowrap' }}>{keyLabel(r.key)}</b><small className="show-sm">{t('Kharid')} {rupees(r.kharidPaise)} · {t('Shuddh')} {rupees(r.netPaise)}</small></td>
                       <td className="num opt-col money">{rupees(r.kharidPaise)}</td>
                       {bj && <td className="num opt-col money">{rupees(r.beejakPaise)}</td>}
                       <td className="num amt-col money b">{rupees(r.salesPaise)}</td>
@@ -431,10 +467,15 @@ export function SalePurchase({ shopId }: { shopId: string }) {
                       <td className="num opt-col money">{rupees(r.grossPaise)}</td>
                       <td className="num opt-col money">{rupees(r.kharchaPaise)}</td>
                       <td className="num opt-col money">{rupees(r.otherPaise)}</td>
-                      <td className={`num opt-col money b${r.netPaise < 0 ? ' due' : ''}`}>{r.netPaise < 0 ? '−' : ''}{rupees(Math.abs(r.netPaise))}</td>
+                      <td className={`num opt-col money b${r.netPaise < 0 ? ' due' : ''}`}>{rupees(r.netPaise)}</td>
                     </tr>
                   ))}
                 </tbody>
+                {data.rows.length > 1 && (
+                  <tfoot><tr><td className="main-col">{t('Kul')}</td><td className="num opt-col money">{rupees(data.totals.kharidPaise)}</td>{bj && <td className="num opt-col money">{rupees(data.totals.beejakPaise)}</td>}
+                    <td className="num amt-col money">{rupees(data.totals.salesPaise)}</td><td className="num opt-col money">{rupees(data.totals.laagatPaise)}</td><td className="num opt-col money">{rupees(data.totals.grossPaise)}</td>
+                    <td className="num opt-col money">{rupees(data.totals.kharchaPaise)}</td><td className="num opt-col money">{rupees(data.totals.otherPaise)}</td><td className="num opt-col money">{rupees(data.totals.netPaise)}</td></tr></tfoot>
+                )}
               </table>
             )}
             {view === 'supplier' && (
@@ -442,7 +483,7 @@ export function SalePurchase({ shopId }: { shopId: string }) {
                 <thead><tr><th>{t('Supplier')}</th><th className="num opt-col">{t('Gaadi')}</th><th className="num opt-col">{t('Box aaye')}</th><th className="num opt-col">{t('Kharid')}</th>{bj && <th className="num opt-col">{t('Beejak')}</th>}<th className="num opt-col">{t('Bika')}</th><th className="num">{t('Bikri')}</th></tr></thead>
                 <tbody>
                   {sups.map((s) => {
-                    const go = () => { if (data.grapes) location.hash = href({ page: 'report', shopId, report: 'creditors' }); else if (s.key) location.hash = href({ page: 'supplier', shopId, key: s.key }) }
+                    const go = () => { if (!s.key) return; location.hash = data.grapes ? creditorHref(shopId, s.key) : href({ page: 'supplier', shopId, key: s.key }) }
                     return (
                       <tr key={s.key || s.name} data-row tabIndex={0} onClick={go} onKeyDown={(e) => { if (e.key === 'Enter') go() }}>
                         <td className="main-col"><b>{s.name}</b><small className="show-sm">{t('{n} gaadi', { n: s.gaadis })} · {t('Kharid')} {rupees(s.kharidPaise)}</small></td>
@@ -503,6 +544,12 @@ export function Purcha({ shopId }: { shopId: string }) {
   const gaadis = (data?.gaadis ?? []).filter((g) => has(q, g.number, g.supplier, g.location, ...g.qualities.map((x) => x.name)))
   const sups = (data?.suppliers ?? []).filter((s) => has(q, s.name))
   const maal = (g: PurchaGaadi) => g.qualities.map((x) => `${x.name} ${count(x.boxes)}`).join(' · ')
+  // The total row adds up what is shown (a search narrows it).
+  const ft = (view === 'gaadi'
+    ? gaadis.map((g) => ({ gaadis: 1, boxes: g.boxes, kg: g.kg, kharidPaise: g.kharidPaise, freightPaise: g.freightPaise, beejakPaise: g.beejak?.netPaise ?? 0, pending: g.beejak ? 0 : 1 }))
+    : sups).reduce((a, x) => ({ gaadis: a.gaadis + x.gaadis, boxes: a.boxes + x.boxes, kg: a.kg + x.kg, kharidPaise: a.kharidPaise + x.kharidPaise,
+      freightPaise: a.freightPaise + x.freightPaise, beejakPaise: a.beejakPaise + x.beejakPaise, pending: a.pending + x.pending }),
+    { gaadis: 0, boxes: 0, kg: 0, kharidPaise: 0, freightPaise: 0, beejakPaise: 0, pending: 0 })
   const open = (g: PurchaGaadi) => { if (grapes) setBeejak(g.truckId); else if (g.supplierKey) location.hash = href({ page: 'supplier', shopId, key: g.supplierKey }) }
 
   useExport(data ? () => ({
@@ -510,11 +557,11 @@ export function Purcha({ shopId }: { shopId: string }) {
     ...(view === 'gaadi' ? {
       columns: [{ label: t('Tarikh') }, { label: t('Gaadi') }, { label: t('Supplier') }, { label: t('Maal'), wide: true }, { label: t('Box'), num: true }, { label: 'Kg', num: true }, { label: t('Kharid'), num: true }, { label: t('Bhada'), num: true }, { label: t('Beejak'), num: true }],
       rows: gaadis.map((g) => ({ cells: [dmy(g.date), g.number, g.supplier, maal(g), count(g.boxes), g.kg ? count(Math.round(g.kg)) : '', rs(g.kharidPaise), g.freightPaise ? rs(g.freightPaise) : '', g.beejak ? `#${g.beejak.no} ${rs(g.beejak.netPaise)}` : t('Baaki')] })),
-      foot: ['', '', '', t('Kul'), count(data.totals.boxes), count(Math.round(data.totals.kg)), rs(data.totals.kharidPaise), rs(data.totals.freightPaise), rs(data.totals.beejakPaise)],
+      foot: ['', '', '', t('Kul'), count(ft.boxes), count(Math.round(ft.kg)), rs(ft.kharidPaise), rs(ft.freightPaise), rs(ft.beejakPaise)],
     } : {
       columns: [{ label: t('Supplier'), wide: true }, { label: t('Gaadi'), num: true }, { label: t('Box'), num: true }, { label: 'Kg', num: true }, { label: t('Kharid'), num: true }, { label: t('Bhada'), num: true }, { label: t('Beejak'), num: true }, { label: t('Beejak baaki'), num: true }],
       rows: sups.map((s) => ({ cells: [s.name, count(s.gaadis), count(s.boxes), s.kg ? count(Math.round(s.kg)) : '', rs(s.kharidPaise), rs(s.freightPaise), rs(s.beejakPaise), s.pending ? count(s.pending) : ''] })),
-      foot: [t('Kul'), count(data.totals.gaadis), count(data.totals.boxes), count(Math.round(data.totals.kg)), rs(data.totals.kharidPaise), rs(data.totals.freightPaise), rs(data.totals.beejakPaise), count(data.totals.pending)],
+      foot: [t('Kul'), count(ft.gaadis), count(ft.boxes), count(Math.round(ft.kg)), rs(ft.kharidPaise), rs(ft.freightPaise), rs(ft.beejakPaise), count(ft.pending)],
     }),
   }) : null, [data, view, q])
 
@@ -555,6 +602,10 @@ export function Purcha({ shopId }: { shopId: string }) {
                     </tr>
                   ))}
                 </tbody>
+                {gaadis.length > 1 && (
+                  <tfoot><tr><td className="opt-col" /><td className="main-col">{t('Kul')}</td><td className="opt-col">{kgText(ft.kg)}</td><td className="num opt-col">{count(ft.boxes)}</td>
+                    <td className="num opt-col money">{rupees(ft.kharidPaise)}</td><td className="num opt-col money">{rupees(ft.freightPaise)}</td><td className="num amt-col money">{rupees(ft.beejakPaise)}</td></tr></tfoot>
+                )}
               </table>
             ) : (
               <table className="tbl fold">
@@ -569,6 +620,11 @@ export function Purcha({ shopId }: { shopId: string }) {
                     </tr>
                   ))}
                 </tbody>
+                {sups.length > 1 && (
+                  <tfoot><tr><td className="main-col">{t('Kul')}</td><td className="num opt-col">{count(ft.gaadis)}</td><td className="num opt-col">{count(ft.boxes)}</td>
+                    <td className="num opt-col">{count(Math.round(ft.kg))}</td><td className="num opt-col money">{rupees(ft.kharidPaise)}</td>
+                    <td className="num opt-col money">{rupees(ft.freightPaise)}</td><td className="num amt-col money">{rupees(ft.beejakPaise)}</td></tr></tfoot>
+                )}
               </table>
             )}
             {(view === 'gaadi' ? gaadis : sups).length === 0 && <p className="empty">{t('Is period mein koi gaadi nahi')}</p>}

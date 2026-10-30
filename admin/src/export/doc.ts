@@ -98,7 +98,7 @@ export function exportWhenReady(auto: AutoSave, ms = 12_000) {
 
 /** A safe file name: letters, digits and dashes. */
 export const fileName = (...parts: (string | undefined)[]) =>
-  parts.filter(Boolean).join(' ').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'report'
+  parts.filter(Boolean).join(' ').replace(/[^\p{L}\p{M}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'report'
 
 // ---------------------------------------------------------------- the print's own number and date forms
 

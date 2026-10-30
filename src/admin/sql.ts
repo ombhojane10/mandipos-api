@@ -18,6 +18,12 @@ export const BALANCES = `
  */
 export const STORE_BACK = (truck: string, brand: string) =>
   `(SELECT COALESCE(SUM(x.qty), 0) FROM store_sync x WHERE x.truck_id = ${truck} AND x.brand_id IS NOT DISTINCT FROM ${brand} AND x.kind = 'lot')`;
+/**
+ * A truck_grades row [g] that came with the gaadi, not one a cold store put back. Those carry the
+ * gaadi's bhav for the app's stock but were bought once already: what a gaadi cost (kharid,
+ * supplier dues, laagat per box) leaves them out.
+ */
+export const BOUGHT = (g: string) => `NOT EXISTS (SELECT 1 FROM store_sync x WHERE x.id = ${g}.id AND x.kind = 'lot')`;
 
 export const IST_DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kolkata')::date`;
 

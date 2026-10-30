@@ -1240,7 +1240,7 @@ export class AdminController {
   async backup(@See() v: Viewer, @Param('id') id: string, @Res() res: Response) {
     const shopId = mine(v, id);
     const shop = await this.admin.shop(shopId);
-    const file = `${shop.name.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'shop'}-backup-${todayIst()}.xlsx`;
+    const file = `${shop.name.replace(/[^\p{L}\p{M}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'shop'}-backup-${todayIst()}.xlsx`;
     res.status(200).set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${file.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(file)}`,
