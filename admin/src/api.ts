@@ -79,7 +79,7 @@ export async function apiStream(path: string, body: unknown, signal?: AbortSigna
 export type ShopStatus = 'pending' | 'approved' | 'rejected'
 
 export type Shop = {
-  id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string; nickname?: string
+  id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string; nickname?: string; ownerPhones?: string[]
   status: ShopStatus; createdAt: string; approvedAt: string | null; rejectReason: string
   owner: { name: string; phone: string }; members: number; devices: number; lastSeenAt: string | null
   todaySalesPaise: number

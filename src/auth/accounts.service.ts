@@ -214,9 +214,11 @@ export class AccountsService {
       await tx.query(`INSERT INTO users (id, phone, name) VALUES ($1, $2, $3) ON CONFLICT (phone) DO NOTHING`, [uuidv7(), phone, name]);
       const user = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM users WHERE phone = $1`, [phone])).rows[0];
       if (name && !user.name) await tx.query(`UPDATE users SET name = $2 WHERE id = $1`, [user.id, name]);
-      const other = (await tx.query<{ shop_id: string }>(`SELECT shop_id FROM shop_members WHERE user_id = $1`, [user.id])).rows[0];
-      if (other && other.shop_id === p.shopId) throw new ConflictException('Yeh number pehle se team mein hai');
-      if (other) throw new ConflictException('Yeh number doosri dukaan mein hai');
+      // A number may work at several shops (one owner's branches); the owner says which. Its phone
+      // opens the first and switches between them from Meri dukaanein.
+      if ((await tx.query(`SELECT 1 FROM shop_members WHERE user_id = $1 AND shop_id = $2`, [user.id, p.shopId])).rowCount) {
+        throw new ConflictException('Yeh number pehle se team mein hai');
+      }
       await tx.query(`INSERT INTO shop_members (shop_id, user_id, role) VALUES ($1, $2, $3)`, [p.shopId, user.id, toDb(role)]);
     });
   }

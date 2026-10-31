@@ -101,6 +101,10 @@ const NewShopBody = z.object({
   people: z.array(Person).min(1).max(30),
 });
 const LabelBody = z.object({ nickname: z.string().trim().max(60) });
+const BranchTeamBody = z.object({
+  phone, name: z.string().trim().max(80).default(''),
+  roles: z.record(z.uuid(), ConsoleRole.nullable()).refine((r) => Object.keys(r).length > 0, 'koi branch chunein'),
+});
 const MemberEditBody = z.object({ role: ConsoleRole, name: z.string().trim().max(80) }).partial();
 const PotQuery = Range.extend({ pot: z.enum(['galla', 'office', 'bank']).default('galla') });
 const SupplierKey = z.string().min(1).max(120);
@@ -887,6 +891,23 @@ export class AdminController {
   async consoleRemoveMember(@See() v: Viewer, @Param('id') id: string, @Param('userId') userId: string) {
     adminOnly(v);
     await this.adminConsole.removeMember(parse(Id, id), parse(Id, userId));
+  }
+
+  // ---------------------------------------------------------------- staff across an owner's branches
+
+  /** The shop's branches (shops sharing an owner) and who works at which. */
+  @Get('shops/:id/branch-team')
+  branchTeam(@See() v: Viewer, @Param('id') id: string) {
+    return this.adminConsole.branchTeam(mine(v, id));
+  }
+
+  /** The owner puts a number on one branch, several, or takes it off: { phone, name, roles: { shopId: role | null } }. */
+  @Post('shops/:id/branch-team')
+  @HttpCode(200)
+  setBranchTeam(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    const b = parse(BranchTeamBody, body);
+    const owned = new Set(v.shopIds.filter((s) => !v.labourShopIds.includes(s)));
+    return this.adminConsole.setBranches(mine(v, id), b.phone, b.name, b.roles, (s) => v.admin || owned.has(s));
   }
 
   @Post('shops/:id/approve')

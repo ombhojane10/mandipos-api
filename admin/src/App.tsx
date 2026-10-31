@@ -124,6 +124,28 @@ export const reportGroups = (commodity?: string) => (commodity === 'angoor' ? [R
 
 const LAST_SHOP = 'mandipos-shop'
 
+/**
+ * One owner's branches side by side at the top of every page (DEVIC FRUIT CO. Delhi | Jaipur):
+ * a tap shows the same report for the other branch. An owner's own shops; for a MandiPlus admin,
+ * the shops that share an owner with this one.
+ */
+function BranchBar({ shopId, shops, admin, report }: { shopId: string; shops: Shop[]; admin: boolean; report: Report }) {
+  const here = shops.find((s) => s.id === shopId)
+  if (!here) return null
+  const owners = new Set(here.ownerPhones ?? [])
+  const group = admin ? shops.filter((s) => s.id === shopId || (s.ownerPhones ?? []).some((p) => owners.has(p))) : shops
+  if (group.length < 2) return null
+  return (
+    <nav className="branch-bar" aria-label={t('Branch')}>
+      {group.map((s) => (
+        <a key={s.id} href={href({ page: 'report', shopId: s.id, report }) + periodQuery()} aria-current={s.id === shopId ? 'page' : undefined} title={[s.name, s.mandi].filter(Boolean).join(' · ')}>
+          {s.nickname || s.name}
+        </a>
+      ))}
+    </nav>
+  )
+}
+
 /** A shop in the picker: its name, plus the branch (console nickname, else the mandi) when two shops share a name. */
 const shopLabel = (s: Shop, all: Shop[]) => {
   const twin = all.some((x) => x.id !== s.id && x.name.replace(/\W/g, '').toLowerCase() === s.name.replace(/\W/g, '').toLowerCase())
@@ -362,6 +384,7 @@ export default function App() {
         {shopId && <KeyPanel canExport={canExport} onGoto={() => setGoto(true)} onSettings={() => { location.hash = href({ page: 'report', shopId, report: 'settings' }) }} />}
 
         <main className={`main${current === 'bolo' ? ' main-bolo' : ''}`}>
+          {routeShop && <BranchBar shopId={routeShop} shops={open} admin={!!me?.admin} report={route.page === 'report' ? route.report : 'dashboard'} />}
           {route.page === 'report' && <ReportPage shopId={route.shopId} report={route.report} />}
           {route.page === 'grahak' && <GrahakKhata key={route.buyerId} shopId={route.shopId} buyerId={route.buyerId} />}
           {route.page === 'supplier' && <SupplierKhata key={route.key} shopId={route.shopId} supplierKey={route.key} />}

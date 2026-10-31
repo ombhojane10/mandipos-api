@@ -3859,8 +3859,8 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     const listed = (await http().get('/v1/admin/shops').set(a).expect(200)).body.shops.find((x: any) => x.id === id);
     expect(listed).toMatchObject({ status: 'approved', nickname: 'CF Azadpur', owner: { phone: '9845900001' } });
 
-    // Staff belong to one shop; an owner may run another.
-    await http().post('/v1/admin/console/shops').set(a).send({ name: 'Other', people: [{ phone: '9845900004', role: 'admin' }, { phone: '9845900002', role: 'accountant' }] }).expect(409);
+    // A number may work at several shops (staff too); never twice on one team.
+    await http().post('/v1/admin/console/shops').set(a).send({ name: 'Other', people: [{ phone: '9845900004', role: 'admin' }, { phone: '9845900002', role: 'accountant' }] }).expect(201);
     await http().post('/v1/admin/console/shops').set(a).send({ name: 'Second Phad', people: [{ phone: '9845900001', role: 'admin' }] }).expect(201);
     await http().post(`/v1/admin/console/shops/${id}/members`).set(a).send({ phone: '9845900002', role: 'accountant' }).expect(409);
 
@@ -3872,7 +3872,7 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     await http().delete(`/v1/admin/console/shops/${id}/members/${owner1.userId}`).set(a).expect(400);
     await http().delete(`/v1/admin/console/shops/${id}/members/${munim.userId}`).set(a).expect(204);
     expect((await team()).map((m) => [m.name, m.role])).toEqual([['Sanju', 'admin'], ['Raju', 'accountant']]);
-    expect((await login('9845900002')).me.shop).toBeNull();
+    expect((await login('9845900002')).me.shop).toMatchObject({ name: 'Other' });
 
     // Slip and shop settings set here are what the terminals read.
     await http().post(`/v1/admin/shops/${id}/settings`).set(a)
@@ -3897,5 +3897,42 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     // Maal ₹14,000 + APMC 1% ₹140 + mazdoori 15 × ₹10.
     expect(row.charges).toEqual({ label: 'APMC + Mazdoori', paise: 14000 + 15000 });
     expect(row.debitPaise).toBe(1400000 + 29000);
+  });
+
+  it('lets an owner put staff on one branch or several; their phone switches between them; nobody else’s branch', async () => {
+    await http().post('/v1/admin/auth/otp').send({ phone: '9876500077' }).expect(204);
+    const a = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9876500077', code: OtpService.issuedForTests.get('9876500077') }).expect(200)).body.token);
+    const shop = async (body: object) => (await http().post('/v1/admin/console/shops').set(a).send(body).expect(201)).body.id as string;
+    const d = await shop({ name: 'Branch Co', nickname: 'Delhi', people: [{ phone: '9845910001', role: 'admin' }] });
+    const j = await shop({ name: 'Branch Co', nickname: 'Jaipur', people: [{ phone: '9845910001', role: 'admin' }, { phone: '9845910009', role: 'admin' }] });
+    const x = await shop({ name: 'Unrelated', people: [{ phone: '9845910099', role: 'admin' }] });
+    await http().post('/v1/admin/auth/otp').send({ phone: '9845910001' }).expect(204);
+    const w = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9845910001', code: OtpService.issuedForTests.get('9845910001') }).expect(200)).body.token);
+
+    // The branches are the shops sharing an owner; the website lists the owner's two with their owners.
+    expect((await http().get(`/v1/admin/shops/${d}/branch-team`).set(w).expect(200)).body.branches.map((b: any) => b.id)).toEqual([d, j]);
+    const listed = (await http().get('/v1/admin/shops').set(w).expect(200)).body.shops;
+    expect(listed.map((s: any) => [s.nickname, s.ownerPhones.includes('9845910001')])).toEqual(expect.arrayContaining([['Delhi', true], ['Jaipur', true]]));
+
+    // A munim on both branches: the first login opens one, the phone switches to the other.
+    const both = (await http().post(`/v1/admin/shops/${d}/branch-team`).set(w).send({ phone: '9845910002', name: 'Munim Ji', roles: { [d]: 'accountant', [j]: 'accountant' } }).expect(200)).body;
+    expect(both.people.find((p: any) => p.phone === '9845910002')).toMatchObject({ name: 'Munim Ji', roles: { [d]: 'accountant', [j]: 'accountant' } });
+    const m = await login('9845910002');
+    expect(m.me.shop.id).toBe(d);
+    expect(m.me.shops.map((s: any) => s.id).sort()).toEqual([d, j].sort());
+    const there = (await http().post('/v1/shops/switch').set(auth(m.accessToken)).send({ shopId: j }).expect(200)).body;
+    expect(there.me.shop.id).toBe(j);
+
+    // Off Jaipur: that phone is shut out of Jaipur at once; Delhi stays.
+    await http().post(`/v1/admin/shops/${d}/branch-team`).set(w).send({ phone: '9845910002', roles: { [j]: null } }).expect(200);
+    await http().get('/v1/me').set(auth(there.accessToken)).expect(401);
+    expect((await login('9845910002')).me.shops.map((s: any) => s.id)).toEqual([d]);
+
+    // Not his to change: another owner's shop, or the last owner off a branch.
+    await http().post(`/v1/admin/shops/${d}/branch-team`).set(w).send({ phone: '9845910002', roles: { [x]: 'accountant' } }).expect(400);
+    await http().get(`/v1/admin/shops/${x}/branch-team`).set(w).expect(403);
+    await http().post(`/v1/admin/shops/${d}/branch-team`).set(w).send({ phone: '9845910001', roles: { [d]: null } }).expect(400);
+    // Jaipur has two owners: one may step down there.
+    await http().post(`/v1/admin/shops/${j}/branch-team`).set(w).send({ phone: '9845910009', roles: { [j]: 'accountant' } }).expect(200);
   });
 });

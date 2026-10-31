@@ -15,7 +15,7 @@ type KhataRow = { id: string; at: string; date: string; kind: 'slip' | 'payment'
 
 export type ShopRow = {
   id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string;
-  nickname: string;
+  nickname: string; ownerPhones: string[];
   status: 'pending' | 'approved' | 'rejected'; createdAt: string; approvedAt: string | null; rejectReason: string;
   owner: { name: string; phone: string }; members: number; devices: number; lastSeenAt: string | null;
   todaySalesPaise: number;
@@ -30,13 +30,14 @@ export class AdminService {
     const rows = await this.db.query<{
       id: string; name: string; mandi: string; shop_no: string; gstin: string; commodity: string; created_at: Date;
       approved_at: Date | null; rejected_at: Date | null; reject_reason: string; owner_name: string; owner_phone: string;
-      members: string; devices: string; last_seen_at: Date | null; nickname: string;
+      members: string; devices: string; last_seen_at: Date | null; nickname: string; owner_phones: string[] | null;
     }>(
       `SELECT s.id, s.name, s.nickname, s.mandi, s.shop_no, s.gstin, s.commodity, s.created_at, s.approved_at, s.rejected_at, s.reject_reason,
               u.name AS owner_name, u.phone AS owner_phone,
               (SELECT count(*) FROM shop_members m WHERE m.shop_id = s.id) AS members,
               (SELECT count(*) FROM devices d WHERE d.shop_id = s.id AND d.revoked_at IS NULL) AS devices,
-              (SELECT max(d.last_seen_at) FROM devices d WHERE d.shop_id = s.id) AS last_seen_at
+              (SELECT max(d.last_seen_at) FROM devices d WHERE d.shop_id = s.id) AS last_seen_at,
+              (SELECT array_agg(ou.phone) FROM shop_members om JOIN users ou ON ou.id = om.user_id WHERE om.shop_id = s.id AND om.role = 'owner') AS owner_phones
        FROM shops s JOIN users u ON u.id = s.created_by
        ORDER BY (s.approved_at IS NULL AND s.rejected_at IS NULL) DESC, s.created_at DESC`,
     );
@@ -49,7 +50,7 @@ export class AdminService {
           `SELECT COALESCE(SUM(total_paise), 0) AS s FROM ${LIVE_BILLS} lb WHERE business_date = ${IST_DAY('now()')}`)).rows[0].s))
         : 0;
       out.push({
-        id: r.id, name: r.name, mandi: r.mandi, shopNo: r.shop_no, gstin: r.gstin, commodity: r.commodity, nickname: r.nickname,
+        id: r.id, name: r.name, mandi: r.mandi, shopNo: r.shop_no, gstin: r.gstin, commodity: r.commodity, nickname: r.nickname, ownerPhones: r.owner_phones ?? [],
         status: approved ? 'approved' : r.rejected_at ? 'rejected' : 'pending',
         createdAt: r.created_at.toISOString(), approvedAt: r.approved_at?.toISOString() ?? null, rejectReason: r.reject_reason,
         owner: { name: r.owner_name, phone: r.owner_phone }, members: n(r.members), devices: n(r.devices),

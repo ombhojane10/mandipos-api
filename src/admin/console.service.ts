@@ -30,7 +30,7 @@ export class ConsoleService {
     if (new Set(phones).size !== phones.length) throw new BadRequestException('Ek number do baar likha hai');
     return this.db.tx(async (tx) => {
       const ids: string[] = [];
-      for (const p of s.people) ids.push(await this.user(tx, p.phone, p.name, p.role));
+      for (const p of s.people) ids.push(await this.user(tx, p.phone, p.name));
       const owner = ids[s.people.findIndex((p) => p.role === 'admin')];
       const shopId = uuidv7();
       await tx.query(
@@ -79,7 +79,7 @@ export class ConsoleService {
   async addMember(shopId: string, phone: string, name: string, role: ConsoleRole) {
     await this.db.tx(async (tx) => {
       await this.requireShop(tx, shopId);
-      const userId = await this.user(tx, phone, name, role, shopId);
+      const userId = await this.user(tx, phone, name, shopId);
       await tx.query(`INSERT INTO shop_members (shop_id, user_id, role) VALUES ($1, $2, $3)`, [shopId, userId, toDb(role)]);
     });
   }
@@ -91,8 +91,6 @@ export class ConsoleService {
       if (!m) throw new NotFoundException('Yeh team mein nahi hai');
       if (patch.role) {
         if (patch.role !== 'admin' && m.role === 'owner') await this.keepOneAdmin(tx, shopId);
-        // A number on two shops is only for an owner (Meri dukaanein); staff belong to one.
-        if (patch.role !== 'admin') await this.onlyHere(tx, userId, shopId);
         await tx.query(`UPDATE shop_members SET role = $3 WHERE shop_id = $1 AND user_id = $2`, [shopId, userId, toDb(patch.role)]);
       }
       if (patch.name !== undefined) await tx.query(`UPDATE users SET name = $2 WHERE id = $1`, [userId, patch.name]);
@@ -105,13 +103,79 @@ export class ConsoleService {
       const m = (await tx.query<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, userId])).rows[0];
       if (!m) throw new NotFoundException('Yeh team mein nahi hai');
       if (m.role === 'owner') await this.keepOneAdmin(tx, shopId);
-      await tx.query(`DELETE FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, userId]);
-      await tx.query(
-        `UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL AND device_id IN (SELECT id FROM devices WHERE user_id = $1 AND shop_id = $2)`,
-        [userId, shopId],
-      );
-      await tx.query(`UPDATE devices SET revoked_at = now() WHERE user_id = $1 AND shop_id = $2 AND revoked_at IS NULL`, [userId, shopId]);
+      await this.dropMember(tx, shopId, userId);
     });
+  }
+
+  /** Off the team, and every phone of theirs in this shop shut out at once. */
+  private async dropMember(tx: Tx, shopId: string, userId: string) {
+    await tx.query(`DELETE FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, userId]);
+    await tx.query(
+      `UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL AND device_id IN (SELECT id FROM devices WHERE user_id = $1 AND shop_id = $2)`,
+      [userId, shopId],
+    );
+    await tx.query(`UPDATE devices SET revoked_at = now() WHERE user_id = $1 AND shop_id = $2 AND revoked_at IS NULL`, [userId, shopId]);
+  }
+
+  /**
+   * A shop's branches: the approved shops that share an owner with it (Mohit's Delhi and Jaipur).
+   * Who works where across them is the owner's to set — one branch, several, or none.
+   */
+  async branches(shopId: string) {
+    return this.db.query<{ id: string; name: string; nickname: string; mandi: string }>(
+      `SELECT s.id, s.name, s.nickname, s.mandi FROM shops s
+       WHERE s.approved_at IS NOT NULL AND (s.id = $1 OR EXISTS (
+         SELECT 1 FROM shop_members a JOIN shop_members b ON b.user_id = a.user_id
+         WHERE a.shop_id = s.id AND a.role = 'owner' AND b.shop_id = $1 AND b.role = 'owner'))
+       ORDER BY s.created_at`, [shopId]);
+  }
+
+  /** Everyone on any of the branches, with their role at each. */
+  async branchTeam(shopId: string) {
+    const branches = await this.branches(shopId);
+    const rows = await this.db.query<{ user_id: string; phone: string; name: string; shop_id: string; role: string; last_seen_at: Date | null }>(
+      `SELECT m.user_id, u.phone, u.name, m.shop_id, m.role,
+              (SELECT max(d.last_seen_at) FROM devices d WHERE d.user_id = m.user_id AND d.shop_id = m.shop_id) AS last_seen_at
+       FROM shop_members m JOIN users u ON u.id = m.user_id WHERE m.shop_id = ANY($1::uuid[]) ORDER BY m.created_at`, [branches.map((b) => b.id)]);
+    const people = new Map<string, { userId: string; phone: string; name: string; roles: Record<string, ConsoleRole>; lastSeenAt: string | null }>();
+    for (const r of rows) {
+      const p = people.get(r.user_id) ?? { userId: r.user_id, phone: r.phone, name: r.name, roles: {}, lastSeenAt: null };
+      p.roles[r.shop_id] = fromDb(r.role);
+      const seen = r.last_seen_at?.toISOString() ?? null;
+      if (seen && (!p.lastSeenAt || seen > p.lastSeenAt)) p.lastSeenAt = seen;
+      people.set(r.user_id, p);
+    }
+    // Owners first, then by name.
+    const rank = (p: { roles: Record<string, ConsoleRole> }) => (Object.values(p.roles).includes('admin') ? 0 : 1);
+    return { branches, people: [...people.values()].sort((a, b) => rank(a) - rank(b) || (a.name || a.phone).localeCompare(b.name || b.phone)) };
+  }
+
+  /**
+   * Sets one person's place at each branch named in [roles]: a role adds or changes them there,
+   * null takes them off (their phones in that branch are shut out at once). Branches not named
+   * are left as they are. [allowed] limits which branches this viewer may change.
+   */
+  async setBranches(shopId: string, phone: string, name: string, roles: Record<string, ConsoleRole | null>, allowed: (id: string) => boolean) {
+    const group = new Set((await this.branches(shopId)).map((b) => b.id));
+    for (const id of Object.keys(roles)) {
+      if (!group.has(id) || !allowed(id)) throw new BadRequestException('Yeh branch aapki nahi hai');
+    }
+    await this.db.tx(async (tx) => {
+      const userId = await this.user(tx, phone, name);
+      if (name) await tx.query(`UPDATE users SET name = $2 WHERE id = $1`, [userId, name]);
+      for (const [id, role] of Object.entries(roles)) {
+        const cur = (await tx.query<{ role: string }>(`SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [id, userId])).rows[0];
+        if (role && !cur) await tx.query(`INSERT INTO shop_members (shop_id, user_id, role) VALUES ($1, $2, $3)`, [id, userId, toDb(role)]);
+        else if (role && cur && cur.role !== toDb(role)) {
+          if (cur.role === 'owner') await this.keepOneAdmin(tx, id);
+          await tx.query(`UPDATE shop_members SET role = $3 WHERE shop_id = $1 AND user_id = $2`, [id, userId, toDb(role)]);
+        } else if (!role && cur) {
+          if (cur.role === 'owner') await this.keepOneAdmin(tx, id);
+          await this.dropMember(tx, id, userId);
+        }
+      }
+    });
+    return this.branchTeam(shopId);
   }
 
   /** The console's own name for the shop; everything else is in SettingsService. */
@@ -119,24 +183,15 @@ export class ConsoleService {
     await this.db.query(`UPDATE shops SET nickname = $2 WHERE id = $1`, [shopId, nickname]);
   }
 
-  /** The user row for a number, made if new; refused if staff would end up on two shops. */
-  private async user(tx: Tx, phone: string, name: string, role: ConsoleRole, shopId?: string): Promise<string> {
+  /** The user row for a number, made if new; refused if already on this shop's team. A number may be on several shops. */
+  private async user(tx: Tx, phone: string, name: string, shopId?: string): Promise<string> {
     await tx.query(`INSERT INTO users (id, phone, name) VALUES ($1, $2, $3) ON CONFLICT (phone) DO NOTHING`, [uuidv7(), phone, name]);
     const u = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM users WHERE phone = $1`, [phone])).rows[0];
     if (name && !u.name) await tx.query(`UPDATE users SET name = $2 WHERE id = $1`, [u.id, name]);
-    const others = (await tx.query<{ shop_id: string; role: string; name: string }>(
-      `SELECT m.shop_id, m.role, s.name FROM shop_members m JOIN shops s ON s.id = m.shop_id WHERE m.user_id = $1`, [u.id])).rows;
-    if (shopId && others.some((o) => o.shop_id === shopId)) throw new ConflictException(`${phone} pehle se team mein hai`);
-    // An owner may run several shops (Meri dukaanein); staff, and anyone already staff elsewhere, only one.
-    const clash = others.find((o) => o.shop_id !== shopId && (role !== 'admin' || o.role !== 'owner'));
-    if (clash) throw new ConflictException(`${phone} pehle se ${clash.name} mein hai`);
+    if (shopId && (await tx.query(`SELECT 1 FROM shop_members WHERE user_id = $1 AND shop_id = $2`, [u.id, shopId])).rowCount) {
+      throw new ConflictException(`${phone} pehle se team mein hai`);
+    }
     return u.id;
-  }
-
-  private async onlyHere(tx: Tx, userId: string, shopId: string) {
-    const other = (await tx.query<{ name: string }>(
-      `SELECT s.name FROM shop_members m JOIN shops s ON s.id = m.shop_id WHERE m.user_id = $1 AND m.shop_id <> $2 LIMIT 1`, [userId, shopId])).rows[0];
-    if (other) throw new ConflictException(`Yeh number ${other.name} ka bhi malik hai — wahan se hatakar hi staff banega`);
   }
 
   private async requireShop(tx: Tx, shopId: string) {
