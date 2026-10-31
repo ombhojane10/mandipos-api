@@ -10,6 +10,7 @@ import { RemindersService } from './alerts/reminders.service';
 import { PickupNoticesService } from './alerts/pickup-notices.service';
 import { CreditorsService } from './admin/creditors.service';
 import { MachinesService } from './admin/machines.service';
+import { ConsoleService } from './admin/console.service';
 import { DepositsService } from './admin/deposits.service';
 import { MastersService } from './admin/masters.service';
 import { CratesService } from './admin/crates.service';
@@ -51,6 +52,6 @@ import { SheetService } from './voice/sheet.service';
 
 @Module({
   controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController],
-  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, CreditorsService, MachinesService, DepositsService, MastersService, CratesService, ColdStoreService, BooksService, VouchersService, InvoicesService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService],
+  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, CreditorsService, MachinesService, ConsoleService, DepositsService, MastersService, CratesService, ColdStoreService, BooksService, VouchersService, InvoicesService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService],
 })
 export class AppModule {}

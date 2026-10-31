@@ -22,6 +22,7 @@ import { Market, Person } from './pages/Market'
 import { Requests } from './pages/Requests'
 import { Deposits } from './pages/Deposits'
 import { Machines } from './pages/Machines'
+import { Console } from './pages/Console'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from './pages/Masters'
 import { Crates, StoreEntry } from './pages/CrateStore'
@@ -179,7 +180,9 @@ export default function App() {
 
   // An owner's home is their shop; an admin's is every shop.
   useEffect(() => {
-    if (route.page === 'home' && me && shops) location.replace(me.admin ? '#/shops' : shopId ? href({ page: 'report', shopId, report: 'dashboard' }) : '#/shops')
+    if (route.page === 'home' && me && shops) location.replace(me.admin ? '#/admin' : shopId ? href({ page: 'report', shopId, report: 'dashboard' }) : '#/shops')
+    // The admin console is MandiPlus's own: a shop owner who follows a link there goes home.
+    if (route.page === 'admin' && me && !me.admin) location.replace('#/')
   }, [route.page, me, shops, shopId])
 
   // Tally's keys, letter by letter: H D C O L P S I T open a report, N a new entry (F8 parchi,
@@ -187,6 +190,8 @@ export default function App() {
   // a level, ← → step the period, F2 changes it. Letters only count when no box is being typed in.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The admin console has no Tally keys: its letters are only for typing.
+      if (route.page === 'admin') return
       const el = document.activeElement as HTMLElement | null
       const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
       const mod = e.ctrlKey || e.metaKey || e.altKey
@@ -264,6 +269,14 @@ export default function App() {
   const current = route.page === 'report' ? route.report : null
   const title = titleOf(route)
 
+  if (route.page === 'admin' && me?.admin) {
+    return (
+      <SessionContext.Provider value={{ me, shops, reload }}>
+        <Console shopId={route.shopId ?? null} shops={shops} reload={reload} me={me.phone} onSignOut={signOut} />
+      </SessionContext.Provider>
+    )
+  }
+
   // A labour login gets the scanner alone, as in the app.
   if (me && !me.admin && shop && me.labourShopIds?.includes(shop.id)) return <LabourHome shop={shop} onSignOut={signOut} />
 
@@ -301,6 +314,7 @@ export default function App() {
             {me?.admin && (
               <>
                 <div className="grp">MandiPlus</div>
+                <a href="#/admin"><I.ISettings />{t('Admin console')}</a>
                 <a href="#/shops" aria-current={route.page === 'shops' ? 'page' : undefined}><I.IStore />{t('Sab Dukaan')}</a>
                 <a href="#/market" aria-current={route.page === 'market' || route.page === 'person' ? 'page' : undefined}><I.IPeople />{t('Market Grahak')}</a>
                 <a href="#/requests" aria-current={route.page === 'requests' ? 'page' : undefined}><I.IInbox />{t('Requests')}{pending > 0 && <span className="badge">{pending}</span>}</a>

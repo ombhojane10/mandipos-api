@@ -11,10 +11,11 @@ import { Db, Tx } from '../db/db.service';
 
 import { BALANCES, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, MOBILE, OPENING_NOTES, UPI_PART, day, n } from './sql';
 
-type KhataRow = { id: string; at: string; date: string; kind: 'slip' | 'payment' | 'udhaar'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[] };
+type KhataRow = { id: string; at: string; date: string; kind: 'slip' | 'payment' | 'udhaar'; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]; charges?: { label: string; paise: number } };
 
 export type ShopRow = {
   id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string;
+  nickname: string;
   status: 'pending' | 'approved' | 'rejected'; createdAt: string; approvedAt: string | null; rejectReason: string;
   owner: { name: string; phone: string }; members: number; devices: number; lastSeenAt: string | null;
   todaySalesPaise: number;
@@ -29,9 +30,9 @@ export class AdminService {
     const rows = await this.db.query<{
       id: string; name: string; mandi: string; shop_no: string; gstin: string; commodity: string; created_at: Date;
       approved_at: Date | null; rejected_at: Date | null; reject_reason: string; owner_name: string; owner_phone: string;
-      members: string; devices: string; last_seen_at: Date | null;
+      members: string; devices: string; last_seen_at: Date | null; nickname: string;
     }>(
-      `SELECT s.id, s.name, s.mandi, s.shop_no, s.gstin, s.commodity, s.created_at, s.approved_at, s.rejected_at, s.reject_reason,
+      `SELECT s.id, s.name, s.nickname, s.mandi, s.shop_no, s.gstin, s.commodity, s.created_at, s.approved_at, s.rejected_at, s.reject_reason,
               u.name AS owner_name, u.phone AS owner_phone,
               (SELECT count(*) FROM shop_members m WHERE m.shop_id = s.id) AS members,
               (SELECT count(*) FROM devices d WHERE d.shop_id = s.id AND d.revoked_at IS NULL) AS devices,
@@ -48,7 +49,7 @@ export class AdminService {
           `SELECT COALESCE(SUM(total_paise), 0) AS s FROM ${LIVE_BILLS} lb WHERE business_date = ${IST_DAY('now()')}`)).rows[0].s))
         : 0;
       out.push({
-        id: r.id, name: r.name, mandi: r.mandi, shopNo: r.shop_no, gstin: r.gstin, commodity: r.commodity,
+        id: r.id, name: r.name, mandi: r.mandi, shopNo: r.shop_no, gstin: r.gstin, commodity: r.commodity, nickname: r.nickname,
         status: approved ? 'approved' : r.rejected_at ? 'rejected' : 'pending',
         createdAt: r.created_at.toISOString(), approvedAt: r.approved_at?.toISOString() ?? null, rejectReason: r.reject_reason,
         owner: { name: r.owner_name, phone: r.owner_phone }, members: n(r.members), devices: n(r.devices),
@@ -232,8 +233,9 @@ export class AdminService {
    * Ledger Multiple and Chithi prints don't run four queries per grahak.
    */
   private async histories(tx: Tx, buyerIds: string[]) {
-    const bills = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string }>(
-      `SELECT id, buyer_id, created_at, business_date::text AS business_date, slip_no, number, pay_mode, total_paise, paid_paise, cash_paise, upi_paise, packing, staff_name
+    const bills = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string; labour_paise: string; chungi_paise: string; apmc_paise: string }>(
+      `SELECT id, buyer_id, created_at, business_date::text AS business_date, slip_no, number, pay_mode, total_paise, paid_paise, cash_paise, upi_paise, packing, staff_name,
+              labour_paise, chungi_paise, apmc_paise
        FROM ${LIVE_BILLS} lb WHERE buyer_id = ANY($1::uuid[])`, [buyerIds])).rows;
     const lines = (await tx.query<{ bill_id: string; brand: string | null; grade: string; qty: number; rate_paise: string; leak: boolean }>(
       `SELECT l.bill_id, br.name AS brand, l.grade, l.qty, l.rate_paise, l.leak FROM bill_lines l
@@ -262,7 +264,7 @@ export class AdminService {
         id: b.id, at: b.created_at.toISOString(), date: day(b.business_date), kind: 'slip',
         title: `Parchi ${b.slip_no ?? b.number}`,
         detail: paid > 0 ? (paid >= n(b.total_paise) ? `Nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}` : `Kuch nakad · ${mode(n(b.cash_paise), n(b.upi_paise))}`) : b.pay_mode === 'free' ? 'Free' : 'Udhaar',
-        nags: ls.reduce((s, l) => s + l.qty, 0), debitPaise: n(b.total_paise), creditPaise: paid, lines: ls,
+        nags: ls.reduce((s, l) => s + l.qty, 0), debitPaise: n(b.total_paise), creditPaise: paid, lines: ls, charges: chargesOf(b, ls),
       });
     }
     for (const c of cols) {
@@ -548,4 +550,16 @@ export class AdminService {
     if (!s) throw new NotFoundException('Dukaan nahi mili');
     if (!s.approved_at) throw new ConflictException('Yeh dukaan abhi approve nahi hui');
   }
+}
+
+/**
+ * What a slip's total carries over its maal (qty × bhav), named so the khata can show it as a line:
+ * coconut's mazdoori, amrud's chungi, angoor's APMC + labour. Null when the total is just the maal.
+ */
+function chargesOf(b: { total_paise: string; labour_paise: string; chungi_paise: string; apmc_paise: string }, ls: { qty: number; ratePaise: number }[]) {
+  const paise = n(b.total_paise) - ls.reduce((s, l) => s + l.qty * l.ratePaise, 0);
+  if (!paise) return undefined;
+  const apmc = n(b.apmc_paise), labour = n(b.labour_paise), chungi = n(b.chungi_paise) - apmc - labour;
+  const parts = [apmc > 0 && 'APMC', chungi > 0 && 'Chungi', labour > 0 && 'Mazdoori'].filter(Boolean);
+  return { label: paise < 0 ? 'Chhoot' : parts.join(' + ') || 'Kharcha', paise };
 }

@@ -16,6 +16,8 @@ export type ShopSettings = {
   address: string; bankAccounts: BankAccount[]; printerHost: string; printerDots: number;
   /** The old software's Company Master: website only, never on /v1/me. */
   licenceNo: string; companyCode: string; contactPerson: string; email: string;
+  /** Terminal settings the app's own screens set: APMC on grapes slips, each slip to WhatsApp, the munim lock's spare code, extra numbers printed on slips. */
+  apmcOn: boolean; slipWhatsapp: boolean; staffBackupCode: string; slipPhones: string[];
 };
 
 const COLUMNS: Record<Exclude<keyof ShopSettings, 'commodity'>, string> = {
@@ -24,6 +26,7 @@ const COLUMNS: Record<Exclude<keyof ShopSettings, 'commodity'>, string> = {
   udhaarRates: 'udhaar_rates', udhaarAlerts: 'udhaar_alerts', address: 'address', bankAccounts: 'bank_accounts',
   printerHost: 'printer_host', printerDots: 'printer_dots',
   licenceNo: 'licence_no', companyCode: 'company_code', contactPerson: 'contact_person', email: 'email',
+  apmcOn: 'apmc_on', slipWhatsapp: 'slip_whatsapp', staffBackupCode: 'staff_backup_code', slipPhones: 'slip_phones',
 };
 
 @Injectable()
@@ -36,14 +39,17 @@ export class SettingsService {
       slip_code: string | null; slip_limit_paise: string | null; udhaar_rates: boolean | null; udhaar_alerts: boolean | null; address: string | null;
       bank_accounts: BankAccount[] | null; printer_host: string | null; printer_dots: number | null;
       licence_no: string; company_code: string; contact_person: string; email: string;
+      apmc_on: boolean; slip_whatsapp: boolean; staff_backup_code: string; slip_phones: string[];
     }>(`SELECT name, mandi, shop_no, phad, gstin, commodity, phone, dispatch_phone, slip_code, slip_limit_paise, udhaar_rates, udhaar_alerts,
-               address, bank_accounts, printer_host, printer_dots, licence_no, company_code, contact_person, email FROM shops WHERE id = $1`, [shopId]))!;
+               address, bank_accounts, printer_host, printer_dots, licence_no, company_code, contact_person, email,
+               apmc_on, slip_whatsapp, staff_backup_code, slip_phones FROM shops WHERE id = $1`, [shopId]))!;
     return {
       name: r.name, mandi: r.mandi ?? '', shopNo: r.shop_no ?? '', phad: r.phad ?? '', gstin: r.gstin ?? '', commodity: r.commodity ?? 'nariyal',
       phone: r.phone ?? '', dispatchPhone: r.dispatch_phone ?? '', slipCode: r.slip_code ?? '', slipLimitPaise: Number(r.slip_limit_paise ?? 0),
       udhaarRates: r.udhaar_rates ?? false, udhaarAlerts: r.udhaar_alerts ?? false, address: r.address ?? '',
       bankAccounts: r.bank_accounts ?? [], printerHost: r.printer_host ?? '', printerDots: r.printer_dots ?? 576,
       licenceNo: r.licence_no ?? '', companyCode: r.company_code ?? '', contactPerson: r.contact_person ?? '', email: r.email ?? '',
+      apmcOn: r.apmc_on, slipWhatsapp: r.slip_whatsapp, staffBackupCode: r.staff_backup_code, slipPhones: r.slip_phones ?? [],
     };
   }
 

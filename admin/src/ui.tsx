@@ -143,10 +143,15 @@ function presetOf(key: string): Period {
   return { key: p.key, from: addDays(to, 1 - p.days), to }
 }
 
+export type KhataItem = { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }
+const ROMAN: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III' }
+
 export type LedgerRow = {
   id: string; at: string; date: string; title: string; detail: string; shop?: string; nags: number
   debitPaise: number; creditPaise: number; balancePaise: number; void?: boolean
-  lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
+  lines?: KhataItem[]
+  /** What the slip's total carries over its items: mazdoori, APMC, chungi (or a chhoot, below zero). */
+  charges?: { label: string; paise: number }
   /** A parchi's row opens its voucher on Enter; [shopId] when the khata spans shops. */
   kind?: string; shopId?: string
 }
@@ -164,67 +169,66 @@ const WORDS = {
 /** How a khata prints: LedgerPdf's CUSTOMER LEDGER head, the party block, the shop's bank accounts. */
 export type LedgerExport = { title: string; party: { code?: string; description: string; address?: string }; banks?: boolean; firm?: string }
 
-export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId, exportAs }: {
+export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId, exportAs, grades = true }: {
   rows: LedgerRow[]; withShop?: boolean; closingPaise: number; who?: 'grahak' | 'supplier'; shopId?: string; exportAs?: LedgerExport
+  /** Name each line's grade (coconut I/II/III); a grapes shop's lines are all one grade. */
+  grades?: boolean
 }) {
-  const [open, setOpen] = useState<Set<string>>(new Set())
-  const [all, setAll] = useState(false)
   const w = WORDS[who]
+  const itemName = (l: KhataItem) => [l.brand || t('Maal'), grades && l.grade ? t('Grade {g}', { g: ROMAN[l.grade] ?? l.grade }) : '', l.leak ? t('Leak') : ''].filter(Boolean).join(' · ')
   // Printed as the app's LedgerPdf: oldest first, opening balance, the running baaki, TOTAL.
   useExport(exportAs ? () => {
     const live = rows.filter((r) => !r.void)
     const opening = closingPaise - live.reduce((s, r) => s + r.debitPaise, 0) + live.reduce((s, r) => s + r.creditPaise, 0)
-    return customerLedgerDoc({ ...exportAs, from: rows.at(-1)?.date ?? todayIst(), to: todayIst(), openingPaise: opening, closingPaise, rows: [...rows].reverse(), who, withShop })
-  } : null, [rows, closingPaise, exportAs?.party.description])
-  const hasLines = rows.some((r) => r.lines?.length)
+    return customerLedgerDoc({ ...exportAs, from: rows.at(-1)?.date ?? todayIst(), to: todayIst(), openingPaise: opening, closingPaise, rows: [...rows].reverse(), who, withShop, itemName })
+  } : null, [rows, closingPaise, exportAs?.party.description, grades])
   const totals = rows.reduce((t, r) => ({ dr: t.dr + r.debitPaise, cr: t.cr + r.creditPaise }), { dr: 0, cr: 0 })
-  const cols = withShop ? 7 : 6
+  const cols = withShop ? 8 : 7
   let lastDay = ''
   return (
     <div className="card">
-      <div className="hd">
-        <h3>{t('Khata')}</h3>
-        {hasLines && <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-          <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> {t('Poori detail')}</label>}
-      </div>
+      <div className="hd"><h3>{t('Khata')}</h3></div>
       <div className="wrap-x">
-        <table className="tbl fold">
+        <table className="tbl fold ledger">
           <thead>
             <tr>
-              <th>{t('Tarikh')}</th><th>{t('Vivaran')}</th>{withShop && <th>{t('Dukaan')}</th>}<th className="num">{t('Nag')}</th>
+              <th>{t('Tarikh')}</th><th>{t('Vivaran')}</th>{withShop && <th>{t('Dukaan')}</th>}<th className="num">{t('Nag')}</th><th className="num">{t('Bhav')}</th>
               <th className="num">{w.dr}</th><th className="num">{w.cr}</th><th className="num">{t('Baaki')}</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td className="opt-col" /><td className="main-col"><b>{t('Abhi ka baaki')}</b></td>{withShop && <td className="opt-col" />}<td className="opt-col" />
+              <td className="opt-col" /><td className="main-col"><b>{t('Abhi ka baaki')}</b></td>{withShop && <td className="opt-col" />}<td className="opt-col" /><td className="opt-col" />
               <td className="num money opt-col">{rupees(totals.dr)}</td><td className="num money opt-col">{rupees(totals.cr)}</td>
               <td className="num amt-col"><Bal paise={closingPaise} who={who} /></td>
             </tr>
             {rows.map((r) => {
               const lines = r.lines ?? []
-              const isOpen = all || open.has(r.id)
-              const toggle = () => { if (!lines.length) return; const s = new Set(open); if (s.has(r.id)) s.delete(r.id); else s.add(r.id); setOpen(s) }
+              // One item: its nag and bhav sit on the slip's own row. More: one row per item under it.
+              const one = lines.length === 1 ? lines[0] : null
+              const extra = r.charges ? `${r.charges.paise < 0 ? '−' : '+'} ${t(r.charges.label)} ${rupees(Math.abs(r.charges.paise))}` : ''
               const header = r.date !== lastDay ? <tr className="day show-day"><td colSpan={cols}>{dayHeader(r.date)}</td></tr> : null
               lastDay = r.date
               const net = r.debitPaise - r.creditPaise
+              const sid = r.shopId ?? shopId
+              const open = () => { if (r.kind === 'slip' && sid) openVoucher(sid, r.id) }
               return (
                 <FragmentRows key={`${r.shop ?? ''}-${r.id}`}>
                   {header}
-                  <tr data-row tabIndex={0} className={r.void ? 'void' : undefined} onClick={toggle}
-                    onDoubleClick={() => { const sid = r.shopId ?? shopId; if (r.kind === 'slip' && sid) openVoucher(sid, r.id) }}
-                    onKeyDown={(e) => {
-                      const sid = r.shopId ?? shopId
-                      if (e.key === 'Enter' && r.kind === 'slip' && sid) { e.preventDefault(); openVoucher(sid, r.id) }
-                      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
-                    }}>
+                  <tr data-row tabIndex={0} className={r.void ? 'void' : undefined} onClick={open}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); open() } }}>
                     <td className="opt-col muted">{shortDate(r.date)}</td>
                     <td className="main-col">
                       <span className="name b">{r.title}</span>
-                      <small>{[withShop && r.shop, r.detail, r.nags ? t('{n} nag', { n: count(r.nags) }) : ''].filter(Boolean).join(' · ')}</small>
+                      <small>
+                        {[withShop && r.shop, one && itemName(one), r.detail, one && extra].filter(Boolean).join(' · ')}
+                        {/* Phones fold the Nag/Bhav columns away: the same figures, under the name. */}
+                        <span className="show-sm">{one ? `${count(one.qty)} × ${rate(one.ratePaise)}` : r.nags ? t('{n} nag', { n: count(r.nags) }) : ''}</span>
+                      </small>
                     </td>
                     {withShop && <td className="opt-col muted">{r.shop}</td>}
-                    <td className="num opt-col muted">{r.nags ? count(r.nags) : ''}</td>
+                    <td className="num opt-col">{r.nags ? count(r.nags) : ''}</td>
+                    <td className="num opt-col money">{one ? rate(one.ratePaise) : ''}</td>
                     <td className="num money opt-col">{r.debitPaise ? rupees(r.debitPaise) : ''}</td>
                     <td className="num money opt-col">{r.creditPaise ? rupees(r.creditPaise) : ''}</td>
                     <td className="num amt-col">
@@ -236,15 +240,16 @@ export function Ledger({ rows, withShop, closingPaise, who = 'grahak', shopId, e
                       <span className="money"><Bal paise={r.balancePaise} who={who} plain /></span>
                     </td>
                   </tr>
-                  {isOpen && lines.length > 0 && (
-                    <tr className="open-lines"><td colSpan={cols}>
+                  {!one && lines.length > 0 && (
+                    <tr className={`open-lines${r.void ? ' void' : ''}`}><td colSpan={cols}>
                       {lines.map((l, i) => (
-                        <div key={i} style={{ display: 'flex', gap: 16, padding: '2px 0' }}>
-                          <span style={{ flex: 1 }}>{l.brand || t('Maal')} · {t('Grade {g}', { g: l.grade })}{l.leak ? ` · ${t('Leak')}` : ''}</span>
+                        <div key={i} className="item">
+                          <span className="nm">{itemName(l)}</span>
                           <span className="money">{count(l.qty)} × {rate(l.ratePaise)}</span>
-                          <span className="money" style={{ minWidth: 90, textAlign: 'right' }}>{rupees(l.qty * l.ratePaise)}</span>
+                          <span className="money amt">{rupees(l.qty * l.ratePaise)}</span>
                         </div>
                       ))}
+                      {r.charges && <div className="item"><span className="nm">{t(r.charges.label)}</span><span /><span className="money amt">{r.charges.paise < 0 ? '−' : ''}{rupees(Math.abs(r.charges.paise))}</span></div>}
                     </td></tr>
                   )}
                 </FragmentRows>

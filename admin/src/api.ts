@@ -79,7 +79,7 @@ export async function apiStream(path: string, body: unknown, signal?: AbortSigna
 export type ShopStatus = 'pending' | 'approved' | 'rejected'
 
 export type Shop = {
-  id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string
+  id: string; name: string; mandi: string; shopNo: string; gstin: string; commodity: string; nickname?: string
   status: ShopStatus; createdAt: string; approvedAt: string | null; rejectReason: string
   owner: { name: string; phone: string }; members: number; devices: number; lastSeenAt: string | null
   todaySalesPaise: number
@@ -111,6 +111,7 @@ export type HistoryRow = {
   id: string; at: string; date: string; kind: 'slip' | 'payment' | 'udhaar'; title: string; detail: string
   nags: number; debitPaise: number; creditPaise: number; balancePaise: number
   lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
+  charges?: { label: string; paise: number }
 }
 
 export type BuyerDetail = {

@@ -130,7 +130,12 @@ export const balRs = (paise: number, who: 'grahak' | 'supplier' = 'grahak') =>
   paise === 0 ? 'Clear' : `${rs(Math.abs(paise))} ${who === 'grahak' ? (paise > 0 ? 'baaki' : 'jama') : (paise > 0 ? 'dena' : 'advance')}`
 
 /** A khata line as the CUSTOMER LEDGER prints it. */
-export type KhataLine = { date: string; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; balancePaise: number; void?: boolean; shop?: string }
+export type KhataLine = {
+  date: string; title: string; detail: string; nags: number; debitPaise: number; creditPaise: number; balancePaise: number; void?: boolean; shop?: string
+  lines?: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]; charges?: { label: string; paise: number }
+}
+type KhataItem = NonNullable<KhataLine['lines']>[number]
+const ITEM_GRADE: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III' }
 
 /**
  * The app's LedgerPdf for one party, oldest first: the opening balance, each line with its
@@ -139,7 +144,9 @@ export type KhataLine = { date: string; title: string; detail: string; nags: num
 export function customerLedgerDoc(o: {
   title: string; party: NonNullable<ExportDoc['party']>; banks?: boolean; firm?: string; from: string; to: string
   openingPaise: number; closingPaise: number; rows: KhataLine[]; who?: 'grahak' | 'supplier'; withShop?: boolean
+  itemName?: (l: KhataItem) => string
 }): ExportDoc {
+  const itemName = o.itemName ?? ((l: KhataItem) => [l.brand || 'Maal', l.grade ? `Grade ${ITEM_GRADE[l.grade] ?? l.grade}` : '', l.leak ? 'Leak' : ''].filter(Boolean).join(' · '))
   const live = o.rows.filter((r) => !r.void)
   const sum = (k: 'debitPaise' | 'creditPaise' | 'nags') => live.reduce((s, r) => s + r[k], 0)
   const [owe, ahead] = (o.who ?? 'grahak') === 'grahak' ? ['baaki', 'jama'] : ['dena', 'advance']
@@ -148,15 +155,24 @@ export function customerLedgerDoc(o: {
   return {
     style: 'ledger', title: o.title, party: o.party, banks: o.banks, firm: o.firm, from: o.from, to: o.to, file: fileName(o.title, o.party.description),
     columns: [{ label: 'Date' }, { label: 'Particulars', wide: true }, ...(o.withShop ? [{ label: 'Shop' }] : []),
-      { label: 'Qty', num: true }, { label: 'DEBIT', num: true }, { label: 'CREDIT', num: true }, { label: 'Balance', num: true }],
+      { label: 'Qty', num: true }, { label: 'Rate', num: true }, { label: 'DEBIT', num: true }, { label: 'CREDIT', num: true }, { label: 'Balance', num: true }],
     rows: [
-      { cells: [dmy(o.from), 'Opening Balance...', ...shop, '', opening > 0 ? amt(opening) : '', opening < 0 ? amt(-opening) : '', bal(opening, owe, ahead)] },
-      ...o.rows.map((r) => ({
-        strike: r.void,
-        cells: [dmy(r.date), [r.title, r.detail].filter(Boolean).join(' · '), ...(o.withShop ? [r.shop ?? ''] : []),
-          qty(r.nags), amt(r.debitPaise), amt(r.creditPaise), bal(r.balancePaise, owe, ahead)],
-      })),
+      { cells: [dmy(o.from), 'Opening Balance...', ...shop, '', '', opening > 0 ? amt(opening) : '', opening < 0 ? amt(-opening) : '', bal(opening, owe, ahead)] },
+      ...o.rows.flatMap((r) => {
+        // One item rides on the slip's line; several get a line each under it, then the charges.
+        const ls = r.lines ?? []
+        const one = ls.length === 1 ? ls[0] : null
+        const charge = r.charges ? `${r.charges.label} ${r.charges.paise < 0 ? '-' : '+'}${amt(Math.abs(r.charges.paise))}` : ''
+        const head = {
+          strike: r.void,
+          cells: [dmy(r.date), [r.title, one && itemName(one), r.detail, one && charge].filter(Boolean).join(' · '), ...(o.withShop ? [r.shop ?? ''] : []),
+            qty(r.nags), one ? amt(one.ratePaise) : '', amt(r.debitPaise), amt(r.creditPaise), bal(r.balancePaise, owe, ahead)],
+        }
+        if (one || !ls.length) return [head]
+        const items = ls.map((l) => ({ strike: r.void, cells: ['', `   ${itemName(l)} = ${amt(l.qty * l.ratePaise)}`, ...(o.withShop ? [''] : []), qty(l.qty), amt(l.ratePaise), '', '', ''] }))
+        return [head, ...items, ...(r.charges ? [{ strike: r.void, cells: ['', `   ${charge}`, ...(o.withShop ? [''] : []), '', '', '', '', ''] }] : [])]
+      }),
     ],
-    foot: ['', 'TOTAL...', ...shop, qty(sum('nags')), amt(sum('debitPaise') + Math.max(0, opening)), amt(sum('creditPaise') + Math.max(0, -opening)), bal(o.closingPaise, owe, ahead)],
+    foot: ['', 'TOTAL...', ...shop, qty(sum('nags')), '', amt(sum('debitPaise') + Math.max(0, opening)), amt(sum('creditPaise') + Math.max(0, -opening)), bal(o.closingPaise, owe, ahead)],
   }
 }

@@ -16,6 +16,7 @@ import { SettingsService } from './settings.service';
 import { BEEJAK_HEADS, InsightsService } from './insights.service';
 import { CreditorsService } from './creditors.service';
 import { MachinesService } from './machines.service';
+import { ConsoleService } from './console.service';
 import { DepositsService, NOTES } from './deposits.service';
 import { MastersService } from './masters.service';
 import { CratesService } from './crates.service';
@@ -88,6 +89,19 @@ const Range = z.object({ from: Day, to: Day });
 const Code = z.object({ phone, code: z.string().regex(/^\d{4,8}$/, 'must be the OTP digits') });
 const CustomerKey = z.union([z.string().regex(/^[6-9]\d{9}$/), z.string().regex(/^[0-9a-f-]{36}~[0-9a-f-]{36}$/)]);
 const RejectBody = z.object({ reason: z.string().trim().max(200).default('') });
+const ConsoleRole = z.enum(['admin', 'accountant', 'labour']);
+const Person = z.object({ phone, name: z.string().trim().max(80).default(''), role: ConsoleRole });
+const NewShopBody = z.object({
+  name: z.string().trim().min(1, 'Dukaan ka naam daalein').max(120), nickname: z.string().trim().max(60).default(''),
+  mandi: z.string().trim().max(80).default(''), shopNo: z.string().trim().max(20).default(''), phad: z.string().trim().max(40).default(''),
+  gstin: z.string().trim().toUpperCase().regex(/^([0-9]{2}[A-Z0-9]{13})?$/, 'GSTIN 15 akshar ka hota hai').default(''),
+  address: z.string().trim().max(200).default(''),
+  slipCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9&]{0,6}$/, 'Slip code 6 akshar tak').default(''),
+  commodity: z.enum(['nariyal', 'amrud', 'angoor']).default('nariyal'),
+  people: z.array(Person).min(1).max(30),
+});
+const LabelBody = z.object({ nickname: z.string().trim().max(60) });
+const MemberEditBody = z.object({ role: ConsoleRole, name: z.string().trim().max(80) }).partial();
 const PotQuery = Range.extend({ pot: z.enum(['galla', 'office', 'bank']).default('galla') });
 const SupplierKey = z.string().min(1).max(120);
 
@@ -125,6 +139,9 @@ const SettingsBody = z.object({
   printerDots: z.union([z.literal(384), z.literal(576), z.literal(832)]),
   licenceNo: z.string().trim().toUpperCase().max(40), companyCode: z.string().trim().toUpperCase().max(20),
   contactPerson: z.string().trim().max(80), email: z.string().trim().max(120),
+  apmcOn: z.boolean(), slipWhatsapp: z.boolean(),
+  staffBackupCode: z.string().trim().regex(/^[0-9]{2,8}$/, 'Backup code 2 se 8 ank ka'),
+  slipPhones: z.array(phone).max(4),
 }).partial();
 const BhavBody = z.object({ date: DayIso, rates: z.array(z.object({ brandId: z.uuid(), grade: z.enum(['1', '2', '3']), ratePaise: paise })).min(1).max(300) });
 const VoidBody = z.object({ reason: z.enum(['deleted', 'refunded', 'advance']).default('deleted') });
@@ -309,7 +326,7 @@ export class AdminAuthController {
 export class AdminController {
   constructor(
     private readonly admin: AdminService, private readonly reports: ReportsService, private readonly entries: EntriesService,
-    private readonly settings: SettingsService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
+    private readonly settings: SettingsService, private readonly adminConsole: ConsoleService, private readonly insights: InsightsService, private readonly voice: PortalVoiceService, private readonly gemini: GeminiClient,
     private readonly alerts: UdhaarAlertsService, private readonly reminders: RemindersService, private readonly creditors: CreditorsService,
     private readonly machines: MachinesService, private readonly deposits: DepositsService, private readonly masters: MastersService,
     private readonly crates: CratesService, private readonly coldStore: ColdStoreService, private readonly books: BooksService,
@@ -826,6 +843,50 @@ export class AdminController {
   @Get('shops/:id')
   shop(@See() v: Viewer, @Param('id') id: string) {
     return this.admin.shop(mine(v, id));
+  }
+
+  // ---------------------------------------------------------------- admin console: set a customer up
+
+  /** Admin: a shop made here, approved, with its people on the team — each just logs in. */
+  @Post('console/shops')
+  createShop(@See() v: Viewer, @Body() body: unknown) {
+    adminOnly(v);
+    return this.adminConsole.create(v.phone, parse(NewShopBody, body));
+  }
+
+  @Get('console/shops/:id')
+  consoleShop(@See() v: Viewer, @Param('id') id: string) {
+    adminOnly(v);
+    return this.adminConsole.shop(parse(Id, id));
+  }
+
+  @Post('console/shops/:id/labels')
+  @HttpCode(204)
+  async consoleLabels(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    adminOnly(v);
+    await this.adminConsole.label(parse(Id, id), parse(LabelBody, body).nickname);
+  }
+
+  @Post('console/shops/:id/members')
+  @HttpCode(204)
+  async consoleAddMember(@See() v: Viewer, @Param('id') id: string, @Body() body: unknown) {
+    adminOnly(v);
+    const b = parse(Person, body);
+    await this.adminConsole.addMember(parse(Id, id), b.phone, b.name, b.role);
+  }
+
+  @Post('console/shops/:id/members/:userId')
+  @HttpCode(204)
+  async consoleEditMember(@See() v: Viewer, @Param('id') id: string, @Param('userId') userId: string, @Body() body: unknown) {
+    adminOnly(v);
+    await this.adminConsole.editMember(parse(Id, id), parse(Id, userId), parse(MemberEditBody, body));
+  }
+
+  @Delete('console/shops/:id/members/:userId')
+  @HttpCode(204)
+  async consoleRemoveMember(@See() v: Viewer, @Param('id') id: string, @Param('userId') userId: string) {
+    adminOnly(v);
+    await this.adminConsole.removeMember(parse(Id, id), parse(Id, userId));
   }
 
   @Post('shops/:id/approve')

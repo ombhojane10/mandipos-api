@@ -17,6 +17,7 @@ export type Route =
   | { page: 'person'; key: string }
   | { page: 'requests' }
   | { page: 'machines' }
+  | { page: 'admin'; shopId?: string }
 
 const REPORTS: Report[] = ['dashboard', 'daybook', 'cashbook', 'outstanding', 'ledger', 'suppliers', 'stock', 'items', 'team', 'settings', 'register', 'munafa', 'vasooli', 'gaadis', 'bhav', 'nigrani', 'dispatch', 'pata', 'commission', 'beejak', 'creditors', 'laddan', 'apmc', 'mazdoori', 'bolo', 'bankjama',
   'company', 'products', 'groups', 'areas', 'stores', 'heads', 'openings', 'crates', 'coldstore', 'gl', 'tb', 'multi', 'chithi', 'big', 'salepurchase', 'purcha', 'backup', 'jv', 'cn', 'invoices', 'bikri']
@@ -32,6 +33,7 @@ export function parse(hash: string): Route {
   if (parts[0] === 'shops') return { page: 'shops' }
   if (parts[0] === 'requests') return { page: 'requests' }
   if (parts[0] === 'machines') return { page: 'machines' }
+  if (parts[0] === 'admin') return { page: 'admin', shopId: parts[1] }
   return { page: 'home' }
 }
 
@@ -45,6 +47,7 @@ export function href(r: Route): string {
     case 'shops': return '#/shops'
     case 'requests': return '#/requests'
     case 'machines': return '#/machines'
+    case 'admin': return r.shopId ? `#/admin/${r.shopId}` : '#/admin'
     default: return '#/'
   }
 }

@@ -70,7 +70,7 @@ export function GrahakList({ shopId }: { shopId: string }) {
 
 /** One grahak's khata at this shop — Tally's Ledger Vouchers for a party. */
 export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: string }) {
-  const { me } = useSession()
+  const { me, shops } = useSession()
   const [editing, setEditing] = useState(false)
   const back = href({ page: 'report', shopId, report: 'ledger' })
   const { data, error } = useLoad(() => api<BuyerDetail>(`/v1/admin/shops/${shopId}/buyers/${buyerId}`), [shopId, buyerId])
@@ -102,7 +102,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         <GrahakCrates shopId={shopId} buyerId={buyerId} />
         {me?.admin && mobile && <div><span className="lb">{t('Poora market')}</span><a className="v call" href={href({ page: 'person', key: b.phone })}>{t('Dekhein')} ›</a></div>}
       </div>
-      <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} exportAs={{
+      <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} grades={shops?.find((x) => x.id === shopId)?.commodity !== 'angoor'} exportAs={{
         title: 'CUSTOMER LEDGER', banks: true,
         party: { code: b.code || b.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 6), description: [b.name, b.destination, mobile ? b.phone : ''].filter(Boolean).join(' '), address: b.address },
       }} />

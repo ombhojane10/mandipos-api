@@ -3838,4 +3838,64 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     await http().post(`${base}/grahak/${a.id}`).set(w).send({ hidden: false }).expect(201);
     expect((await http().get(`${base}/buyers/${a.id}`).set(w).expect(200)).body.buyer.hidden).toBe(false);
   });
+
+  it('sets a customer up from the admin console: shop approved, owner/munim/labour log straight in, every setting on /v1/me', async () => {
+    await http().post('/v1/admin/auth/otp').send({ phone: '9876500077' }).expect(204);
+    const a = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9876500077', code: OtpService.issuedForTests.get('9876500077') }).expect(200)).body.token);
+    const { w } = await web('9845900099', { name: 'Not An Admin' });
+    const people = [{ phone: '9845900001', name: 'Sanju', role: 'admin' }, { phone: '9845900002', name: 'Nilesh', role: 'accountant' }, { phone: '9845900003', role: 'labour' }];
+    // Only MandiPlus may: a shop owner is refused.
+    await http().post('/v1/admin/console/shops').set(w).send({ name: 'X', people }).expect(403);
+    // An owner's number is a must, and no number twice.
+    await http().post('/v1/admin/console/shops').set(a).send({ name: 'X', people: [people[1]] }).expect(400);
+    await http().post('/v1/admin/console/shops').set(a).send({ name: 'X', people: [people[0], people[0]] }).expect(400);
+
+    const { id } = (await http().post('/v1/admin/console/shops').set(a)
+      .send({ name: 'Console Fruits', nickname: 'CF Azadpur', mandi: 'Azadpur', slipCode: 'cf', commodity: 'angoor', people }).expect(201)).body;
+    const boss = await login('9845900001');
+    expect(boss.me.shop).toMatchObject({ id, name: 'Console Fruits', slipCode: 'CF', commodity: 'angoor', role: 'owner' });
+    expect((await login('9845900002')).me.shop).toMatchObject({ id });
+    expect((await login('9845900003')).me.shop).toMatchObject({ id });
+    const listed = (await http().get('/v1/admin/shops').set(a).expect(200)).body.shops.find((x: any) => x.id === id);
+    expect(listed).toMatchObject({ status: 'approved', nickname: 'CF Azadpur', owner: { phone: '9845900001' } });
+
+    // Staff belong to one shop; an owner may run another.
+    await http().post('/v1/admin/console/shops').set(a).send({ name: 'Other', people: [{ phone: '9845900004', role: 'admin' }, { phone: '9845900002', role: 'accountant' }] }).expect(409);
+    await http().post('/v1/admin/console/shops').set(a).send({ name: 'Second Phad', people: [{ phone: '9845900001', role: 'admin' }] }).expect(201);
+    await http().post(`/v1/admin/console/shops/${id}/members`).set(a).send({ phone: '9845900002', role: 'accountant' }).expect(409);
+
+    const team = async () => (await http().get(`/v1/admin/console/shops/${id}`).set(a).expect(200)).body.members as any[];
+    expect((await team()).map((m) => [m.phone, m.role])).toEqual([['9845900001', 'admin'], ['9845900002', 'accountant'], ['9845900003', 'labour']]);
+    const [owner1, munim, labour] = await team();
+    await http().post(`/v1/admin/console/shops/${id}/members/${labour.userId}`).set(a).send({ role: 'accountant', name: 'Raju' }).expect(204);
+    await http().post(`/v1/admin/console/shops/${id}/members/${owner1.userId}`).set(a).send({ role: 'accountant' }).expect(400);
+    await http().delete(`/v1/admin/console/shops/${id}/members/${owner1.userId}`).set(a).expect(400);
+    await http().delete(`/v1/admin/console/shops/${id}/members/${munim.userId}`).set(a).expect(204);
+    expect((await team()).map((m) => [m.name, m.role])).toEqual([['Sanju', 'admin'], ['Raju', 'accountant']]);
+    expect((await login('9845900002')).me.shop).toBeNull();
+
+    // Slip and shop settings set here are what the terminals read.
+    await http().post(`/v1/admin/shops/${id}/settings`).set(a)
+      .send({ slipPhones: ['9845900009'], staffBackupCode: '4321', slipWhatsapp: true, apmcOn: false, udhaarRates: true, slipLimitPaise: 500000, printerDots: 832 }).expect(200);
+    await http().post(`/v1/admin/shops/${id}/settings`).set(a).send({ staffBackupCode: '1' }).expect(400);
+    await http().post(`/v1/admin/console/shops/${id}/labels`).set(a).send({ nickname: 'CF Shed 4' }).expect(204);
+    const me = (await http().get('/v1/me').set(auth(boss.accessToken)).expect(200)).body;
+    expect(me.shop).toMatchObject({ slipPhones: ['9845900009'], staffBackupCode: '4321', slipWhatsapp: true, apmcOn: false, udhaarRates: true, slipLimitPaise: 500000, printer: { dots: 832 } });
+    expect((await http().get(`/v1/admin/console/shops/${id}`).set(a).expect(200)).body).toMatchObject({ nickname: 'CF Shed 4', status: 'approved' });
+  });
+
+  it('shows each slip line with its nag and bhav in the khata, and what the total carries over the maal', async () => {
+    const { w, base } = await web('9845900021', { name: 'Ledger Lines', commodity: 'angoor' });
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh' }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'mh15', supplier: 'Sai', lots: [
+      { brandName: 'Royal', grade: '1', qty: 50, ratePaise: 0, boxGrams: 10000 }, { brandName: 'Sonaka', grade: '1', qty: 50, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    const lots = (await http().get(`${base}/entry-options`).set(w).expect(200)).body.lots as any[];
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: g.id, pay: 'credit', labour: true, labourRatePaise: 1000, lots: [
+      { truckId: lots[0].truckId, brandId: lots[0].brandId, qty: 10, ratePaise: 100000 }, { truckId: lots[1].truckId, brandId: lots[1].brandId, qty: 5, ratePaise: 80000 }] }).expect(201);
+    const row = (await http().get(`${base}/buyers/${g.id}`).set(w).expect(200)).body.history.find((r: any) => r.kind === 'slip');
+    expect(row.lines.map((l: any) => [l.qty, l.ratePaise])).toEqual(expect.arrayContaining([[10, 100000], [5, 80000]]));
+    // Maal ₹14,000 + APMC 1% ₹140 + mazdoori 15 × ₹10.
+    expect(row.charges).toEqual({ label: 'APMC + Mazdoori', paise: 14000 + 15000 });
+    expect(row.debitPaise).toBe(1400000 + 29000);
+  });
 });
