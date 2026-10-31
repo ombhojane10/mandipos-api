@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, type Device, type ShopDetail } from '../api'
 import { useSession } from '../App'
-import { ago, date, phone } from '../format'
+import { ago, phone } from '../format'
 import { t } from '../i18n'
 import { useLoad } from '../useLoad'
 import { Skeleton } from '../ui'
