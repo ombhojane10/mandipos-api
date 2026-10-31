@@ -3899,6 +3899,13 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     expect(row.debitPaise).toBe(1400000 + 29000);
   });
 
+  it('lists every grahak on the Grahak Ledger, past the picker’s 60', async () => {
+    const { w, base } = await web('9845900031', { name: 'Many Grahak' });
+    for (let i = 1; i <= 65; i++) await http().post(`${base}/entries/grahak`).set(w).send({ name: `G${String(i).padStart(2, '0')}`, openingPaise: i * 100 }).expect(201);
+    expect((await http().get(`${base}/buyers?q=`).set(w).expect(200)).body.buyers).toHaveLength(60);
+    expect((await http().get(`${base}/buyers?all=1&q=`).set(w).expect(200)).body.buyers).toHaveLength(65);
+  });
+
   it('lets an owner put staff on one branch or several; their phone switches between them; nobody else’s branch', async () => {
     await http().post('/v1/admin/auth/otp').send({ phone: '9876500077' }).expect(204);
     const a = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9876500077', code: OtpService.issuedForTests.get('9876500077') }).expect(200)).body.token);

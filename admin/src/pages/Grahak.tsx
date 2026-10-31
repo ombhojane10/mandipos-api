@@ -21,7 +21,7 @@ export function GrahakList({ shopId }: { shopId: string }) {
   useEffect(() => { const t = setTimeout(() => setQuery(q.trim()), 250); return () => clearTimeout(t) }, [q])
   useEffect(() => { api<{ areas: { name: string }[] }>(`/v1/admin/shops/${shopId}/areas`).then((r) => setAreas(r.areas.map((a) => a.name))).catch(() => {}) }, [shopId])
   const { data, error, loading } = useLoad(
-    () => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=${encodeURIComponent(query)}&area=${encodeURIComponent(area)}`).then((r) => r.buyers), [shopId, query, area])
+    () => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?all=1&q=${encodeURIComponent(query)}&area=${encodeURIComponent(area)}`).then((r) => r.buyers), [shopId, query, area])
   const pickArea = (a: string) => { setArea(a); setHashQuery(a ? { area: a } : {}) }
 
   useExport(data ? () => ({

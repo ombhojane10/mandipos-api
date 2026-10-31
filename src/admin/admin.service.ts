@@ -177,8 +177,11 @@ export class AdminService {
     });
   }
 
-  /** Grahak matching [q] by name, phone or A/C code; biggest baaki first. */
-  async buyers(shopId: string, q: string, area = '') {
+  /**
+   * Grahak matching [q] by name, phone or A/C code; biggest baaki first. A picker gets the top 60;
+   * [all] (the Grahak Ledger, the Vasooli desk) gets every one — no grahak may go missing from a list.
+   */
+  async buyers(shopId: string, q: string, area = '', all = false) {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
       const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -189,7 +192,7 @@ export class AdminService {
          FROM buyers g LEFT JOIN (${BALANCES}) x ON x.buyer_id = g.id
          WHERE ($1 = '' OR g.name ILIKE $2 OR g.phone LIKE $2 OR g.code ILIKE $2)
            AND ($3 = '' OR upper(trim(g.area)) = upper($3))
-         ORDER BY g.hidden, GREATEST(COALESCE(x.bal, 0), 0) DESC, g.name LIMIT ${area ? 1000 : 60}`, [q, like, area.trim()])).rows;
+         ORDER BY g.hidden, GREATEST(COALESCE(x.bal, 0), 0) DESC, g.name ${all || area ? '' : 'LIMIT 60'}`, [q, like, area.trim()])).rows;
       return rows.map((r) => ({
         id: r.id, name: r.name, phone: r.phone, code: r.code, kind: r.kind, hidden: r.hidden, address: r.address, destination: r.destination, area: r.area,
         balancePaise: n(r.bal), lastSlipOn: r.last_at ? day(r.last_at) : null, boughtPaise: n(r.bought),

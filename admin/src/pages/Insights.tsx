@@ -27,7 +27,7 @@ export function Vasooli({ shopId }: { shopId: string }) {
   const [tab, setTab] = useState<'lena' | 'band'>(() => (hashQuery().get('v') === 'band' ? 'band' : 'lena'))
   const pick = (v: 'lena' | 'band') => { setTab(v); setHashQuery({ ...Object.fromEntries(hashQuery()), v }) }
   const out = useLoad(() => api<Out>(`/v1/admin/shops/${shopId}/outstanding`), [shopId])
-  const all = useLoad(() => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?q=`).then((r) => r.buyers), [shopId])
+  const all = useLoad(() => api<{ buyers: BuyerRow[] }>(`/v1/admin/shops/${shopId}/buyers?all=1&q=`).then((r) => r.buyers), [shopId])
 
   // Priority: no payment for longest, then the oldest due, then the biggest.
   const lena = useMemo(() => (out.data?.rows ?? []).map((r) => ({ ...r, quiet: daysSince(r.lastPaidAt ?? r.lastSlipOn) ?? 0 }))
