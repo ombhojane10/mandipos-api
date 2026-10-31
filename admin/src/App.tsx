@@ -124,6 +124,13 @@ export const reportGroups = (commodity?: string) => (commodity === 'angoor' ? [R
 
 const LAST_SHOP = 'mandipos-shop'
 
+/** A shop in the picker: its name, plus the branch (console nickname, else the mandi) when two shops share a name. */
+const shopLabel = (s: Shop, all: Shop[]) => {
+  const twin = all.some((x) => x.id !== s.id && x.name.replace(/\W/g, '').toLowerCase() === s.name.replace(/\W/g, '').toLowerCase())
+  const branch = s.nickname || (twin ? s.mandi : '')
+  return branch ? `${s.name} · ${branch}` : s.name
+}
+
 export default function App() {
   const [signedIn, setSignedIn] = useState(() => !!getToken())
   const [route, setRoute] = useState(() => parse(location.hash))
@@ -295,7 +302,7 @@ export default function App() {
                 const report = route.page === 'report' ? route.report : 'dashboard'
                 location.hash = href({ page: 'report', shopId: e.target.value, report }) + periodQuery()
               }}>
-                {open.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {open.map((s) => <option key={s.id} value={s.id}>{shopLabel(s, open)}</option>)}
               </select>
             </div>
           )}
