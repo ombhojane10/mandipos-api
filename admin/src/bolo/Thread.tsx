@@ -133,8 +133,7 @@ function Actions({ r, shopId }: { r: Turn; shopId: string }) {
   }
   if (r.call) items.push({ label: t('Call {name}', { name: r.call.name }), primary: true, go: () => { location.href = `tel:+91${r.call!.phone}` } })
   if (r.whatsapp) items.push({ label: t('WhatsApp {name}', { name: r.whatsapp.name }), primary: true, go: () => openWhatsApp(shopId, r.whatsapp!.buyerId) })
-  const udhaar = r.cards?.find((c) => c.view === 'udhaar')
-  if (udhaar && udhaar.view === 'udhaar') items.push({ label: t('Khata kholein'), go: () => { location.hash = href({ page: 'grahak', shopId, buyerId: udhaar.buyerId }) } })
+  // An udhaar card carries its own Khata kholein link: no second button for the same thing.
   if (!items.length) return null
   return <div className="bc-actions">{items.map((x) => <button key={x.label} type="button" className={`bc-btn${x.primary ? ' primary' : ''}`} onClick={x.go}>{x.label}</button>)}</div>
 }

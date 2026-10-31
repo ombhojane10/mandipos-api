@@ -15,7 +15,13 @@ export function BoloDock({ shopId, screen, onBoloPage }: { shopId: string; scree
     if (!open) return
     const on = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     addEventListener('keydown', on)
-    return () => removeEventListener('keydown', on)
+    // A link or button in the chat went to another page (Khata kholein…): the panel would sit on
+    // top of it, so it looked as if nothing happened. Step aside unless the screen has room for both.
+    const path = () => location.hash.split('?')[0]
+    let at = path()
+    const moved = () => { if (path() !== at && innerWidth < 1200) setOpen(false); at = path() }
+    addEventListener('hashchange', moved)
+    return () => { removeEventListener('keydown', on); removeEventListener('hashchange', moved) }
   }, [open])
   if (onBoloPage) return null
   return (
