@@ -24,8 +24,7 @@ export class SlipSendsService {
 
   async send(p: Principal, kind: 'slip' | 'beejak', refId: string, phone: string, imageBase64: string, params: string[]) {
     const c = config();
-    const template = kind === 'slip' ? c.SLIP_TEMPLATE : c.BEEJAK_TEMPLATE;
-    if (!template) throw new ConflictException('WhatsApp template abhi approve nahi hui');
+    let template = kind === 'slip' ? c.SLIP_TEMPLATE : c.BEEJAK_TEMPLATE;
     if (!c.WHATSAPP_TOKEN || !c.WHATSAPP_PHONE_NUMBER_ID) throw new ServiceUnavailableException('WhatsApp abhi chalu nahi hai');
     const png = Buffer.from(imageBase64, 'base64');
     if (png.length > MAX_IMAGE_BYTES) throw new BadRequestException('Photo bahut badi hai');
@@ -39,6 +38,16 @@ export class SlipSendsService {
       await tx.query(`SELECT set_config('app.shop_id', $1, true)`, [p.shopId]);
       const found = (await tx.query(kind === 'slip' ? `SELECT 1 FROM bills WHERE id = $1` : `SELECT 1 FROM trucks WHERE id = $1`, [refId])).rowCount;
       if (!found) throw new NotFoundException(kind === 'slip' ? 'Yeh parchi nahi mili' : 'Yeh gaadi nahi mili');
+      // A grapes slip keeps its own template (boxes, "gaadi se maal"); any other shop's slip goes on
+      // the general one, which carries the unit in {{4}}: dana for coconut, boxes for amrud.
+      if (kind === 'slip') {
+        const commodity = (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [p.shopId])).rows[0]?.commodity;
+        if (commodity !== 'angoor') {
+          template = c.SLIP_TEMPLATE_ALL;
+          params = params.map((v, i) => (i === 3 && /^\d+$/.test(v) ? `${v} ${commodity === 'nariyal' ? 'दाना' : 'बॉक्स'}` : v));
+        }
+      }
+      if (!template) throw new ConflictException('WhatsApp template abhi approve nahi hui');
       const recent = (await tx.query(
         `SELECT 1 FROM whatsapp_slip_sends WHERE shop_id = $1 AND kind = $2 AND ref_id = $3 AND phone = $4
            AND status <> 'failed' AND created_at > now() - interval '10 minutes'`, [p.shopId, kind, refId, phone])).rowCount;

@@ -33,6 +33,8 @@ const schema = z
     // Angoor: the slip to the grahak and the beejak to the party, as an image header (UTILITY, hi).
     // Empty until Meta approves them (pos_parchi_v1 / pos_beejak_v1); sends answer 409 till then.
     SLIP_TEMPLATE: z.string().default(''),
+    // Every other shop's slip (coconut, amrud): "कुल माल {{4}}" with its own unit, no gaadi pickup line.
+    SLIP_TEMPLATE_ALL: z.string().default('pos_parchi_v2'),
     // Angoor: "maal de diya" to the grahak after a gaadi scan (UTILITY, hi). Empty switches it off.
     PICKUP_TEMPLATE: z.string().default('pos_maal_diya_v1'),
     BEEJAK_TEMPLATE: z.string().default(''),
