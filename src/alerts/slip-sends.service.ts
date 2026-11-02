@@ -25,7 +25,6 @@ export class SlipSendsService {
   async send(p: Principal, kind: 'slip' | 'beejak', refId: string, phone: string, imageBase64: string, params: string[]) {
     const c = config();
     let template = kind === 'slip' ? c.SLIP_TEMPLATE : c.BEEJAK_TEMPLATE;
-    if (!c.WHATSAPP_TOKEN || !c.WHATSAPP_PHONE_NUMBER_ID) throw new ServiceUnavailableException('WhatsApp abhi chalu nahi hai');
     const png = Buffer.from(imageBase64, 'base64');
     if (png.length > MAX_IMAGE_BYTES) throw new BadRequestException('Photo bahut badi hai');
     if (!png.subarray(0, 4).equals(PNG)) throw new BadRequestException('Photo PNG nahi hai');
@@ -48,6 +47,7 @@ export class SlipSendsService {
         }
       }
       if (!template) throw new ConflictException('WhatsApp template abhi approve nahi hui');
+      if (!c.WHATSAPP_TOKEN || !c.WHATSAPP_PHONE_NUMBER_ID) throw new ServiceUnavailableException('WhatsApp abhi chalu nahi hai');
       const recent = (await tx.query(
         `SELECT 1 FROM whatsapp_slip_sends WHERE shop_id = $1 AND kind = $2 AND ref_id = $3 AND phone = $4
            AND status <> 'failed' AND created_at > now() - interval '10 minutes'`, [p.shopId, kind, refId, phone])).rowCount;
