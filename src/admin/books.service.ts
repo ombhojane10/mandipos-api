@@ -8,6 +8,13 @@ import { BUILTIN_HEADS, OPENING_NOTES, type HeadType } from './masters.service';
 import { ReportsService, nameKey, type Pot } from './reports.service';
 import { BOUGHT, CASH_PART, IST_DAY, LIVE_BILLS, LIVE_COLS, UPI_PART, n } from './sql';
 import { writeXlsx, type Cell } from './xlsx';
+import { isAngoor, isCheeku } from '../common/commodity';
+import { CheekuCreditorsService } from '../cheeku/cheeku-creditors.service';
+import { CHEEKU_BEEJAK_HEADS } from '../cheeku/cheeku-desk.service';
+import { CHEEKU_BEEJAKS_FRAGMENT, CHEEKU_BEEJAK_NAME, CHEEKU_BOOKS, CHEEKU_PURCHASE_NAME } from '../cheeku/cheeku-books';
+
+/** Which books a shop keeps: grapes beejak books, cheeku's own beejak books, or gaadi books (everyone else). */
+type BookMode = 'grapes' | typeof CHEEKU_BOOKS | 'gaadi';
 
 const istDay = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const POTS: Pot[] = ['galla', 'office', 'bank'];
@@ -58,7 +65,7 @@ const HEAD_CATS = `CASE h.type WHEN 'expense' THEN ARRAY['kharcha'] WHEN 'income
 
 type Posting = { day: string; acct: string; dr: string; cr: string; kind: string; ref: string | null; ref2: string | null; title: string; detail: string; n?: string };
 
-/** $1 = up to (a business date), $2 = the opening notes, $3 = grapes (beejak books) or not. */
+/** $1 = up to (a business date), $2 = the opening notes, $3 = the book mode: 'grapes' (beejak books), 'cheeku' (its own beejak books) or 'gaadi'. */
 const FRAGMENTS = {
   bills: `
     SELECT lb.business_date AS day, v.acct, v.dr, v.cr, 'bill' AS kind, lb.id AS ref, lb.buyer_id AS ref2, lb.created_at AS at,
@@ -135,7 +142,9 @@ const FRAGMENTS = {
       UNION ALL SELECT CASE WHEN trim(b.party) <> '' THEN 'creditors' ELSE 'diff:beejak' END, 0, b.net_paise
       UNION ALL SELECT 'bj:' || (x->>'key'), 0, (x->>'amountPaise')::bigint FROM jsonb_array_elements(b.expenses) x
     ) v
-    WHERE $3 AND b.day <= $1`,
+    WHERE $3 = 'grapes' AND b.day <= $1`,
+  // Cheeku: its own copy of the beejak postings (src/cheeku/cheeku-books.ts).
+  cheekuBeejaks: CHEEKU_BEEJAKS_FRAGMENT,
   // Others: a gaadi is bought — goods at kharid bhav (less corrections, at its average) and its bhada, owed to the supplier.
   gaadis: `
     SELECT ${IST_DAY('t.arrived_at')} AS day, v.acct, v.dr, v.cr, 'gaadi' AS kind, t.id AS ref, t.id AS ref2, t.arrived_at AS at, 'Gaadi ' || t.number AS title, trim(t.supplier) AS detail
@@ -146,7 +155,7 @@ const FRAGMENTS = {
                                  THEN ROUND(g.goods::numeric * sp.corrected / g.billed)::bigint ELSE 0 END) AS goods) x
     CROSS JOIN LATERAL (VALUES ('purchase', x.goods, 0::bigint), ('bhada_in', t.freight_paise, 0),
       (CASE WHEN trim(t.supplier) <> '' THEN 'creditors' ELSE 'diff:gaadi' END, 0, x.goods + t.freight_paise)) v(acct, dr, cr)
-    WHERE NOT $3 AND ${IST_DAY('t.arrived_at')} <= $1`,
+    WHERE $3 = 'gaadi' AND ${IST_DAY('t.arrived_at')} <= $1`,
   // A journal voucher's supplier and head sides (its grahak sides are udhaar entries), and a credit note's
   // bikri side; each against diff:voucher, which the grahak's udhaar entries bring back to zero.
   vouchers: `
@@ -183,11 +192,11 @@ function sourcesOf(key: string): Fragment[] {
   if (['sales', 'apmc', 'chungi'].includes(key)) return ['bills'];
   if (key === 'mazdoori') return ['bills', 'labourAdj'];
   if (key === 'labour') return ['bills', 'labourAdj', 'daybook'];
-  if (key === 'purchase') return ['beejaks', 'gaadis'];
+  if (key === 'purchase') return ['beejaks', 'cheekuBeejaks', 'gaadis'];
   if (key === 'bhada_in') return ['gaadis'];
-  if (key === 'creditors') return ['beejaks', 'gaadis', 'daybook', 'supplierOpenings', 'vouchers'];
+  if (key === 'creditors') return ['beejaks', 'cheekuBeejaks', 'gaadis', 'daybook', 'supplierOpenings', 'vouchers'];
   if (key === 'cnote') return ['vouchers'];
-  if (key.startsWith('bj:')) return ['beejaks'];
+  if (key.startsWith('bj:')) return ['beejaks', 'cheekuBeejaks'];
   if (key.startsWith('h:')) return ['daybook', 'headOpenings', 'vouchers'];
   if (key.startsWith('b:')) return ['daybook', 'vouchers'];
   if (key.startsWith('g:')) return ['bills', 'cols', 'udhaar'];
@@ -196,7 +205,7 @@ function sourcesOf(key: string): Fragment[] {
 // $2 and $3 are named once here too, so a source list that doesn't use them still types them.
 const postingsSql = (from: Fragment[]) =>
   `SELECT * FROM (${from.map((f) => FRAGMENTS[f]).join('\nUNION ALL\n')}) p
-   WHERE p.acct IS NOT NULL AND (p.dr <> 0 OR p.cr <> 0) AND $2::text[] IS NOT NULL AND $3::boolean IS NOT NULL`;
+   WHERE p.acct IS NOT NULL AND (p.dr <> 0 OR p.cr <> 0) AND $2::text[] IS NOT NULL AND $3::text IS NOT NULL`;
 
 const BUILTIN_NAME = new Map(BUILTIN_HEADS.map((h) => [h.key, h.name]));
 const BEEJAK_NAME: Record<string, string> = {
@@ -264,19 +273,22 @@ const backupTypes = { getTypeParser: ((oid: number, format?: 'text' | 'binary') 
 
 @Injectable()
 export class BooksService {
-  constructor(private readonly db: Db, private readonly reports: ReportsService, private readonly creditors: CreditorsService) {}
+  constructor(private readonly db: Db, private readonly reports: ReportsService, private readonly creditors: CreditorsService,
+    private readonly cheekuCreditors: CheekuCreditorsService) {}
 
-  private async grapes(shopId: string) {
+  private async mode(shopId: string): Promise<BookMode> {
     const s = await this.db.one<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId]);
     if (!s) throw new NotFoundException('Dukaan nahi mili');
-    return s.commodity === 'angoor';
+    if (isCheeku(s.commodity)) return CHEEKU_BOOKS;
+    return isAngoor(s.commodity) ? 'grapes' : 'gaadi';
   }
 
   /** What an account is: its name, its group, and whether it closes into the year's P&L. */
-  private describe(key: string, grapes: boolean, heads: Map<string, { name: string; type: HeadType }>): Acct {
+  private describe(key: string, mode: BookMode, heads: Map<string, { name: string; type: HeadType }>): Acct {
+    const grapes = mode === 'grapes', cheeku = mode === CHEEKU_BOOKS;
     const fixed: Record<string, [string, Group, boolean]> = {
       'pot:galla': ['Galla (cash)', 'cash', false], 'pot:office': ['Office cash', 'cash', false], 'pot:bank': ['Bank', 'bank', false],
-      sales: ['Bikri', 'sales', true], purchase: [grapes ? 'Kharid (beejak)' : 'Kharid (gaadi)', 'purchase', true], bhada_in: ['Gaadi bhada', 'purchase', true],
+      sales: ['Bikri', 'sales', true], purchase: [cheeku ? CHEEKU_PURCHASE_NAME : grapes ? 'Kharid (beejak)' : 'Kharid (gaadi)', 'purchase', true], bhada_in: ['Gaadi bhada', 'purchase', true],
       apmc: ['APMC', 'liabilities', false], chungi: ['Chungi', 'liabilities', false], labour: ['Mazdoori dena', 'liabilities', false],
       mazdoori: ['Mazdoori', 'expense', true], creditors: ['Sundry creditors', 'creditors', false],
       cnote: ['Credit note (bikri kam)', 'sales', true],
@@ -285,7 +297,7 @@ export class BooksService {
     };
     if (fixed[key]) { const [name, group, pl] = fixed[key]; return { key, name, group, pl }; }
     if (key.startsWith('diff:')) return { key, name: DIFF[key] ?? key.slice(5), group: 'suspense', pl: false };
-    if (key.startsWith('bj:')) return { key, name: BEEJAK_NAME[key.slice(3)] ?? key.slice(3), group: 'income', pl: true };
+    if (key.startsWith('bj:')) return { key, name: (cheeku ? CHEEKU_BEEJAK_NAME : BEEJAK_NAME)[key.slice(3)] ?? key.slice(3), group: 'income', pl: true };
     if (key.startsWith('h:')) {
       const h = heads.get(key.slice(2));
       const type = h?.type ?? 'expense';
@@ -308,18 +320,20 @@ export class BooksService {
 
   /** Every account the General Ledger can open, in the Trial Balance's groups. */
   async accounts(shopId: string) {
-    const grapes = await this.grapes(shopId);
+    const mode = await this.mode(shopId);
+    const grapes = mode === 'grapes', cheeku = mode === CHEEKU_BOOKS;
     return this.db.withShop(shopId, async (tx) => {
       const heads = await this.customHeads(tx);
       const keys = [
-        'pot:galla', 'pot:office', 'pot:bank', 'sales', 'cnote', 'purchase', ...(grapes ? [] : ['bhada_in']), 'apmc', 'chungi', 'mazdoori', 'labour', 'creditors',
+        'pot:galla', 'pot:office', 'pot:bank', 'sales', 'cnote', 'purchase', ...(grapes ? [] : cheeku ? [] : ['bhada_in']), 'apmc', 'chungi', 'mazdoori', 'labour', 'creditors',
         ...BUILTIN_HEADS.filter((h) => !TRANSFERS.includes(h.key) && !['supplier', 'mazdoori', ...Object.keys(PAIRED)].includes(h.key)).map((h) => `b:${h.key}`),
         'b:committee', 'b:udhaar_diya',
         ...heads.rows.map((h) => `h:${h.id}`),
         ...(grapes ? BEEJAK_HEADS.map((h) => `bj:${h.key}`) : []),
+        ...(cheeku ? CHEEKU_BEEJAK_HEADS.map((h) => `bj:${h.key}`) : []),
         ...Object.keys(DIFF),
       ];
-      return { accounts: keys.map((k) => ({ ...this.describe(k, grapes, heads.map), hidden: k.startsWith('h:') ? heads.rows.find((h) => `h:${h.id}` === k)!.hidden : false })) };
+      return { accounts: keys.map((k) => ({ ...this.describe(k, mode, heads.map), hidden: k.startsWith('h:') ? heads.rows.find((h) => `h:${h.id}` === k)!.hidden : false })) };
     });
   }
 
@@ -331,7 +345,7 @@ export class BooksService {
    */
   async ledger(shopId: string, key: string, from: string, to: string, daily: boolean) {
     if (from > to) throw new BadRequestException('from must be on or before to');
-    const grapes = await this.grapes(shopId);
+    const mode = await this.mode(shopId);
     if (key.startsWith('pot:')) {
       const pot = key.slice(4) as Pot;
       if (!POTS.includes(pot)) throw new NotFoundException('Khata nahi mila');
@@ -339,22 +353,22 @@ export class BooksService {
       const lines = b.lines.map((l) => ({ id: l.id, date: l.date, kind: l.kind === 'bikri' || l.kind === 'vasooli' ? 'day' : 'daybook', ref: null, ref2: null,
         title: l.kind === 'in' || l.kind === 'out' ? (BUILTIN_NAME.get(l.title) ?? l.title) : l.title, detail: [...new Set([l.party, l.note].filter(Boolean))].join(' · '),
         debitPaise: l.inPaise, creditPaise: l.outPaise, balancePaise: l.balancePaise, count: 1 }));
-      return { ...this.describe(key, grapes, new Map()), from, to, openingPaise: b.openingPaise, debitPaise: b.inPaise, creditPaise: b.outPaise, closingPaise: b.closingPaise, lines };
+      return { ...this.describe(key, mode, new Map()), from, to, openingPaise: b.openingPaise, debitPaise: b.inPaise, creditPaise: b.outPaise, closingPaise: b.closingPaise, lines };
     }
     return this.db.withShop(shopId, async (tx) => {
       const heads = await this.customHeads(tx);
-      const acct = this.describe(key, grapes, heads.map);
+      const acct = this.describe(key, mode, heads.map);
       if (key.startsWith('h:') && !heads.map.has(key.slice(2))) throw new NotFoundException('Khata nahi mila');
       const since = acct.pl ? fyRange(fyOf(from)).from : '0001-01-01';
       const sql = postingsSql(sourcesOf(key));
       const opening = n((await tx.query<{ s: string }>(
         `SELECT COALESCE(SUM(dr - cr), 0) AS s FROM (${sql}) q WHERE q.acct = $4 AND q.day < $5 AND q.day >= $6::date`,
-        [to, OPENING_NOTES, grapes, key, from, since])).rows[0].s);
+        [to, OPENING_NOTES, mode, key, from, since])).rows[0].s);
       const rows = (await tx.query<Posting>(daily
         ? `SELECT day::text AS day, acct, SUM(dr) AS dr, SUM(cr) AS cr, 'day' AS kind, NULL AS ref, NULL AS ref2, '' AS title, '' AS detail, COUNT(*) AS n
            FROM (${sql}) q WHERE q.acct = $4 AND q.day >= $5 GROUP BY day, acct ORDER BY day`
         : `SELECT day::text AS day, acct, dr, cr, kind, ref, ref2, title, detail FROM (${sql}) q WHERE q.acct = $4 AND q.day >= $5 ORDER BY day, at`,
-        [to, OPENING_NOTES, grapes, key, from])).rows;
+        [to, OPENING_NOTES, mode, key, from])).rows;
       let bal = opening;
       // A P&L ledger starts again each 1 April (the year closed into capital), so its closing is the Trial Balance's.
       let fy = fyOf(from);
@@ -398,7 +412,8 @@ export class BooksService {
    * sides don't meet). So the Dr and Cr totals agree, and the difference says exactly why.
    */
   async trialBalance(shopId: string, on: string) {
-    const grapes = await this.grapes(shopId);
+    const mode = await this.mode(shopId);
+    const grapes = mode === 'grapes', cheeku = mode === CHEEKU_BOOKS;
     const fy = fyRange(fyOf(on));
     const books = await Promise.all(POTS.map(async (p) => [p, (await this.reports.cashbook(shopId, p, on, on)).closingPaise] as const));
     return this.db.withShop(shopId, async (tx) => {
@@ -406,7 +421,7 @@ export class BooksService {
       const sums = (await tx.query<{ acct: string; before: string; dr: string; cr: string }>(
         `SELECT acct, COALESCE(SUM(dr - cr) FILTER (WHERE day < $4), 0) AS before, COALESCE(SUM(dr) FILTER (WHERE day >= $4), 0) AS dr,
                 COALESCE(SUM(cr) FILTER (WHERE day >= $4), 0) AS cr
-         FROM (${postingsSql(Object.keys(FRAGMENTS) as Fragment[])}) q GROUP BY acct`, [on, OPENING_NOTES, grapes, fy.from])).rows;
+         FROM (${postingsSql(Object.keys(FRAGMENTS) as Fragment[])}) q GROUP BY acct`, [on, OPENING_NOTES, mode, fy.from])).rows;
       const bal = new Map<string, { before: number; dr: number; cr: number }>();
       for (const s of sums) bal.set(s.acct, { before: n(s.before), dr: n(s.dr), cr: n(s.cr) });
       const add = (k: string, paise: number) => { if (!paise) return; const b = bal.get(k) ?? { before: 0, dr: 0, cr: 0 }; b.before += paise; bal.set(k, b); };
@@ -419,6 +434,9 @@ export class BooksService {
       let suppliers: { key: string; name: string; balance: number }[];
       if (grapes) {
         suppliers = (await this.creditors.books(tx)).map((p) => ({ key: p.key, name: p.name,
+          balance: -p.moves.filter((m) => m.at <= on).reduce((t, m) => t + m.creditPaise - m.debitPaise, 0) }));
+      } else if (cheeku) {
+        suppliers = (await this.cheekuCreditors.books(tx)).map((p) => ({ key: p.key, name: p.name,
           balance: -p.moves.filter((m) => m.at <= on).reduce((t, m) => t + m.creditPaise - m.debitPaise, 0) }));
       } else {
         suppliers = (await this.reports.supplierBooks(tx)).map((s) => ({ key: s.key, name: s.name,
@@ -446,7 +464,7 @@ export class BooksService {
           continue;
         }
         if (k === 'creditors') continue;
-        const a = this.describe(k, grapes, heads.map);
+        const a = this.describe(k, mode, heads.map);
         if (a.pl) pl += b.before;
         put(a.group, { key: k, name: a.name, ...side(a.pl ? b.dr - b.cr : b.before + b.dr - b.cr), link: { kind: 'ledger', id: k } });
       }
@@ -466,7 +484,7 @@ export class BooksService {
                 COALESCE(SUM(CASE m.dir WHEN 'out' THEN m.qty ELSE -m.qty END * t.deposit_paise), 0) AS value
          FROM crate_moves m JOIN crate_types t ON t.id = m.crate_type_id WHERE m.day <= $1`, [on])).rows[0];
       return {
-        on, fy: { from: fy.from, label: fy.label }, grapes, groups: out, totals: { dr, cr },
+        on, fy: { from: fy.from, label: fy.label }, grapes, cheeku, groups: out, totals: { dr, cr },
         differencePaise: suspense ? suspense.dr - suspense.cr : 0,
         memo: { cratesQty: n(crates.qty), cratesPaise: n(crates.value) },
       };
@@ -548,7 +566,8 @@ export class BooksService {
    */
   async salePurchase(shopId: string, from: string, to: string, by: 'day' | 'month') {
     if (from > to) throw new BadRequestException('from must be on or before to');
-    const grapes = await this.grapes(shopId);
+    const mode = await this.mode(shopId);
+    const grapes = mode === 'grapes', cheeku = mode === CHEEKU_BOOKS;
     const bucket = (col: string) => (by === 'day' ? `${col}::text` : `to_char(${col}, 'YYYY-MM')`);
     return this.db.withShop(shopId, async (tx) => {
       const q = async (sql: string, params: unknown[] = [from, to]) => (await tx.query<{ b: string; s: string; k?: string; d?: string }>(sql, params)).rows;
@@ -631,7 +650,7 @@ export class BooksService {
       for (const r of qOut) { const x = qq(r.q); x.soldQty += n(r.qty); x.salesPaise += n(r.amount); }
 
       return {
-        from, to, by, grapes, rows, totals,
+        from, to, by, grapes, cheeku, rows, totals,
         expenses: [...heads.filter((h) => h.d === 'out').reduce((m, h) => m.set(h.k!, (m.get(h.k!) ?? 0) + n(h.s)), new Map<string, number>())].map(([head, paise]) => ({ head, paise })),
         suppliers: [...sup.values()].sort((a, b) => b.salesPaise + b.kharidPaise - a.salesPaise - a.kharidPaise || a.name.localeCompare(b.name)),
         qualities: [...qual.values()].sort((a, b) => b.salesPaise - a.salesPaise || a.name.localeCompare(b.name)),

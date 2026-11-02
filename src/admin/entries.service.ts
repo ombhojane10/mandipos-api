@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException, forwardRef } from '@nestjs/common';
 import { AccountsService } from '../auth/accounts.service';
 import { Principal } from '../auth/tokens.service';
 import { uuidv7 } from '../common/uuid';
@@ -8,6 +8,9 @@ import { SyncHub } from '../sync/sync.hub';
 import { PushItem, PushResult, SyncService } from '../sync/sync.service';
 import { CASH_PART, LIVE_BILLS, LIVE_COLS, STORE_BACK, UPI_PART, n } from './sql';
 import { nameKey } from './reports.service';
+import { isAngoor, isCheeku } from '../common/commodity';
+import { CheekuEntriesService } from '../cheeku/cheeku-entries.service';
+import { CHEEKU_CAPS_NAMES } from '../cheeku/cheeku';
 
 /**
  * Entries made on the website. Each one is built exactly as the app's Store writes it (Store.kt:
@@ -24,14 +27,14 @@ import { nameKey } from './reports.service';
 const PARCHUNE = 'Parchune';
 const LABOUR_PAISE_PER_NAG = 30;
 const istNow = () => new Date(Date.now() + 330 * 60_000);
-const todayIst = () => istNow().toISOString().slice(0, 10);
+export const todayIst = () => istNow().toISOString().slice(0, 10);
 /** Indian financial year as the app writes it in a bill number: Apr 2026–Mar 2027 → "2627". */
 function fy(): string {
   const d = istNow();
   const start = d.getUTCMonth() >= 3 ? d.getUTCFullYear() : d.getUTCFullYear() - 1;
   return `${String(start % 100).padStart(2, '0')}${String((start + 1) % 100).padStart(2, '0')}`;
 }
-const payModeCode = (cash: number, upi: number) => (cash > 0 && upi > 0 ? 'mixed' : upi > 0 ? 'upi' : cash > 0 ? 'cash' : 'credit');
+export const payModeCode = (cash: number, upi: number) => (cash > 0 && upi > 0 ? 'mixed' : upi > 0 ? 'upi' : cash > 0 ? 'cash' : 'credit');
 
 export type Grade = '1' | '2' | '3' | 'mix';
 
@@ -48,6 +51,8 @@ export type ParchiInput = {
   parchune?: boolean;
   /** Mazdoori: on/off, how many dana it is for (default every nag), and the per-nag rate. */
   labour?: boolean; labourQty?: number; labourRatePaise?: number;
+  /** Cheeku: APMC on or off for this slip alone; left out, the shop's APMC setting decides. */
+  apmc?: boolean;
   delivery?: { address: string; stand: string };
   staff?: string; slipNo?: number;
 };
@@ -74,6 +79,8 @@ export class EntriesService {
   constructor(
     private readonly db: Db, private readonly sync: SyncService, private readonly hub: SyncHub, private readonly accounts: AccountsService,
     private readonly print: PrintService,
+    // Cheeku's own copy of the grapes entries; a cheeku shop is sent there, never through grape code.
+    @Inject(forwardRef(() => CheekuEntriesService)) private readonly cheeku: CheekuEntriesService,
   ) {}
 
   /** What the entry forms need: open gaadis and their maal, today's bhav, maal list, suppliers, bank accounts. */
@@ -107,7 +114,7 @@ export class EntriesService {
       }
       // Angoor: every quality on every open gaadi (sold past its count included — angoor never
       // refuses a sale), and each supplier's last gaadi for Nayi gaadi's smart defaults.
-      const angoor = shop.commodity !== 'angoor' ? undefined : await (async () => {
+      const angoor = !isAngoor(shop.commodity) ? undefined : await (async () => {
         const lots = (await tx.query<{ truck_id: string; number: string; supplier: string; location: string; brand_id: string; quality: string; recv: string; sold: string; off: string; grams: number }>(
           `SELECT t.id AS truck_id, t.number, t.supplier, t.location, g.brand_id, COALESCE(br.name, '?') AS quality,
                   SUM(g.billed_qty + g.free_qty) AS recv, MAX(g.box_grams) AS grams,
@@ -132,9 +139,11 @@ export class EntriesService {
             lots: lastLots.filter((l) => l.truck_id === v.truckId).map((l) => ({ quality: l.quality, boxGrams: l.grams ?? 0, ratePaise: n(l.rate) })) })),
         };
       })();
+      const cheeku = isCheeku(shop.commodity) ? await this.cheeku.options(tx, shop.apmc_on) : undefined;
       return {
         commodity: shop.commodity,
         ...(angoor ?? {}),
+        ...(cheeku ?? {}),
         trucks: trucks.filter((t) => t.left > 0),
         rates: rates.map((r) => ({ brandId: r.brand_id, grade: r.grade, ratePaise: n(r.rate) })),
         brands,
@@ -170,7 +179,8 @@ export class EntriesService {
   private async writeParchi(p: Principal, shopId: string, input: ParchiInput, editing: LiveBill | null) {
     const commodity = await this.db.withShop(shopId, async (tx) =>
       (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0].commodity);
-    if (commodity === 'angoor') return this.writeAngoorParchi(p, shopId, input, editing);
+    if (isAngoor(commodity)) return this.writeAngoorParchi(p, shopId, input, editing);
+    if (isCheeku(commodity)) return this.cheeku.writeParchi(p, shopId, input, editing);
     if (!input.truckId || !input.lines) throw new BadRequestException('Gaadi aur maal chunein');
     const truckId = input.truckId;
     const lines = input.lines.filter((l) => l.qty > 0);
@@ -571,7 +581,8 @@ export class EntriesService {
     } }]);
   }
 
-  private async dayRow(p: Principal, shopId: string, input: DaybookInput) {
+  /** Also used by cheeku's entries (plumbing only). */
+  async dayRow(p: Principal, shopId: string, input: DaybookInput) {
     const now = new Date().toISOString();
     const id = uuidv7();
     const results = await this.push(p, shopId, [{ table: 'daybook_entries', txn: uuidv7(), row: {
@@ -621,6 +632,7 @@ export class EntriesService {
   // ---------------------------------------------------------------- Nayi gaadi
 
   async gaadi(phone: string, shopId: string, input: GaadiInput) {
+    if (isCheeku((await this.db.one<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId]))?.commodity)) return this.cheeku.gaadi(phone, shopId, input);
     const lots = input.lots.filter((l) => l.qty > 0);
     if (!lots.length) throw new BadRequestException('Kam se kam ek maal ka dana daalein');
     const number = input.number.toUpperCase().replace(/\s+/g, '');
@@ -630,12 +642,12 @@ export class EntriesService {
     const { supplier, brandIds } = await this.db.withShop(shopId, async (tx) => {
       const shop = (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0];
       if (shop.commodity === 'amrud') throw new UnprocessableEntityException('Is maal ki party app se jodein');
-      if (shop.commodity === 'angoor' && !input.supplier.trim()) throw new BadRequestException('Supplier ka naam daalein');
+      if (isAngoor(shop.commodity) && !input.supplier.trim()) throw new BadRequestException('Supplier ka naam daalein');
       const known = (await tx.query<{ s: string }>(`SELECT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows
         .find((r) => nameKey(r.s) === nameKey(input.supplier))?.s;
       const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;
       const ids = lots.map((l) => l.brandId ?? brands.find((b) => nameKey(b.name) === nameKey(l.brandName ?? ''))?.id ?? null);
-      return { supplier: known ?? (shop.commodity === 'angoor' ? input.supplier.trim().toUpperCase() : input.supplier.trim()), brandIds: ids };
+      return { supplier: known ?? (isAngoor(shop.commodity) ? input.supplier.trim().toUpperCase() : input.supplier.trim()), brandIds: ids };
     });
     const items: PushItem[] = [];
     const newBrands = new Map<string, string>();
@@ -913,7 +925,7 @@ export class EntriesService {
     return { id: g.id, name: row.name as string, phone: row.phone as string };
   }
 
-  private buyerRow(id: string, b: GrahakInput, now: string) {
+  buyerRow(id: string, b: GrahakInput, now: string) {
     return {
       id, created_at: now, updated_at: now, name: b.name.trim(), phone: (b.phone ?? '').trim(), kind: b.kind ?? '', credit_limit_paise: 0,
       vehicle: (b.vehicle ?? '').toUpperCase().replace(/\s+/g, ''), address: (b.address ?? '').trim(), destination: (b.destination ?? '').trim(),
@@ -922,10 +934,11 @@ export class EntriesService {
     }
   }
 
-  /** Grapes shops write every name in capitals, as their books always have. */
+  /** Grapes shops write every name in capitals, as their books always have; cheeku keeps its own rule. */
   async capsNames(shopId: string): Promise<boolean> {
     const r = await this.db.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId]);
-    return r[0]?.commodity === 'angoor';
+    if (isCheeku(r[0]?.commodity)) return CHEEKU_CAPS_NAMES;
+    return isAngoor(r[0]?.commodity);
   }
 
   /**
@@ -1074,14 +1087,14 @@ export class EntriesService {
     });
   }
 
-  private async device(phone: string, shopId: string): Promise<Principal> {
+  async device(phone: string, shopId: string): Promise<Principal> {
     const p = await this.accounts.webDevice(phone, shopId);
     await this.db.query(`UPDATE devices SET last_seen_at = now() WHERE id = $1`, [p.deviceId]);
     return p;
   }
 
   /** This device's next bill number in the financial year: CODE/FY/000001, continuing its own series. */
-  private async billNumber(tx: Tx, deviceId: string): Promise<string> {
+  async billNumber(tx: Tx, deviceId: string): Promise<string> {
     const code = (await tx.query<{ code: string }>(`SELECT code FROM devices WHERE id = $1`, [deviceId])).rows[0].code;
     const prefix = `${code}/${fy()}/`;
     const last = (await tx.query<{ m: string | null }>(
@@ -1096,7 +1109,7 @@ export class EntriesService {
   }
 
   /** Pushes like a terminal, wakes the shop's terminals, and refuses loudly if any row was refused. */
-  private async push(p: Principal, shopId: string, items: PushItem[]): Promise<PushResult[]> {
+  async push(p: Principal, shopId: string, items: PushItem[]): Promise<PushResult[]> {
     const results = await this.sync.push(p, shopId, items);
     if (results.some((r) => r.status === 'applied')) void this.hub.wake(shopId).catch(() => undefined);
     const bad = results.find((r) => r.status === 'rejected');
@@ -1105,7 +1118,7 @@ export class EntriesService {
   }
 }
 
-type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string; day: string; created_at: Date };
+export type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string; day: string; created_at: Date };
 
 /** A slip still on the books; a voided one can't be voided or edited again. */
 async function liveBill(tx: Tx, billId: string): Promise<LiveBill> {
@@ -1120,7 +1133,7 @@ async function liveBill(tx: Tx, billId: string): Promise<LiveBill> {
 }
 
 /** A slip's cash and UPI; a row from before the split was kept reads it off its pay mode. */
-function billMoney(b: LiveBill): [number, number] {
+export function billMoney(b: LiveBill): [number, number] {
   const cash = n(b.cash_paise), upi = n(b.upi_paise), paid = n(b.paid_paise);
   if (cash + upi > 0 || paid === 0) return [cash, upi];
   return b.pay_mode === 'upi' || b.pay_mode === 'card' ? [0, paid] : [paid, 0];
@@ -1199,7 +1212,7 @@ function bankLabel(b: { bank?: string; account?: string }): string {
 }
 
 /** The shop's next slip or raseed number: one past the highest held, voids included (Store.nextSlipNo). */
-async function nextNumber(tx: Tx, table: 'bills' | 'collections', col: string, voids: string): Promise<number> {
+export async function nextNumber(tx: Tx, table: 'bills' | 'collections', col: string, voids: string): Promise<number> {
   const r = (await tx.query<{ m: string | null }>(
     `SELECT GREATEST((SELECT MAX(${col}) FROM ${table}), (SELECT MAX(${col}) FROM ${voids})) AS m`)).rows[0];
   return n(r.m) + 1;

@@ -100,6 +100,7 @@ export const ASK_TABLES = `
 - maal_stock(gaadi_no, supplier, maal, grade, aaya, bika, kharab, bacha, khuli, aayi) — stock by gaadi and grade ('1' | '2' | '3'); khuli = the gaadi is still open. "Ek number kitna bacha" = SUM(bacha) WHERE grade = '1' AND khuli.
 - rojmel(id, din, disha, head, party, note, mode, rakam) — other money in (disha 'aaya') or out ('gaya'): kharcha, mazdoori, bhada, supplier payments, etc.
 On an angoor (grapes) shop "dana" in these columns counts boxes.
+On a cheeku (sapota) shop "dana" in these columns counts boxes too.
 Amounts are rupees (numeric); din / aayi / band / aakhri_* are 'YYYY-MM-DD' text, compare them as text.`;
 
 const BASE_TABLES = /\b(bills|bill_lines|bill_voids|collections|collection_voids|buyers|buyer_kyc|buyer_photos|trucks|truck_grades|spoilage|pickups|staff|daybook_entries|udhaar_entries|rates|brands|users|devices|sessions|shops|shop_members|shop_counters|otp_codes|changes|voice_turns|app_releases|print_jobs|print_stations|udhaar_alerts|slip_requests|labour_adjustments|information_schema|pg_catalog)\b/i;

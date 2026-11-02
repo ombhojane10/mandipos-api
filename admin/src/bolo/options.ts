@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AngoorOptions } from '../entries/Angoor'
+import type { CheekuOptions } from '../entries/Cheeku'
 
 /** The shop's entry options (open gaadis, lots, bhav, banks) — what the pickers and slip cards read. */
-export type Options = AngoorOptions & {
+export type Options = AngoorOptions & CheekuOptions & {
   commodity: string
   trucks: { id: string; number: string; supplier: string; arrivedAt: string; left: number; brandId: string | null; brand: string }[]
   rates: { brandId: string; grade: string; ratePaise: number }[]

@@ -44,6 +44,13 @@ import { BoloChat } from './bolo/BoloChat'
 import { BoloDock } from './bolo/Dock'
 import { exportBuilder, openExport, useCanExport } from './export/doc'
 import { t } from './i18n'
+import { isCheeku } from './commodity'
+// Cheeku Fruits: its own copies of the grapes pages, scanner, labour page and Bikri Entry.
+import { CheekuApmc, CheekuBeejaks, CheekuCommission, CheekuDispatch, CheekuGaadiPata, CheekuMazdoori } from './pages/Cheeku'
+import { CheekuCreditors, CheekuLaddan } from './pages/CheekuCreditors'
+import { CheekuScanHost, openCheekuScan } from './CheekuScan'
+import { CheekuLabourHome } from './pages/CheekuLabour'
+import { CheekuBikriEntry } from './pages/CheekuBikri'
 
 type Session = { me: Me | null; shops: Shop[] | null; reload: () => void }
 const SessionContext = createContext<Session>({ me: null, shops: null, reload: () => {} })
@@ -119,8 +126,20 @@ export const ANGOOR_REPORTS: (typeof REPORTS)[number] = { group: t('Angoor'), it
   { report: 'apmc', label: t('APMC'), key: '', icon: I.IChart },
   { report: 'mazdoori', label: t('Mazdoori'), key: '', icon: I.IWallet },
 ] }
-/** The sidebar's groups for a shop: the grapes desk only where the shop sells grapes. */
-export const reportGroups = (commodity?: string) => (commodity === 'angoor' ? [REPORTS[0], ANGOOR_REPORTS, ...REPORTS.slice(1)] : REPORTS)
+/** A cheeku shop's own desk (its copy of the grapes one), under the dashboard, with its own report keys and pages. */
+export const CHEEKU_REPORTS: (typeof REPORTS)[number] = { group: t('Cheeku'), items: [
+  { report: 'cheeku-dispatch', label: t('Dispatch'), key: '', icon: I.IScan },
+  { report: 'cheeku-pata', label: t('Gaadi kahan'), key: '', icon: I.IPin },
+  { report: 'cheeku-commission', label: t('Commission bikri'), key: '', icon: I.IRupee },
+  { report: 'cheeku-beejak', label: t('Beejak'), key: '', icon: I.ILedger },
+  { report: 'cheeku-creditors', label: t('Supplier creditors'), key: '', icon: I.ITruck },
+  { report: 'cheeku-laddan', label: t('Laddan'), key: '', icon: I.IStore },
+  { report: 'cheeku-apmc', label: t('APMC'), key: '', icon: I.IChart },
+  { report: 'cheeku-mazdoori', label: t('Mazdoori'), key: '', icon: I.IWallet },
+] }
+/** The sidebar's groups for a shop: the grapes desk only where the shop sells grapes; cheeku's own desk for cheeku. */
+export const reportGroups = (commodity?: string) => (commodity === 'angoor' ? [REPORTS[0], ANGOOR_REPORTS, ...REPORTS.slice(1)]
+  : isCheeku(commodity) ? [REPORTS[0], CHEEKU_REPORTS, ...REPORTS.slice(1)] : REPORTS)
 
 const LAST_SHOP = 'mandipos-shop'
 
@@ -131,7 +150,8 @@ const LAST_SHOP = 'mandipos-shop'
  */
 function BranchBar({ shopId, shops, admin, report }: { shopId: string; shops: Shop[]; admin: boolean; report: Report }) {
   const here = shops.find((s) => s.id === shopId)
-  if (!here) return null
+  // A cheeku shop shows no branch tabs (the shop picker on the left still switches).
+  if (!here || isCheeku(here.commodity)) return null
   const owners = new Set(here.ownerPhones ?? [])
   const group = admin ? shops.filter((s) => s.id === shopId || (s.ownerPhones ?? []).some((p) => owners.has(p))) : shops
   if (group.length < 2) return null
@@ -307,6 +327,7 @@ export default function App() {
   }
 
   // A labour login gets the scanner alone, as in the app.
+  if (me && !me.admin && shop && me.labourShopIds?.includes(shop.id) && isCheeku(shop.commodity)) return <CheekuLabourHome shop={shop} onSignOut={signOut} />
   if (me && !me.admin && shop && me.labourShopIds?.includes(shop.id)) return <LabourHome shop={shop} onSignOut={signOut} />
 
   return (
@@ -375,6 +396,7 @@ export default function App() {
           <span className="top-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).replace(/ (\w{3}) /, '-$1-')}</span>
           {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
           {shopId && shop?.commodity === 'angoor' && <button className="export-btn scan-btn" onClick={() => openScan(shopId)} aria-label={t('Scan')}><I.IScan /><span>{t('Scan')}</span></button>}
+          {shopId && isCheeku(shop?.commodity) && <button className="export-btn scan-btn" onClick={() => openCheekuScan(shopId)} aria-label={t('Scan')}><I.IScan /><span>{t('Scan')}</span></button>}
           {shopId && <button className="new-btn top-new" onClick={() => openEntry()}>+ {t('Nayi entry')}</button>}
           <button className="goto" onClick={() => setGoto(true)} aria-label={t('Go To')}>
             <I.ISearch /><span className="label">{t('Dhoondhein')}…</span>
@@ -410,6 +432,7 @@ export default function App() {
         <VoucherHost />
         <WhatsAppHost />
         <ScanHost />
+        <CheekuScanHost />
         {shopId && <BoloDock key={`bolo-${shopId}`} shopId={shopId} screen={title} onBoloPage={current === 'bolo'} />}
         <ExportHost shopId={shopId} fallback={shop ?? null} />
         <Help />
@@ -419,6 +442,7 @@ export default function App() {
 }
 
 function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
+  const cheeku = isCheeku(useSession().shops?.find((s) => s.id === shopId)?.commodity)
   switch (report) {
     case 'daybook': return <DayBook key={shopId} shopId={shopId} />
     case 'bankjama': return <Deposits key={shopId} shopId={shopId} />
@@ -444,6 +468,14 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'laddan': return <Laddan key={shopId} shopId={shopId} />
     case 'apmc': return <Apmc key={shopId} shopId={shopId} />
     case 'mazdoori': return <Mazdoori key={shopId} shopId={shopId} />
+    case 'cheeku-dispatch': return <CheekuDispatch key={shopId} shopId={shopId} />
+    case 'cheeku-pata': return <CheekuGaadiPata key={shopId} shopId={shopId} />
+    case 'cheeku-commission': return <CheekuCommission key={shopId} shopId={shopId} />
+    case 'cheeku-beejak': return <CheekuBeejaks key={shopId} shopId={shopId} />
+    case 'cheeku-creditors': return <CheekuCreditors key={shopId} shopId={shopId} />
+    case 'cheeku-laddan': return <CheekuLaddan key={shopId} shopId={shopId} />
+    case 'cheeku-apmc': return <CheekuApmc key={shopId} shopId={shopId} />
+    case 'cheeku-mazdoori': return <CheekuMazdoori key={shopId} shopId={shopId} />
     case 'company': return <Company key={shopId} shopId={shopId} />
     case 'products': return <Products key={shopId} shopId={shopId} />
     case 'groups': return <ProductGroups key={shopId} shopId={shopId} />
@@ -464,7 +496,7 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
     case 'jv': return <JournalVouchers key={shopId} shopId={shopId} />
     case 'cn': return <CreditNotes key={shopId} shopId={shopId} />
     case 'invoices': return <TaxInvoices key={shopId} shopId={shopId} />
-    case 'bikri': return <BikriEntry key={shopId} shopId={shopId} />
+    case 'bikri': return cheeku ? <CheekuBikriEntry key={shopId} shopId={shopId} /> : <BikriEntry key={shopId} shopId={shopId} />
     case 'bolo': return <BoloChat key={shopId} shopId={shopId} mode="page" screen="Bolo" />
     default: return <Dashboard key={shopId} shopId={shopId} />
   }
@@ -472,7 +504,7 @@ function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
 
 function titleOf(r: Route): string {
   switch (r.page) {
-    case 'report': return r.report === 'settings' ? t('Settings') : [...REPORTS, ANGOOR_REPORTS].flatMap((g) => g.items).find((i) => i.report === r.report)?.label ?? t('Dashboard')
+    case 'report': return r.report === 'settings' ? t('Settings') : [...REPORTS, ANGOOR_REPORTS, CHEEKU_REPORTS].flatMap((g) => g.items).find((i) => i.report === r.report)?.label ?? t('Dashboard')
     case 'grahak': return t('Grahak Khata')
     case 'supplier': return t('Supplier Khata')
     case 'shops': return t('Sab Dukaan')

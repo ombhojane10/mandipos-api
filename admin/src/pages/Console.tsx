@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api, type Shop } from '../api'
 import { phone, rupees } from '../format'
 import { useLoad } from '../useLoad'
+import { isCheeku } from '../commodity'
+import { CHEEKU_APMC_SETTING } from '../cheeku'
 import './console.css'
 
 /**
@@ -11,7 +13,7 @@ import './console.css'
  */
 type Role = 'admin' | 'accountant' | 'labour'
 const ROLES: { v: Role; label: string }[] = [{ v: 'admin', label: 'Malik' }, { v: 'accountant', label: 'Munim' }, { v: 'labour', label: 'Labour' }]
-const MAAL: Record<string, string> = { nariyal: 'Nariyal', angoor: 'Angoor', amrud: 'Amrud' }
+const MAAL: Record<string, string> = { nariyal: 'Nariyal', angoor: 'Angoor', amrud: 'Amrud', cheeku: 'Cheeku' }
 
 type Member = { userId: string; phone: string; name: string; role: Role; since: string; devices: number; lastSeenAt: string | null }
 type Device = { id: string; code: string; label: string; platform: string; appVersion: string; lastSeenAt: string | null; phone: string; name: string }
@@ -137,7 +139,7 @@ function ShopPage({ id, reload }: { id: string; reload: () => void }) {
       </div>
       <Form d={d} done={refresh} title="Dukaan" fields={['name', 'nickname', 'mandi', 'shopNo', 'phad', 'address', 'gstin']} />
       <Team d={d} done={refresh} />
-      <Form d={d} done={refresh} title="Slip" fields={['slipCode', 'phone', 'dispatchPhone', 'slipPhones', 'udhaarRates', 'slipWhatsapp', ...(d.commodity === 'angoor' ? ['apmcOn' as const] : []), 'printerHost', 'printerDots']} />
+      <Form d={d} done={refresh} title="Slip" fields={['slipCode', 'phone', 'dispatchPhone', 'slipPhones', 'udhaarRates', 'slipWhatsapp', ...(d.commodity === 'angoor' ? ['apmcOn' as const] : isCheeku(d.commodity) && CHEEKU_APMC_SETTING ? ['apmcOn' as const] : []), 'printerHost', 'printerDots']} />
       <Form d={d} done={refresh} title="Munim" fields={['slipLimitPaise', 'staffBackupCode']} />
       <Form d={d} done={refresh} title="Udhaar" fields={['udhaarAlerts']} />
       <Banks d={d} done={refresh} />

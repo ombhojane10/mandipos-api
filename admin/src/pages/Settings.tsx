@@ -5,6 +5,7 @@ import { LANGS, lang, setLang, t } from '../i18n'
 import { booksChanged } from '../useLoad'
 import { Skeleton } from '../ui'
 import { settingsProblems } from '../settingsCheck'
+import { commodityLabel } from '../commodity'
 
 const DOTS = [{ key: '384', label: t('2 inch') }, { key: '576', label: t('3 inch') }, { key: '832', label: t('4 inch') }] as const
 const blankBank: BankAccount = { holder: '', bank: '', ifsc: '', account: '' }
@@ -69,7 +70,7 @@ export function Settings({ shopId }: { shopId: string }) {
       {bad(k) && <small className="fld-err">{bad(k)}</small>}
     </>
   )
-  const toggle = (k: 'udhaarRates' | 'udhaarAlerts') => (
+  const toggle = (k: 'udhaarRates' | 'udhaarAlerts' | 'apmcOn') => (
     <Seg value={f[k] ? 'on' : 'off'} onChange={(v) => set(k, v === 'on')} options={[{ key: 'on', label: t('Haan') }, { key: 'off', label: t('Nahi') }]} />
   )
 
@@ -97,7 +98,7 @@ export function Settings({ shopId }: { shopId: string }) {
           <Row label={t('Contact person')}>{text('contactPerson', 80)}</Row>
           <Row label={t('Email')}>{text('email', 120)}</Row>
         </>
-        <Row label={t('Maal')}><span className="set-static">{f.commodity === 'amrud' ? t('Amrud') : f.commodity === 'angoor' ? t('Angoor') : t('Nariyal')}</span></Row>
+        <Row label={t('Maal')}><span className="set-static">{commodityLabel(f.commodity)}</span></Row>
       </Section>
 
       <Section title={t('Parchi')}>
@@ -112,6 +113,10 @@ export function Settings({ shopId }: { shopId: string }) {
           <Money value={f.slipLimitPaise} onChange={(v) => set('slipLimitPaise', v)} />
         </Row>
         <Row label={t('Udhaar parchi par bhav')}>{toggle('udhaarRates')}</Row>
+        {/* Cheeku only: other shops' Settings page stays exactly as it was. */}
+        {f.commodity === 'cheeku' && (
+          <Row label={t('APMC 1%')} hint={t('Nayi parchi par lagega; purani parchi waisi hi rahegi')}>{toggle('apmcOn')}</Row>
+        )}
       </Section>
 
       <Section title={t('Ledger')}>

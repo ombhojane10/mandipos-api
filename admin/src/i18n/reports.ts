@@ -170,6 +170,18 @@ export const REPORTS: Record<string, readonly [string, string]> = {
   'Dukaan {n}': ['Shop {n}', 'दुकान {n}'],
   'Amrud': ['Guava', 'अमरूद'],
   'Angoor': ['Grapes', 'अंगूर'],
+  'Cheeku': ['Sapota', 'चीकू'],
+  // Cheeku: where the truck is coming from (the gaadi form's label).
+  'Gaadi kahan se aa rahi hai': ['Where the truck is coming from', 'गाड़ी कहाँ से आ रही है'],
+  // Cheeku: each party's own commission %.
+  'Default commission': ['Default commission', 'डिफ़ॉल्ट कमीशन'],
+  'Commission %': ['Commission %', 'कमीशन %'],
+  'Apna': ['Own', 'अपना'],
+  'Default': ['Default', 'डिफ़ॉल्ट'],
+  'Commission 0 se 50% tak': ['Commission must be 0 to 50%', 'कमीशन 0 से 50% तक'],
+  'Jis party ka apna % nahi, us par yeh lagega': ['Charged to every party without its own %', 'जिस पार्टी का अपना % नहीं, उस पर यह लगेगा'],
+  'Is party ka apna %. Khali karein to default lagega': ["This party's own %. Clear it to use the default", 'इस पार्टी का अपना %। खाली करें तो डिफ़ॉल्ट लगेगा'],
+  'Default %. Badlein to is party ka apna ho jayega': ["Default %. Change it to give this party its own", 'डिफ़ॉल्ट %। बदलें तो इस पार्टी का अपना हो जाएगा'],
   'Nariyal': ['Coconut', 'नारियल'],
   'Approve': ['Approve', 'मंज़ूर करें'],
   'Reject': ['Reject', 'रिजेक्ट करें'],

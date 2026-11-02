@@ -11,6 +11,8 @@ import { booksChanged, useLoad } from '../useLoad'
 import { PeriodBar, Skeleton } from '../ui'
 import { dayRange, dmyLong, fileName, rs, useExport } from '../export/doc'
 import { BuyerPicker, Field, Money, Seg, Sheet, Tick, type PickedBuyer } from '../entries/fields'
+import { isCheeku } from '../commodity'
+import { CHEEKU_CAPS_NAMES } from '../cheeku'
 
 // ================================================================ Vouchers: JV, Credit Note, Invoices, Bikri Entry
 
@@ -44,7 +46,10 @@ const reasonLabel = (r: Reason) => REASONS.find((x) => x.key === r)?.label ?? r
 const gradeLabel = (g: string) => ({ '1': '1st', '2': '2nd', '3': '3rd', mix: 'Mix' } as Record<string, string>)[g] ?? g
 const KINDS: { key: Kind; label: string }[] = [{ key: 'grahak', label: t('Grahak') }, { key: 'supplier', label: t('Supplier') }, { key: 'head', label: t('Head') }]
 const caps = { textTransform: 'uppercase' as const }
-const useCaps = (shopId: string) => useSession().shops?.find((s) => s.id === shopId)?.commodity === 'angoor'
+const useCaps = (shopId: string) => {
+  const commodity = useSession().shops?.find((s) => s.id === shopId)?.commodity
+  return isCheeku(commodity) ? CHEEKU_CAPS_NAMES : commodity === 'angoor'
+}
 
 /** Rupees in Indian words: "Rupees One Lakh Twenty Thousand Only". */
 function inWords(paise: number): string {

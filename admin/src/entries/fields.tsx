@@ -43,13 +43,13 @@ export function Field({ label, children, hint, error }: { label: string; childre
 }
 
 /** Rupees in, paise out. Empty = 0. */
-export function Money({ value, onChange, autoFocus, placeholder = '0' }: { value: number; onChange: (paise: number) => void; autoFocus?: boolean; placeholder?: string }) {
+export function Money({ value, onChange, autoFocus, placeholder = '0', selectOnFocus }: { value: number; onChange: (paise: number) => void; autoFocus?: boolean; placeholder?: string; /** Touching the box selects its number, so a new price simply replaces the old. */ selectOnFocus?: boolean }) {
   const [text, setText] = useState(value ? String(value / 100) : '')
   useEffect(() => { if (Math.round(Number(text || 0) * 100) !== value) setText(value ? String(value / 100) : '') }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <span className="money-in">
       <span>₹</span>
-      <input className="field" inputMode="decimal" placeholder={placeholder} autoFocus={autoFocus} value={text}
+      <input className="field" inputMode="decimal" placeholder={placeholder} autoFocus={autoFocus} value={text} onFocus={(e) => { if (selectOnFocus) e.target.select() }}
         onChange={(e) => {
           const t = e.target.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1')
           setText(t); onChange(Math.round(Number(t || 0) * 100))

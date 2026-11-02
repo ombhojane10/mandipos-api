@@ -4,6 +4,7 @@ import { useSession } from '../App'
 import { ago, date, phone } from '../format'
 import { Skeleton } from '../ui'
 import { t } from '../i18n'
+import { commodityLabel } from '../commodity'
 
 /** New shops waiting for approval; the owner's app opens the shop the moment it is approved. */
 export function Requests() {
@@ -54,7 +55,7 @@ function Request({ shop, onDone }: { shop: Shop; onDone: () => void }) {
   return (
     <div className="card req">
       <b style={{ fontSize: 16 }}>{shop.name}</b>
-      <span className="muted">{[shop.mandi, shop.shopNo && t('Dukaan {n}', { n: shop.shopNo }), shop.commodity === 'amrud' ? t('Amrud') : shop.commodity === 'angoor' ? t('Angoor') : t('Nariyal'), shop.gstin].filter(Boolean).join(' · ')}</span>
+      <span className="muted">{[shop.mandi, shop.shopNo && t('Dukaan {n}', { n: shop.shopNo }), commodityLabel(shop.commodity), shop.gstin].filter(Boolean).join(' · ')}</span>
       <span className="muted"><a className="call" href={`tel:+91${shop.owner.phone}`}>☎ {phone(shop.owner.phone)}</a> · {ago(shop.createdAt)}</span>
       {error && <p className="error" role="alert">{error}</p>}
       <div className="actions">

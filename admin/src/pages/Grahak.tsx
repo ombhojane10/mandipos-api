@@ -11,6 +11,8 @@ import { balRs, dmy, fileName, rs, useExport } from '../export/doc'
 import { Field, Sheet } from '../entries/fields'
 import { AreaDatalist } from './Masters'
 import { GrahakCrates } from './CrateStore'
+import { isCheeku } from '../commodity'
+import { CHEEKU_CAPS_NAMES, CHEEKU_LEDGER_GRADES } from '../cheeku'
 
 /** Every grahak of the shop, searchable; biggest baaki first. Enter opens the khata. */
 export function GrahakList({ shopId }: { shopId: string }) {
@@ -102,7 +104,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
         <GrahakCrates shopId={shopId} buyerId={buyerId} />
         {me?.admin && mobile && <div><span className="lb">{t('Poora market')}</span><a className="v call" href={href({ page: 'person', key: b.phone })}>{t('Dekhein')} ›</a></div>}
       </div>
-      <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} grades={shops?.find((x) => x.id === shopId)?.commodity !== 'angoor'} exportAs={{
+      <Ledger closingPaise={tot.balancePaise} rows={history} shopId={shopId} grades={isCheeku(shops?.find((x) => x.id === shopId)?.commodity) ? CHEEKU_LEDGER_GRADES : shops?.find((x) => x.id === shopId)?.commodity !== 'angoor'} exportAs={{
         title: 'CUSTOMER LEDGER', banks: true,
         party: { code: b.code || b.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 6), description: [b.name, b.destination, mobile ? b.phone : ''].filter(Boolean).join(' '), address: b.address },
       }} />
@@ -114,7 +116,7 @@ export function GrahakKhata({ shopId, buyerId }: { shopId: string; buyerId: stri
 /** A grahak's details changed: name (in capitals for a grapes shop), code, mobile, pata. One owing nothing can be hidden. */
 function GrahakEdit({ shopId, b, balancePaise, onClose }: { shopId: string; b: BuyerDetail['buyer']; balancePaise: number; onClose: () => void }) {
   const { shops } = useSession()
-  const caps = shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
+  const caps = isCheeku(shops?.find((x) => x.id === shopId)?.commodity) ? CHEEKU_CAPS_NAMES : shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
   const [f, setF] = useState({ name: b.name, code: b.code, phone: b.phone, address: b.address, destination: b.destination, area: b.area ?? '', gstin: b.gstin ?? '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')

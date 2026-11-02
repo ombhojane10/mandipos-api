@@ -9,10 +9,13 @@ import { Skeleton } from '../ui'
 import { fileName, rs, useExport } from '../export/doc'
 import { Field, Money, Seg, Sheet } from '../entries/fields'
 import { settingsProblems } from '../settingsCheck'
+import { isCheeku } from '../commodity'
+import { CHEEKU_CAPS_NAMES } from '../cheeku'
 
 /** Grapes shops write every name in capitals; the inputs show it as typed. */
 function useCaps(shopId: string) {
   const { shops } = useSession()
+  if (isCheeku(shops?.find((x) => x.id === shopId)?.commodity)) return CHEEKU_CAPS_NAMES
   return shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
 }
 const CAPS = { textTransform: 'uppercase' as const }

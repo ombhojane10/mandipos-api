@@ -3943,3 +3943,535 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     await http().post(`/v1/admin/shops/${j}/branch-team`).set(w).send({ phone: '9845910009', roles: { [j]: 'accountant' } }).expect(200);
   });
 });
+
+describe('cheeku', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  // Last in the file: its slip with a pickup would otherwise reach the angoor pickup-notice tests' counts.
+  it('is a commodity of its own that runs the angoor flow: lots, APMC, caps names, lot-wise slips on the portal', async () => {
+    const s = await login('9829209001');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Fruits', mandi: 'Azadpur', shopNo: 'C-90', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    expect(res.me.shop).toMatchObject({ commodity: 'cheeku', apmcOn: true, staffBackupCode: '99' });
+    expect(res.me.shops).toEqual([expect.objectContaining({ name: 'Cheeku Fruits', commodity: 'cheeku' })]);
+
+    // Gaadi 7788 from Ravi at Shed 9: 30 boxes of Kalipatti at 12 kg; the angoor-only columns and tables take it.
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7(), billId = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '7788', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 30, received_qty: 30, rate_paise: 50000, box_grams: 12000 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: day, pay_mode: 'cash', total_paise: 606000, paid_paise: 606000, cash_paise: 606000, chungi_paise: 6000, apmc_paise: 6000, slip_no: 1 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 10, rate_paise: 60000 } },
+      { table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: billId, qty: 4 } },
+      { table: 'spoilage', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', qty: 2, business_date: day, kind: 'sample' } },
+      { table: 'staff', row: { id: uuidv7(), created_at: t, updated_at: t, name: 'Mohan', passcode: '1234' } },
+    ] }).expect(200);
+    expect(pushed.body.results.map((r: any) => r.status)).toEqual(Array(8).fill('applied'));
+
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209001' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209001', code: OtpService.issuedForTests.get('9829209001') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+
+    // The portal offers the grapes forms: every quality on every open gaadi.
+    const opts = (await http().get(`${base}/entry-options`).set(web).expect(200)).body;
+    expect(opts.commodity).toBe('cheeku');
+    expect(opts.apmcOn).toBe(true);
+    expect(opts.lots).toEqual([expect.objectContaining({ truckId, brandId, quality: 'Kalipatti', number: '7788', supplier: 'Ravi', location: 'Shed 9', left: 18, boxGrams: 12000 })]);
+
+    // A udhaar slip, lot-wise as angoor's: 5 × ₹600 = ₹3,000 + APMC ₹30, the grahak's name in capitals.
+    const b = (await http().post(`${base}/entries/parchi`).set(web).send({
+      buyerName: 'Cheeku Grahak', lots: [{ truckId, brandId, qty: 5, ratePaise: 60000 }], pay: 'credit',
+    }).expect(201)).body;
+    const pulled = await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200);
+    expect(pulled.body.changes.find((x: any) => x.table === 'bills' && x.row.id === b.billId).row)
+      .toMatchObject({ truck_id: null, total_paise: 303000, apmc_paise: 3000, pay_mode: 'credit', buyer_name: 'CHEEKU GRAHAK' });
+
+    // APMC off from the website's Settings: the next slip carries none, the earlier one keeps its ₹30.
+    expect((await http().get(`${base}/settings`).set(web).expect(200)).body.apmcOn).toBe(true);
+    expect((await http().post(`${base}/settings`).set(web).send({ apmcOn: false }).expect(200)).body.apmcOn).toBe(false);
+    expect((await http().get(`${base}/entry-options`).set(web).expect(200)).body.apmcOn).toBe(false);
+    expect((await http().get('/v1/me').set(auth(owner))).body.shop.apmcOn).toBe(false);
+    const noApmc = (await http().post(`${base}/entries/parchi`).set(web).send({
+      buyerName: 'Cheeku Grahak', lots: [{ truckId, brandId, qty: 2, ratePaise: 60000 }], pay: 'credit',
+    }).expect(201)).body;
+    const afterOff = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body.changes;
+    expect(afterOff.find((x: any) => x.table === 'bills' && x.row.id === noApmc.billId).row).toMatchObject({ total_paise: 120000, apmc_paise: 0 });
+    expect(afterOff.find((x: any) => x.table === 'bills' && x.row.id === b.billId).row).toMatchObject({ apmc_paise: 3000 });
+    // And back on from the terminal's own cheeku switch.
+    await http().post('/v1/cheeku/shops/apmc').set(auth(owner)).send({ on: true }).expect(204);
+    expect((await http().get(`${base}/settings`).set(web).expect(200)).body.apmcOn).toBe(true);
+
+    // A shop can switch to cheeku and back; anything else is refused.
+    await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'angoor' }).expect(204);
+    await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'cheeku' }).expect(204);
+    await http().post('/v1/shops/commodity').set(auth(owner)).send({ commodity: 'chiku' }).expect(400);
+    expect((await http().get('/v1/me').set(auth(owner))).body.shop.commodity).toBe('cheeku');
+  });
+
+  it('has its own desk, scanner, beejak, creditors, books and switches, and refuses a shop that is not cheeku', async () => {
+    const s = await login('9829209011');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Two', mandi: 'Azadpur', shopNo: 'C-91', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '5511', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 20, received_qty: 20, rate_paise: 40000, box_grams: 12000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209011' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209011', code: OtpService.issuedForTests.get('9829209011') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+
+    // 6 boxes on udhaar, then the cheeku desk counts it: one slip, nothing handed over yet, 14 left on the gaadi.
+    const slip = (await http().post(`${base}/entries/parchi`).set(web).send({
+      buyerName: 'Cheeku Grahak', lots: [{ truckId, brandId, qty: 6, ratePaise: 50000 }], pay: 'credit',
+    }).expect(201)).body;
+    const desk = (await http().get(`${base}/cheeku?from=${day}&to=${day}`).set(web).expect(200)).body;
+    expect(desk.totals).toMatchObject({ slips: 1, boxes: 6, picked: 0, openGaadis: 1 });
+    expect(desk.gaadis[0]).toMatchObject({ truckId, location: 'Shed 9', sold: 6, left: 14 });
+
+    // The cheeku scanner: 4 of 6 handed over, 1 reported broken, the accountant turns it down; the labour page counts the 4.
+    expect((await http().get(`${base}/cheeku/pickup?code=${slip.billId}`).set(web).expect(200)).body).toMatchObject({ billId: slip.billId, boxes: 6, left: 6 });
+    expect((await http().post(`${base}/cheeku/pickup`).set(web).send({ billId: slip.billId, qty: 4 }).expect(201)).body).toMatchObject({ picked: 4, left: 2 });
+    await http().post(`${base}/cheeku/breakages`).set(web).send({ billId: slip.billId, brandId, truckId, qty: 1 }).expect(201);
+    const brk = (await http().get(`${base}/cheeku/breakages`).set(web).expect(200)).body.breakages[0];
+    expect(brk).toMatchObject({ qty: 1, status: 'pending' });
+    await http().post(`${base}/cheeku/breakages/${brk.id}/reject`).set(web).expect(201);
+    expect((await http().get(`${base}/cheeku/labour`).set(web).expect(200)).body.today).toBe(4);
+
+    // The beejak from the terminal, and the same one on the website: 6 × ₹450 = ₹2,700 less 6% commission.
+    expect((await http().get(`/v1/cheeku/beejaks/${truckId}`).set(auth(owner)).expect(200)).body).toMatchObject({ truckId, party: 'Ravi', sold: 6, saved: null });
+    const saved = (await http().post(`/v1/cheeku/beejaks/${truckId}`).set(auth(owner)).send({
+      bhav: [{ quality: 'Kalipatti', ratePaise: 45000 }], heads: [{ key: 'commission', rate: 600 }], by: 'Mohan',
+    }).expect(201)).body;
+    expect(saved).toMatchObject({ no: 1, boxes: 6, grossPaise: 270000, netPaise: 270000 - 16200 });
+    expect((await http().get(`${base}/cheeku/beejaks`).set(web).expect(200)).body.beejaks).toEqual([expect.objectContaining({ id: saved.id })]);
+    expect((await http().get(`${base}/cheeku/beejak/${truckId}`).set(web).expect(200)).body.saved).toMatchObject({ id: saved.id });
+
+    // Ravi is owed the beejak's net, on the app's and the website's cheeku creditors; the books are beejak books of cheeku's own.
+    const owed = expect.arrayContaining([expect.objectContaining({ name: 'Ravi', creditPaise: 253800 })]);
+    expect((await http().get('/v1/cheeku/beejaks/creditors/list').set(auth(owner)).expect(200)).body.rows).toEqual(owed);
+    expect((await http().get(`${base}/cheeku/creditors`).set(web).expect(200)).body.rows).toEqual(owed);
+    const tb = (await http().get(`${base}/books/trial-balance?on=${day}`).set(web).expect(200)).body;
+    expect(tb).toMatchObject({ grapes: false, cheeku: true });
+    const accounts = (await http().get(`${base}/books/accounts`).set(web).expect(200)).body.accounts.map((a: any) => a.key);
+    expect(accounts).toEqual(expect.arrayContaining(['purchase', 'bj:commission']));
+    expect(accounts).not.toContain('bhada_in');
+
+    // The terminal's own cheeku switches; WhatsApp answers as the grapes one does until a template is approved.
+    await http().post('/v1/cheeku/shops/slip-whatsapp').set(auth(owner)).send({ on: true }).expect(204);
+    await http().post('/v1/cheeku/shops/staff-backup-code').set(auth(owner)).send({ code: '4321' }).expect(204);
+    expect((await http().get('/v1/me').set(auth(owner))).body.shop).toMatchObject({ slipWhatsapp: true, staffBackupCode: '4321' });
+    await http().post('/v1/cheeku/whatsapp/slip').set(auth(owner)).send({ id: slip.billId, phone: '9876500031', image: 'iVBORw0KGgo=', params: ['x'] }).expect(409);
+
+    // A grapes shop: every cheeku endpoint refuses it, and its own grape endpoints answer as before.
+    const g = await login('9829209021');
+    const gres = await createApproved(g.accessToken, { name: 'Angoor Next Door', mandi: 'Azadpur', shopNo: 'C-92', role: 'owner', commodity: 'angoor' });
+    const gTruck = uuidv7(), gBrand = uuidv7();
+    await http().post('/v1/sync/push').set(auth(gres.accessToken)).send({ items: [
+      { table: 'trucks', row: { id: gTruck, created_at: t, updated_at: t, number: '3289', supplier: 'Manat', arrived_at: t, location: 'Pillar 320' } },
+      { table: 'brands', row: { id: gBrand, created_at: t, updated_at: t, name: 'Royal' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: gTruck, brand_id: gBrand, grade: '1', billed_qty: 10, received_qty: 10, rate_paise: 100000, box_grams: 10000 } },
+    ] }).expect(200);
+    await http().get(`/v1/cheeku/beejaks/${gTruck}`).set(auth(gres.accessToken)).expect(422);
+    await http().post('/v1/cheeku/shops/apmc').set(auth(gres.accessToken)).send({ on: false }).expect(422);
+    await http().post('/v1/cheeku/whatsapp/slip').set(auth(gres.accessToken)).send({ id: uuidv7(), phone: '9876500031', image: 'iVBORw0KGgo=', params: ['x'] }).expect(422);
+    expect((await http().get(`/v1/beejaks/${gTruck}`).set(auth(gres.accessToken)).expect(200)).body).toMatchObject({ truckId: gTruck, party: 'Manat' });
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209021' }).expect(204);
+    const gweb = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209021', code: OtpService.issuedForTests.get('9829209021') }).expect(200)).body.token);
+    const gbase = `/v1/admin/shops/${gres.me.shop.id}`;
+    await http().get(`${gbase}/cheeku?from=${day}&to=${day}`).set(gweb).expect(422);
+    await http().get(`${gbase}/cheeku/creditors`).set(gweb).expect(422);
+    expect((await http().get(`${gbase}/angoor?from=${day}&to=${day}`).set(gweb).expect(200)).body.gaadis).toEqual([expect.objectContaining({ truckId: gTruck, location: 'Pillar 320' })]);
+    expect((await http().get(`${gbase}/books/trial-balance?on=${day}`).set(gweb).expect(200)).body).toMatchObject({ grapes: true, cheeku: false });
+  });
+
+  it('charges each party its own commission %: set on the website or remembered off a beejak, the rest at the default', async () => {
+    const s = await login('9829209031');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Commission', mandi: 'Azadpur', shopNo: 'C-93', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    // Two parties' gaadis, 10 boxes each sold at ₹500: ₹5,000 of bikri apiece.
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), ravi = uuidv7(), manat = uuidv7();
+    const items: object[] = [{ table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } }];
+    [[ravi, 'Ravi', 'R1'], [manat, 'Manat', 'M1']].forEach(([truckId, supplier, number], i) => {
+      const billId = uuidv7();
+      items.push(
+        { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number, supplier, arrived_at: t, location: 'Shed 9' } },
+        { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 10, received_qty: 10, rate_paise: 40000, box_grams: 12000 } },
+        { table: 'bills', row: { id: billId, created_at: t, number: `A1/2627/00000${i + 1}`, kind: 'kachchi', buyer_name: 'Cash', business_date: day, pay_mode: 'cash', total_paise: 500000, paid_paise: 500000, cash_paise: 500000, slip_no: i + 1 } },
+        { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 10, rate_paise: 50000 } },
+      );
+    });
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209031' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209031', code: OtpService.issuedForTests.get('9829209031') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const desk = async () => (await http().get(`${base}/cheeku?from=${day}&to=${day}`).set(web).expect(200)).body;
+    const party = (d: any, name: string) => d.suppliers.find((x: any) => x.name === name);
+
+    // Nobody has their own % yet: everyone at 6%.
+    expect((await http().get(`${base}/cheeku/commissions`).set(web).expect(200)).body).toEqual({ defaultBps: 600, parties: [] });
+    let d = await desk();
+    expect(d.commissionBps).toBe(600);
+    expect(party(d, 'Ravi')).toMatchObject({ bps: 600, ownRate: false, salesPaise: 500000, commissionPaise: 30000, netPaise: 470000 });
+
+    // Ravi gets 4.5% from the website; Manat stays on the default, which moves to 7%.
+    await http().post(`${base}/cheeku/commissions`).set(web).send({ supplier: 'Ravi', bps: 450 }).expect(201);
+    await http().post(`${base}/cheeku/commissions`).set(web).send({ supplier: '', bps: 700 }).expect(201);
+    await http().post(`${base}/cheeku/commissions`).set(web).send({ supplier: 'Ravi', bps: 6000 }).expect(400);
+    d = await desk();
+    expect(d.commissionBps).toBe(700);
+    expect(party(d, 'Ravi')).toMatchObject({ bps: 450, ownRate: true, commissionPaise: 22500 });
+    expect(party(d, 'Manat')).toMatchObject({ bps: 700, ownRate: false, commissionPaise: 35000 });
+    expect(d.totals.commissionPaise).toBe(57500);
+
+    // Each party's beejak starts at its own %, on the website and the terminal alike.
+    expect((await http().get(`${base}/cheeku/beejak/${ravi}`).set(web).expect(200)).body).toMatchObject({ commissionBps: 450, ownRate: true });
+    expect((await http().get(`/v1/cheeku/beejaks/${manat}`).set(auth(owner)).expect(200)).body).toMatchObject({ commissionBps: 700, ownRate: false });
+
+    // A beejak made on the terminal at 5% for Manat remembers 5% as Manat's own; Ravi's own stays.
+    await http().post(`/v1/cheeku/beejaks/${manat}`).set(auth(owner)).send({ bhav: [{ quality: 'Kalipatti', ratePaise: 50000 }], heads: [{ key: 'commission', rate: 500 }], by: 'Mohan' }).expect(201);
+    const list = (await http().get('/v1/cheeku/commissions').set(auth(owner)).expect(200)).body;
+    expect(list.defaultBps).toBe(700);
+    expect(list.parties).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Manat', bps: 500, updatedBy: 'Mohan' }), expect.objectContaining({ name: 'Ravi', bps: 450 }),
+    ]));
+    // A beejak at the party's own % changes nothing.
+    await http().post(`/v1/cheeku/beejaks/${ravi}`).set(auth(owner)).send({ bhav: [{ quality: 'Kalipatti', ratePaise: 50000 }], heads: [{ key: 'commission', rate: 450 }] }).expect(201);
+    expect((await http().get('/v1/cheeku/commissions').set(auth(owner)).expect(200)).body.parties).toHaveLength(2);
+
+    // Clearing Ravi's own % puts him back on the default.
+    await http().post('/v1/cheeku/commissions').set(auth(owner)).send({ supplier: 'Ravi', bps: null }).expect(200);
+    expect(party(await desk(), 'Ravi')).toMatchObject({ bps: 700, ownRate: false });
+
+    // Cheeku only: a coconut shop is refused, on the website and the terminal.
+    const n = await login('9829209032');
+    const other = await createApproved(n.accessToken, { name: 'Commission Nariyal', mandi: 'Azadpur', shopNo: 'C-94', role: 'owner' });
+    await http().get('/v1/cheeku/commissions').set(auth(other.accessToken)).expect(422);
+    await http().post('/v1/cheeku/commissions').set(auth(other.accessToken)).send({ supplier: 'X', bps: 100 }).expect(422);
+  });
+  it('sends maal on to a grahak: boxes leave the gaadi, the number is typed once, the slip with the maal carries no money, a scanned slip cannot be cancelled', async () => {
+    const s = await login('9829209041');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Forward', mandi: 'Azadpur', shopNo: 'C-95', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '5512', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 20, received_qty: 20, rate_paise: 40000, box_grams: 12000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209041' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209041', code: OtpService.issuedForTests.get('9829209041') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const lots = [{ truckId, brandId, qty: 6, ratePaise: 50000 }];
+
+    // A mobile needs a name, and a real number; nothing to send is refused.
+    await http().post(`${base}/cheeku/forward`).set(web).send({ customer: { name: '', mobile: '9000000011' }, lots, vehicle: 'KA01' }).expect(400);
+    await http().post(`${base}/cheeku/forward`).set(web).send({ customer: { name: 'Mangalore Co', mobile: '12345' }, lots, vehicle: 'KA01' }).expect(400);
+    await http().post(`${base}/cheeku/forward`).set(web).send({ customer: { name: 'Mangalore Co', mobile: '' }, lots: [], vehicle: '' }).expect(400);
+
+    // A new grahak with a mobile: kept with it, and the boxes leave the gaadi's stock (20 - 6).
+    const sent = (await http().post(`${base}/cheeku/forward`).set(web).send({ customer: { name: 'mangalore co', mobile: '9000000011' }, lots, vehicle: 'ka 01 ab 1234' }).expect(201)).body;
+    expect(sent.billId).toBeTruthy();
+    const desk = (await http().get(`${base}/cheeku?from=${day}&to=${day}`).set(web).expect(200)).body;
+    expect(desk.gaadis[0]).toMatchObject({ truckId, sold: 6, left: 14 });
+    expect((await http().get(`${base}/buyers?q=mangalore`).set(web).expect(200)).body.buyers).toEqual([expect.objectContaining({ name: 'MANGALORE CO', phone: '9000000011' })]);
+
+    // The next slip for the same name needs no number: the same grahak, still with the number.
+    const second = (await http().post(`${base}/cheeku/forward`).set(web).send({ customer: { name: 'Mangalore Co', mobile: '' }, lots: [{ truckId, brandId, qty: 2, ratePaise: 50000 }], vehicle: '' }).expect(201)).body;
+    expect((await http().get(`${base}/buyers?q=mangalore`).set(web).expect(200)).body.buyers).toHaveLength(1);
+
+    // The ledger: the shop's own slip keeps the bhav and the supplier's gaadi; nothing is scanned yet.
+    const led = (await http().get(`${base}/cheeku/forward-bills`).set(web).expect(200)).body.bills;
+    expect(led).toHaveLength(2);
+    expect(led.find((b: { billId: string }) => b.billId === sent.billId)).toMatchObject({
+      slipNo: sent.slipNo, person: 'MANGALORE CO', phone: '9000000011', vehicle: 'KA 01 AB 1234', slipTotalPaise: 303000, scannedBoxes: 0,
+      goodsPaise: 300000, lines: [{ quality: 'Kalipatti', qty: 6, slipRatePaise: 50000 }],
+    });
+    expect(led.find((b: { billId: string }) => b.billId === second.billId)).toMatchObject({ person: 'MANGALORE CO', phone: '9000000011' });
+
+    // The slip that goes with the maal: the grahak, the vehicle, the quality and the boxes and the QR's id — no money, rate or supplier anywhere in it.
+    const slip = (await http().get(`${base}/cheeku/forward/${sent.billId}/slip`).set(web).expect(200)).body;
+    expect(slip).toMatchObject({ billId: sent.billId, slipNo: sent.slipNo, vehicle: 'KA 01 AB 1234', grahak: 'MANGALORE CO', lines: [{ quality: 'Kalipatti', qty: 6 }] });
+    const { billId: _qr, ...printed } = slip;
+    expect(JSON.stringify(printed)).not.toMatch(/paise|rate|total|amount|apmc|50000|300000|303000|Ravi|5512/i);
+
+    // A slip that was not sent on is not a forward: no party copy, no cancel.
+    const plain = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerName: 'Plain', lots: [{ truckId, brandId, qty: 1, ratePaise: 50000 }], pay: 'cash' }).expect(201)).body;
+    await http().get(`${base}/cheeku/forward/${plain.billId}/slip`).set(web).expect(404);
+    await http().post(`${base}/cheeku/forward/${plain.billId}/cancel`).set(web).expect(404);
+
+    // Cancelling is allowed only while nothing is scanned: the second slip goes, the first has boxes handed over and stays.
+    await http().post(`${base}/cheeku/forward/${second.billId}/cancel`).set(web).expect(201);
+    expect((await http().get(`${base}/cheeku/forward-bills`).set(web).expect(200)).body.bills).toHaveLength(1);
+    expect((await http().get(`${base}/cheeku?from=${day}&to=${day}`).set(web).expect(200)).body.gaadis[0]).toMatchObject({ sold: 7, left: 13 });
+    await http().post(`${base}/cheeku/forward/${second.billId}/cancel`).set(web).expect(404);
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [{ table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: sent.billId, qty: 1, note: '' } }] }).expect(200);
+    await http().post(`${base}/cheeku/forward/${sent.billId}/cancel`).set(web).expect(422);
+    expect((await http().get(`${base}/cheeku/forward-bills`).set(web).expect(200)).body.bills[0]).toMatchObject({ billId: sent.billId, scannedBoxes: 1 });
+  });
+
+  it('keeps a personal bill for each slip sent on: own rates, bhada, mazdoori, commission, the net, and profit or loss against the buying rate', async () => {
+    const s = await login('9829209051');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Ledger', mandi: 'Azadpur', shopNo: 'C-96', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '5513', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      // Bought at ₹400 a box.
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 40, received_qty: 40, rate_paise: 40000, box_grams: 12000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209051' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209051', code: OtpService.issuedForTests.get('9829209051') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const sent = (await http().post(`${base}/cheeku/forward`).set(web).send({
+      customer: { name: 'Ledger Co', mobile: '' }, lots: [{ truckId, brandId, qty: 10, ratePaise: 50000 }], vehicle: 'KA02LG0001',
+    }).expect(201)).body;
+
+    // Before any edit the bill is the slip as written with nil charges: 10 boxes at ₹500 against ₹400 bought = ₹1,000 profit.
+    const first = (await http().get('/v1/cheeku/forward-bills').set(auth(owner)).expect(200)).body.bills;
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({
+      billId: sent.billId, slipNo: sent.slipNo, person: 'LEDGER CO', vehicle: 'KA02LG0001', edited: false,
+      goodsPaise: 500000, chargesPaise: 0, netPaise: 500000, costPaise: 400000, profitPaise: 100000,
+      lines: [{ brandId, quality: 'Kalipatti', qty: 10, slipRatePaise: 50000, ratePaise: 50000, costRatePaise: 40000 }],
+    });
+
+    // The shop's own bill: ₹420 a box, bhada ₹418, mazdoori ₹76, no commission. ₹4,200 - ₹494 = ₹3,706 against ₹4,000 bought = a ₹294 loss.
+    const saved = (await http().post(`/v1/cheeku/forward-bills/${sent.billId}`).set(auth(owner)).send({
+      rates: { [brandId]: 42000 }, bhadaPaise: 41800, mazdooriPaise: 7600, commissionPaise: 0, by: 'Prince',
+    }).expect(200)).body;
+    expect(saved).toMatchObject({
+      edited: true, editedBy: 'Prince', goodsPaise: 420000, bhadaPaise: 41800, mazdooriPaise: 7600, commissionPaise: 0,
+      chargesPaise: 49400, netPaise: 370600, costPaise: 400000, profitPaise: -29400,
+      lines: [{ qty: 10, slipRatePaise: 50000, ratePaise: 42000 }],
+    });
+    // Edited again: ₹450 and ₹100 commission = a profit.
+    const again = (await http().post(`/v1/cheeku/forward-bills/${sent.billId}`).set(auth(owner)).send({
+      rates: { [brandId]: 45000 }, bhadaPaise: 41800, mazdooriPaise: 7600, commissionPaise: 10000,
+    }).expect(200)).body;
+    expect(again).toMatchObject({ goodsPaise: 450000, chargesPaise: 59400, netPaise: 390600, profitPaise: -9400 });
+    expect((await http().get('/v1/cheeku/forward-bills').set(auth(owner)).expect(200)).body.bills[0]).toMatchObject({ profitPaise: -9400, edited: true, lines: [{ ratePaise: 45000 }] });
+
+    // The slip itself, its stock and its party copy are untouched by the personal bill: still ₹500 a box (+1% APMC).
+    expect(again).toMatchObject({ slipTotalPaise: 505000 });
+    expect((await http().get(`${base}/cheeku/forward/${sent.billId}/slip`).set(web).expect(200)).body.lines).toEqual([{ quality: 'Kalipatti', qty: 10 }]);
+
+    // A slip that was not sent on has no personal bill; a brand not on the slip, a bad rate, or another shop's terminal are refused.
+    const plain = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerName: 'Plain', lots: [{ truckId, brandId, qty: 1, ratePaise: 50000 }], pay: 'cash' }).expect(201)).body;
+    await http().post(`/v1/cheeku/forward-bills/${plain.billId}`).set(auth(owner)).send({ rates: {}, bhadaPaise: 0, mazdooriPaise: 0, commissionPaise: 0 }).expect(404);
+    await http().post(`/v1/cheeku/forward-bills/${sent.billId}`).set(auth(owner)).send({ rates: { [uuidv7()]: 100 }, bhadaPaise: 0, mazdooriPaise: 0, commissionPaise: 0 }).expect(400);
+    await http().post(`/v1/cheeku/forward-bills/${sent.billId}`).set(auth(owner)).send({ rates: {}, bhadaPaise: -5, mazdooriPaise: 0, commissionPaise: 0 }).expect(400);
+    const other = await createApproved((await login('9829209052')).accessToken, { name: 'Not Cheeku', mandi: 'Azadpur', shopNo: 'C-97', role: 'owner', commodity: 'nariyal' });
+    await http().get('/v1/cheeku/forward-bills').set(auth(other.accessToken)).expect(422);
+  });
+  it('sends the bill of a slip sent on to the grahak when it is scanned: queued by the terminal, sent by the server on the first scan from any device, retried until WhatsApp takes it, and shown on the ledger', async () => {
+    const { CheekuForwardSendsService } = await import('../src/cheeku/cheeku-forward-sends.service');
+    const sends = app.get(CheekuForwardSendsService);
+    const s = await login('9829209061');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Bills', mandi: 'Azadpur', shopNo: 'C-98', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const brandId = uuidv7(), truckId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '5599', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 30, received_qty: 30, rate_paise: 40000, box_grams: 12000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209061' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209061', code: OtpService.issuedForTests.get('9829209061') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const forward = async (name: string, mobile: string, qty: number) => (await http().post(`${base}/cheeku/forward`).set(web).send({
+      customer: { name, mobile }, lots: [{ truckId, brandId, qty, ratePaise: 50000 }], vehicle: 'KA01',
+    }).expect(201)).body as { billId: string; slipNo: number };
+    const a = await forward('Bill Co', '9000000071', 3);
+    const b = await forward('Retry Co', '9000000072', 1);
+    const plain = await forward('No Number', '', 1);
+    const board = async () => (await http().get(`${base}/cheeku/forward-bills`).set(web).expect(200)).body as { whatsappOn: boolean; bills: { billId: string; whatsapp: { state: string; tries: number; error: string } }[] };
+    const state = async (billId: string) => (await board()).bills.find((x) => x.billId === billId)!.whatsapp;
+    const scan = (billId: string) => http().post('/v1/sync/push').set(auth(owner)).send({ items: [{ table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: billId, qty: 1, note: '' } }] }).expect(200);
+    const png = 'iVBORw0KGgo=';
+    const queue = (billId: string, phone: string) => http().post(`/v1/cheeku/forward-bills/${billId}/whatsapp`).set(auth(owner)).send({ phone, image: png, params: ['Bill Co', 'Cheeku Bills', '1', '3', '-'] });
+
+    // Before the app has uploaded the picture the ledger says so; a slip with no mobile is not for WhatsApp at all. The bot is off in tests.
+    expect((await board()).whatsappOn).toBe(false);
+    expect(await state(a.billId)).toMatchObject({ state: 'notqueued' });
+    expect(await state(plain.billId)).toMatchObject({ state: 'none' });
+    await http().post(`${base}/cheeku/forward-bills/${a.billId}/whatsapp/resend`).set(web).expect(404);   // nothing to send yet
+
+    // The terminal uploads the picture: refused for a bad number or a picture that is not a PNG, taken otherwise; it waits for the scan.
+    await queue(a.billId, '12345').expect(400);
+    await http().post(`/v1/cheeku/forward-bills/${a.billId}/whatsapp`).set(auth(owner)).send({ phone: '9000000071', image: Buffer.from('not a png').toString('base64'), params: ['x'] }).expect(400);
+    await queue(a.billId, '9000000071').expect(200);
+    await queue(b.billId, '9000000072').expect(200);
+    expect(await state(a.billId)).toMatchObject({ state: 'onscan' });
+
+    const calls: { to: string; params: string[]; bytes: number }[] = [];
+    sends.sender = async (to, _template, params, image) => { calls.push({ to, params, bytes: image.length }); return `wamid.${calls.length}`; };
+    // Nothing scanned yet: nothing goes.
+    expect(await sends.tick()).toMatchObject({ sent: 0 });
+    expect(calls).toHaveLength(0);
+
+    // A scan from any device (a pickup lands as a row) sends the bill once; a second scan does not send it again.
+    await scan(a.billId);
+    expect(await sends.tick()).toMatchObject({ sent: 1 });
+    expect(calls).toEqual([{ to: '919000000071', params: ['Bill Co', 'Cheeku Bills', '1', '3', '-'], bytes: 8 }]);
+    expect(await state(a.billId)).toMatchObject({ state: 'sent', tries: 1 });
+    await scan(a.billId);
+    expect(await sends.tick()).toMatchObject({ sent: 0 });
+    expect(calls).toHaveLength(1);
+
+    // WhatsApp refuses: it is kept, shown with the reason, and tried again later — never dropped.
+    sends.sender = async () => { throw new Error('132001 template not approved'); };
+    await scan(b.billId);
+    expect(await sends.tick()).toMatchObject({ sent: 0, waiting: 1 });
+    expect(await state(b.billId)).toMatchObject({ state: 'pending', tries: 1, error: expect.stringContaining('132001') });
+    expect(await sends.tick()).toMatchObject({ sent: 0, waiting: 0 });   // not before its time
+    sends.sender = async (to, _template, params, image) => { calls.push({ to, params, bytes: image.length }); return `wamid.${calls.length}`; };
+    expect(await sends.tick(new Date(Date.now() + 6 * 60_000))).toMatchObject({ sent: 1 });
+    expect(calls.map((c) => c.to)).toEqual(['919000000071', '919000000072']);
+    expect(await state(b.billId)).toMatchObject({ state: 'sent', error: '' });
+
+    // "Dobara bhejein" sends it again at once, scanned or not (the website's button, and the terminal's).
+    await http().post(`${base}/cheeku/forward-bills/${a.billId}/whatsapp/resend`).set(web).expect(201);
+    expect(await state(a.billId)).toMatchObject({ state: 'pending' });
+    expect(await sends.tick()).toMatchObject({ sent: 1 });
+    expect(calls).toHaveLength(3);
+    await http().post(`/v1/cheeku/forward-bills/${b.billId}/whatsapp/resend`).set(auth(owner)).expect(200);
+    expect(await sends.tick()).toMatchObject({ sent: 1 });
+    expect(calls).toHaveLength(4);
+
+    // A slip cancelled before any scan is never sent; another shop's terminal is refused.
+    const c = await forward('Cancel Co', '9000000073', 1);
+    await queue(c.billId, '9000000073').expect(200);
+    await http().post(`${base}/cheeku/forward/${c.billId}/cancel`).set(web).expect(201);
+    expect(await sends.tick()).toMatchObject({ sent: 0 });
+    expect(calls).toHaveLength(4);
+    const other = await createApproved((await login('9829209062')).accessToken, { name: 'Not Cheeku', mandi: 'Azadpur', shopNo: 'C-99', role: 'owner', commodity: 'nariyal' });
+    await http().post(`/v1/cheeku/forward-bills/${a.billId}/whatsapp`).set(auth(other.accessToken)).send({ phone: '9000000071', image: png, params: ['x'] }).expect(422);
+  });
+  it('sends any scanned cheeku slip to its grahak on WhatsApp and by SMS with a link that opens the same picture', async () => {
+    const { CheekuForwardSendsService } = await import('../src/cheeku/cheeku-forward-sends.service');
+    const sends = app.get(CheekuForwardSendsService);
+    const s = await login('9829209063');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Scan', mandi: 'Azadpur', shopNo: 'C-101', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const brandId = uuidv7(), truckId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '5577', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 30, received_qty: 30, rate_paise: 40000, box_grams: 12000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209063' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209063', code: OtpService.issuedForTests.get('9829209063') }).expect(200)).body.token);
+    const slip = (await http().post(`/v1/admin/shops/${id}/entries/parchi`).set(web).send({ buyerName: 'Scan Grahak', lots: [{ truckId, brandId, qty: 4, ratePaise: 50000 }], pay: 'cash' }).expect(201)).body as { billId: string };
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]).toString('base64');
+
+    // The Bikri laddan route still takes only a slip sent on; the slip route takes any slip.
+    await http().post(`/v1/cheeku/forward-bills/${slip.billId}/whatsapp`).set(auth(owner)).send({ phone: '9000000081', image: png, params: ['x'] }).expect(404);
+    await http().post(`/v1/cheeku/slips/${slip.billId}/on-scan`).set(auth(owner)).send({ phone: '12', image: png, params: ['x'] }).expect(400);
+    await http().post(`/v1/cheeku/slips/${slip.billId}/on-scan`).set(auth(owner)).send({ phone: '9000000081', image: png, params: ['Scan Grahak', 'Cheeku Scan', '1', '4', '₹2,000 नकद'] }).expect(200);
+
+    const wa: string[] = [], sms: { to: string; vars: string[] }[] = [];
+    sends.sender = async (to) => { wa.push(to); return `wamid.${wa.length}`; };
+    sends.smsSender = async (to, vars) => { sms.push({ to, vars }); return `sms.${sms.length}`; };
+    sends.smsReady = () => true;
+    try {
+      // Earlier tests' scanned slips get their SMS on this first pass; start counting after it.
+      await sends.tick();
+      wa.length = 0; sms.length = 0;
+      // Not scanned: nothing on either channel.
+      expect(await sends.tick()).toMatchObject({ sent: 0, sms: { sent: 0 } });
+
+      // Scanned: the picture on WhatsApp and the SMS, once each.
+      await http().post('/v1/sync/push').set(auth(owner)).send({ items: [{ table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: slip.billId, qty: 2, note: '' } }] }).expect(200);
+      expect(await sends.tick()).toMatchObject({ sent: 1, sms: { sent: 1 } });
+      expect(wa).toEqual(['919000000081']);
+      expect(sms).toHaveLength(1);
+      expect(sms[0]).toMatchObject({ to: '9000000081', vars: ['SCAN GRAHAK', 'Cheeku Scan', expect.any(String), '4', expect.stringMatching(/\/b\/[0-9A-Za-z]{10}$/)] });
+      expect(await sends.tick()).toMatchObject({ sent: 0, sms: { sent: 0 } });
+
+      // The link opens the same picture without signing in; a wrong code does not.
+      const code = sms[0].vars[4].split('/b/')[1];
+      const page = await http().get(`/b/${code}`).expect(200);
+      expect(page.headers['content-type']).toContain('image/png');
+      expect(Buffer.from(page.body).equals(Buffer.from(png, 'base64'))).toBe(true);
+      await http().get('/b/AAAAAAAAAA').expect(404);
+      await http().get('/b/bad').expect(404);
+
+      // SMS refused: kept and tried again later, the WhatsApp already gone is not sent twice.
+      await http().post(`/v1/cheeku/forward-bills/${slip.billId}/whatsapp/resend`).set(auth(owner)).expect(200);
+      sends.smsSender = async () => { throw new Error('DLT template mismatch'); };
+      expect(await sends.tick()).toMatchObject({ sent: 1, sms: { sent: 0, waiting: 1 } });
+      sends.smsSender = async (to, vars) => { sms.push({ to, vars }); return `sms.${sms.length}`; };
+      expect(await sends.tick(new Date(Date.now() + 6 * 60_000))).toMatchObject({ sms: { sent: 1 } });
+      expect(sms).toHaveLength(2);
+    } finally {
+      sends.smsReady = () => sends.smsOn();
+    }
+  });
+  it('tells the grahak on WhatsApp when the maal of a slip sent on is scanned (the "maal de diya" message), once the gaadi goes quiet, and says nothing for a slip with no mobile', async () => {
+    const { CheekuPickupNoticesService } = await import('../src/cheeku/cheeku-pickup-notices.service');
+    const notices = app.get(CheekuPickupNoticesService);
+    const s = await login('9829209071');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Notice', mandi: 'Azadpur', shopNo: 'C-100', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const brandId = uuidv7(), truckId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '5588', supplier: 'Ravi', arrived_at: t, location: 'Shed 9' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 30, received_qty: 30, rate_paise: 40000, box_grams: 12000 } },
+    ] }).expect(200);
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209071' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209071', code: OtpService.issuedForTests.get('9829209071') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+    const forward = async (name: string, mobile: string, qty: number) => (await http().post(`${base}/cheeku/forward`).set(web).send({
+      customer: { name, mobile }, lots: [{ truckId, brandId, qty, ratePaise: 50000 }], vehicle: 'KA01',
+    }).expect(201)).body as { billId: string; slipNo: number };
+    const withNumber = await forward('Notice Co', '9000000091', 4);
+    const noNumber = await forward('Nameless Co', '', 2);
+    const sent: { to: string; params: string[] }[] = [];
+    notices.sender = async (to, params) => { sent.push({ to, params }); return `wamid.${sent.length}`; };
+    const scan = (billId: string, qty: number) => http().post('/v1/sync/push').set(auth(owner)).send({ items: [{ table: 'pickups', row: { id: uuidv7(), created_at: new Date().toISOString(), bill_id: billId, qty, note: '' } }] }).expect(200);
+
+    // Boxes handed over: the message waits for the gaadi to go quiet, then goes once, to the grahak's number.
+    await scan(withNumber.billId, 3);
+    await scan(noNumber.billId, 2);
+    expect(await notices.tick()).toMatchObject({ sent: 0 });                                   // still busy
+    const quiet = new Date(Date.now() + 90_000);
+    expect(await notices.tick(quiet)).toMatchObject({ sent: 1, skipped: 1 });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toBe('919000000091');
+    expect(sent[0].params.join(' | ')).toContain('NOTICE CO');
+    expect(sent[0].params.join(' | ')).toContain(`#${withNumber.slipNo}`);
+    expect(sent[0].params.join(' | ')).toContain('3');                                           // the boxes just given
+    expect(await notices.tick(new Date(Date.now() + 120_000))).toMatchObject({ sent: 0 });     // never twice for the same scan
+
+    // The rest handed over later: a second message for that scan.
+    await scan(withNumber.billId, 1);
+    expect(await notices.tick(new Date(Date.now() + 240_000))).toMatchObject({ sent: 1 });
+    expect(sent).toHaveLength(2);
+  });
+});

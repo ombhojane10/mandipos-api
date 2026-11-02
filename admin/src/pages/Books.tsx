@@ -14,6 +14,9 @@ import { Money } from '../entries/fields'
 import { HEADS } from './DayBook'
 import { BeejakSheet } from './Angoor'
 import type { Period } from '../period'
+import { isCheeku } from '../commodity'
+import { cheekuCreditorReport } from '../cheeku'
+import { CheekuBeejakSheet } from './Cheeku'
 
 // ================================================================ shared bits
 
@@ -29,6 +32,8 @@ const has = (q: string, ...xs: (string | undefined | null)[]) => { const f = q.t
 const dayBookOn = (shopId: string, day: string) => `${href({ page: 'report', shopId, report: 'daybook' })}?p=custom&from=${day}&to=${day}`
 /** A grapes supplier's khata in Supplier creditors. */
 const creditorHref = (shopId: string, key: string) => `${href({ page: 'report', shopId, report: 'creditors' })}?k=${encodeURIComponent(key)}`
+/** A cheeku supplier's khata in cheeku's own Supplier creditors. */
+const cheekuCreditorHref = (shopId: string, key: string) => `${href({ page: 'report', shopId, report: cheekuCreditorReport })}?k=${encodeURIComponent(key)}`
 const ledgerHref = (shopId: string, key: string, from: string, to: string) => `${href({ page: 'report', shopId, report: 'gl' })}?a=${encodeURIComponent(key)}&p=custom&from=${from}&to=${to}`
 
 /** This financial year so far: the period most of these reports are read for. */
@@ -60,6 +65,7 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
   const [every, setEvery] = useState(() => hashQuery().get('e') === '1')
   const [q, setQ] = useState('')
   const [beejak, setBeejak] = useState<string | null>(null)
+  const cheeku = isCheeku(useSession().shops?.find((s) => s.id === shopId)?.commodity)
   const pick = (k: string) => { setKey(k); setHashQuery({ ...Object.fromEntries(hashQuery()), a: k }) }
   const daily = BUSY.has(key) && !every
   const accounts = useLoad(() => api<{ accounts: Account[] }>(`/v1/admin/shops/${shopId}/books/accounts`).then((r) => r.accounts), [shopId])
@@ -155,7 +161,8 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
           </div>
         </>
       )}
-      {beejak && <BeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
+      {beejak && !cheeku && <BeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
+      {beejak && cheeku && <CheekuBeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
     </>
   )
 }
@@ -164,7 +171,7 @@ export function GeneralLedger({ shopId }: { shopId: string }) {
 
 type TbRow = { key: string; name: string; dr: number; cr: number; sub?: string; link?: { kind: 'grahak' | 'supplier' | 'ledger'; id: string } }
 type TbGroup = { key: string; name: string; dr: number; cr: number; rows: TbRow[] }
-type Tb = { on: string; fy: { from: string; label: string }; grapes: boolean; groups: TbGroup[]; totals: { dr: number; cr: number }; differencePaise: number; memo: { cratesQty: number; cratesPaise: number } }
+type Tb = { on: string; fy: { from: string; label: string }; grapes: boolean; cheeku?: boolean; groups: TbGroup[]; totals: { dr: number; cr: number }; differencePaise: number; memo: { cratesQty: number; cratesPaise: number } }
 
 /** Every ledger's closing on a day, Dr or Cr, grouped as Tally does; a group opens to its ledgers. */
 export function TrialBalance({ shopId }: { shopId: string }) {
@@ -184,7 +191,7 @@ export function TrialBalance({ shopId }: { shopId: string }) {
   const go = (r: TbRow) => {
     if (!r.link || !data) return
     if (r.link.kind === 'grahak') location.hash = href({ page: 'grahak', shopId, buyerId: r.link.id })
-    else if (r.link.kind === 'supplier') location.hash = data.grapes ? creditorHref(shopId, r.link.id) : href({ page: 'supplier', shopId, key: r.link.id })
+    else if (r.link.kind === 'supplier') location.hash = data.grapes ? creditorHref(shopId, r.link.id) : data.cheeku ? cheekuCreditorHref(shopId, r.link.id) : href({ page: 'supplier', shopId, key: r.link.id })
     else location.hash = ledgerHref(shopId, r.link.id, data.fy.from, data.on)
   }
 
@@ -387,7 +394,7 @@ function BigFoot({ gap, tot }: { gap: number; tot: (k: 'amountPaise' | 'cashPais
 
 type SpRow = { key: string; kharidPaise: number; beejakPaise: number; salesPaise: number; laagatPaise: number; grossPaise: number; kharchaPaise: number; otherPaise: number; netPaise: number }
 type Sp = {
-  from: string; to: string; by: 'day' | 'month'; grapes: boolean; rows: SpRow[]; totals: Omit<SpRow, 'key'>
+  from: string; to: string; by: 'day' | 'month'; grapes: boolean; cheeku?: boolean; rows: SpRow[]; totals: Omit<SpRow, 'key'>
   suppliers: { key: string; name: string; gaadis: number; boxesIn: number; kharidPaise: number; beejaks: number; beejakPaise: number; soldQty: number; salesPaise: number }[]
   qualities: { name: string; inQty: number; inPaise: number; soldQty: number; salesPaise: number }[]
 }
@@ -400,7 +407,7 @@ export function SalePurchase({ shopId }: { shopId: string }) {
   const [q, setQ] = useState('')
   const pickBy = (b: 'day' | 'month') => { setBy(b); setHashQuery({ ...Object.fromEntries(hashQuery()), by: b }) }
   const { data, error, loading } = useLoad(() => api<Sp>(`/v1/admin/shops/${shopId}/books/sale-purchase?from=${period.from}&to=${period.to}&by=${by}`), [shopId, period.from, period.to, by])
-  const bj = !!data && (data.grapes || data.totals.beejakPaise > 0)
+  const bj = !!data && (data.grapes || data.totals.beejakPaise > 0 || !!data.cheeku)
   const keyLabel = (k: string) => (by === 'day' ? shortDate(k) : month(k))
   const sups = (data?.suppliers ?? []).filter((s) => has(q, s.name))
   const quals = (data?.qualities ?? []).filter((x) => has(q, x.name))
@@ -483,7 +490,7 @@ export function SalePurchase({ shopId }: { shopId: string }) {
                 <thead><tr><th>{t('Supplier')}</th><th className="num opt-col">{t('Gaadi')}</th><th className="num opt-col">{t('Box aaye')}</th><th className="num opt-col">{t('Kharid')}</th>{bj && <th className="num opt-col">{t('Beejak')}</th>}<th className="num opt-col">{t('Bika')}</th><th className="num">{t('Bikri')}</th></tr></thead>
                 <tbody>
                   {sups.map((s) => {
-                    const go = () => { if (!s.key) return; location.hash = data.grapes ? creditorHref(shopId, s.key) : href({ page: 'supplier', shopId, key: s.key }) }
+                    const go = () => { if (!s.key) return; location.hash = data.grapes ? creditorHref(shopId, s.key) : data.cheeku ? cheekuCreditorHref(shopId, s.key) : href({ page: 'supplier', shopId, key: s.key }) }
                     return (
                       <tr key={s.key || s.name} data-row tabIndex={0} onClick={go} onKeyDown={(e) => { if (e.key === 'Enter') go() }}>
                         <td className="main-col"><b>{s.name}</b><small className="show-sm">{t('{n} gaadi', { n: s.gaadis })} · {t('Kharid')} {rupees(s.kharidPaise)}</small></td>
@@ -536,6 +543,7 @@ const kgText = (kg: number) => (kg ? `${count(Math.round(kg))} kg` : '')
 export function Purcha({ shopId }: { shopId: string }) {
   const { shops } = useSession()
   const grapes = shops?.find((s) => s.id === shopId)?.commodity === 'angoor'
+  const cheeku = isCheeku(shops?.find((s) => s.id === shopId)?.commodity)
   const [period, setPeriod] = usePeriod('7')
   const [view, setView] = useState<'gaadi' | 'supplier'>('gaadi')
   const [q, setQ] = useState('')
@@ -550,7 +558,7 @@ export function Purcha({ shopId }: { shopId: string }) {
     : sups).reduce((a, x) => ({ gaadis: a.gaadis + x.gaadis, boxes: a.boxes + x.boxes, kg: a.kg + x.kg, kharidPaise: a.kharidPaise + x.kharidPaise,
       freightPaise: a.freightPaise + x.freightPaise, beejakPaise: a.beejakPaise + x.beejakPaise, pending: a.pending + x.pending }),
     { gaadis: 0, boxes: 0, kg: 0, kharidPaise: 0, freightPaise: 0, beejakPaise: 0, pending: 0 })
-  const open = (g: PurchaGaadi) => { if (grapes) setBeejak(g.truckId); else if (g.supplierKey) location.hash = href({ page: 'supplier', shopId, key: g.supplierKey }) }
+  const open = (g: PurchaGaadi) => { if (grapes) setBeejak(g.truckId); else if (cheeku) setBeejak(g.truckId); else if (g.supplierKey) location.hash = href({ page: 'supplier', shopId, key: g.supplierKey }) }
 
   useExport(data ? () => ({
     style: 'book' as const, title: t('Purcha'), dateLine: dayRange(data.from, data.to), file: fileName('Purcha', data.from, data.to),
@@ -582,7 +590,7 @@ export function Purcha({ shopId }: { shopId: string }) {
             <div><span className="lb">{t('Gaadi')}</span><span className="v">{count(data.totals.gaadis)}</span></div>
             <div><span className="lb">{t('Box')}</span><span className="v">{count(data.totals.boxes)}</span><small className="muted">{kgText(data.totals.kg)}</small></div>
             <div><span className="lb">{t('Kharid')} + {t('Bhada')}</span><span className="v">{rupees(data.totals.kharidPaise + data.totals.freightPaise)}</span></div>
-            {(grapes || data.totals.beejakPaise > 0) && <div><span className="lb">{t('Beejak')}</span><span className="v">{rupees(data.totals.beejakPaise)}</span><small className={data.totals.pending ? 'due' : 'muted'}>{data.totals.pending ? t('{n} baaki', { n: data.totals.pending }) : ''}</small></div>}
+            {(grapes || data.totals.beejakPaise > 0 || cheeku) && <div><span className="lb">{t('Beejak')}</span><span className="v">{rupees(data.totals.beejakPaise)}</span><small className={data.totals.pending ? 'due' : 'muted'}>{data.totals.pending ? t('{n} baaki', { n: data.totals.pending }) : ''}</small></div>}
           </div>
           <div className={`card wrap-x${loading ? ' dim' : ''}`}>
             {view === 'gaadi' ? (
@@ -631,7 +639,8 @@ export function Purcha({ shopId }: { shopId: string }) {
           </div>
         </>
       )}
-      {beejak && <BeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
+      {beejak && !cheeku && <BeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
+      {beejak && cheeku && <CheekuBeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
     </>
   )
 }

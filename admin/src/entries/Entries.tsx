@@ -10,8 +10,11 @@ import { AngoorGaadiForm, AngoorParchiForm, type AngoorOptions } from './Angoor'
 import { CnSheet, JvSheet } from '../pages/Vouchers'
 import { AreaDatalist } from '../pages/Masters'
 import { href, type Report } from '../routes'
+import { isCheeku } from '../commodity'
+import { CHEEKU_CAPS_NAMES } from '../cheeku'
+import { CheekuGaadiForm, CheekuParchiForm, type CheekuOptions } from './Cheeku'
 
-type Options = AngoorOptions & {
+type Options = AngoorOptions & CheekuOptions & {
   commodity: string
   trucks: { id: string; number: string; supplier: string; arrivedAt: string; left: number; brandId: string | null; brand: string }[]
   rates: { brandId: string; grade: string; ratePaise: number }[]
@@ -198,6 +201,7 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
 
   const title = editing ? t('Parchi #{n} badlein', { n: String(editing.slipNo ?? '') }) : t('Nayi Parchi')
   if (o?.commodity === 'angoor') return <AngoorParchiForm shopId={shopId} o={o} editing={editing} draft={draft} onClose={onClose} onDone={onDone} />
+  if (o && isCheeku(o.commodity)) return <CheekuParchiForm shopId={shopId} o={o} editing={editing} draft={draft} onClose={onClose} onDone={onDone} />
   if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={title} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki parchi app se banayein.')}</p></Sheet>
   return (
     <Sheet title={title} onClose={onClose} saving={saving} error={error} saveLabel={total ? `${t('Save')} · ${rupees(total)}` : t('Save')}
@@ -486,6 +490,7 @@ function GaadiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?:
   const set = (i: number, patch: Partial<Lot>) => setLots(lots.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const total = lots.reduce((s, l) => s + l.qty * l.ratePaise, 0) + freight
   if (o?.commodity === 'angoor') return <AngoorGaadiForm shopId={shopId} o={o} editing={editing} onClose={onClose} onDone={onDone} />
+  if (o && isCheeku(o.commodity)) return <CheekuGaadiForm shopId={shopId} o={o} editing={editing} onClose={onClose} onDone={onDone} />
   if (o && o.commodity && o.commodity !== 'nariyal') return <Sheet title={t('Nayi Gaadi')} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Theek hai')}><p className="muted">{t('Amrud ki party app se jodein.')}</p></Sheet>
   return (
     <Sheet title={t('Nayi Gaadi')} onClose={onClose} saving={saving} error={error}
@@ -532,7 +537,8 @@ function GaadiForm({ shopId, onClose, onDone, editing }: FormProps & { editing?:
 
 function GrahakForm({ shopId, onClose, onDone }: FormProps) {
   const { saving, error, setError, save } = useSave(onDone)
-  const caps = useSession().shops?.find((x) => x.id === shopId)?.commodity === 'angoor'
+  const commodity = useSession().shops?.find((x) => x.id === shopId)?.commodity
+  const caps = isCheeku(commodity) ? CHEEKU_CAPS_NAMES : commodity === 'angoor'
   const [f, setF] = useState({ name: '', phone: '', code: '', address: '', area: '', opening: 0 })
   return (
     <Sheet title={t('Naya Grahak')} onClose={onClose} saving={saving} error={error}
