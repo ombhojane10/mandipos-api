@@ -23,6 +23,7 @@ import { Requests } from './pages/Requests'
 import { Deposits } from './pages/Deposits'
 import { Machines } from './pages/Machines'
 import { Console } from './pages/Console'
+import { PrintMachinePick } from './PrintPick'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from './pages/Masters'
 import { Crates, StoreEntry } from './pages/CrateStore'
@@ -393,6 +394,7 @@ export default function App() {
           </div>
           <span className="spacer" />
           <UpdateReady />
+          {routeShop && <PrintMachinePick shopId={routeShop} />}
           <span className="top-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).replace(/ (\w{3}) /, '-$1-')}</span>
           {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
           {shopId && shop?.commodity === 'angoor' && <button className="export-btn scan-btn" onClick={() => openScan(shopId)} aria-label={t('Scan')}><I.IScan /><span>{t('Scan')}</span></button>}

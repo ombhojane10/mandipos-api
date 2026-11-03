@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Principal } from '../auth/tokens.service';
 import { uuidv7 } from '../common/uuid';
@@ -24,7 +25,18 @@ const COOLDOWN_MINUTES = 10;
  * requeue flag (0.52) report it as a plain failure; read this way, their slip is given back too.
  */
 const UNREACHABLE = /tak nahi pahunche|तक नहीं पहुँचे|couldn't reach the wifi printer/i;
+/** A slip sent to one machine that hasn't taken it by then is printed by the office station instead. */
+const TARGET_WAIT_SECONDS = 60;
 const MAX_IMAGE_BYTES = 400_000;
+
+/**
+ * The machine the website's person picked to print on (header X-Print-Device), for the length of
+ * one request: website slips made or reprinted in it go to that machine.
+ */
+export const printTarget = new AsyncLocalStorage<string | undefined>();
+
+/** A machine listening for the shop's slips, for the website's "kis machine se chhape" choice. */
+export type PrintMachine = { deviceId: string; code: string; name: string; main: boolean; online: boolean };
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
 /**
@@ -79,13 +91,33 @@ export class PrintService {
    * station that draws it from its own books. Only stations that say they can ([next]'s bills)
    * are handed one.
    */
-  async queueBill(p: Principal, billId: string, title: string) {
+  async queueBill(p: Principal, billId: string, title: string): Promise<{ target: PrintMachine | null }> {
+    const target = await this.targetOf(p.shopId!);
     await this.db.query(
-      `INSERT INTO print_jobs (id, shop_id, created_by, from_device, title, bill_id, width_dots)
-       VALUES ($1, $2, $3, $4, $5, $6, 384)`,
-      [uuidv7(), p.shopId, p.userId, p.deviceId, title, billId],
+      `INSERT INTO print_jobs (id, shop_id, created_by, from_device, title, bill_id, width_dots, target_device)
+       VALUES ($1, $2, $3, $4, $5, $6, 384, $7)`,
+      [uuidv7(), p.shopId, p.userId, p.deviceId, title, billId, target?.deviceId ?? null],
     );
     this.wake(p.shopId!);
+    return { target };
+  }
+
+  /** The machines listening for this shop's slips now: the office station first, then each Pine at a counter. */
+  async machines(shopId: string): Promise<PrintMachine[]> {
+    const rows = await this.db.query<{ device_id: string; code: string | null; name: string; own_only: boolean; online: boolean }>(
+      `SELECT s.device_id, d.code, s.name, s.own_only,
+              s.last_poll_at > now() - make_interval(secs => $2::int) AND NOT COALESCE(s.cooldown_until > now(), false) AS online
+       FROM print_stations s JOIN devices d ON d.id = s.device_id AND d.revoked_at IS NULL
+       WHERE s.shop_id = $1 AND s.last_poll_at > now() - interval '1 day'
+       ORDER BY s.own_only, d.code`, [shopId, ONLINE_SECONDS]);
+    return rows.map((r) => ({ deviceId: r.device_id, code: r.code ?? '', name: r.name, main: !r.own_only, online: r.online }));
+  }
+
+  /** The request's picked machine, if it is one of this shop's (an unknown id prints as before). */
+  private async targetOf(shopId: string): Promise<PrintMachine | null> {
+    const id = printTarget.getStore();
+    if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return null;
+    return (await this.machines(shopId)).find((m) => m.deviceId === id) ?? null;
   }
 
   /** A failed or expired slip goes back in the queue, as it was. */
@@ -115,10 +147,11 @@ export class PrintService {
   async stationOf(shopId: string, deviceId: string | null = null): Promise<Station | null> {
     return this.db.tx(async (tx) => {
       // A station sitting out (it couldn't reach the printer) is not "on": prefer one that is.
+      // A counter's Pine listening only for its own slips is not the shop's station.
       const r = (await tx.query<{ device_id: string; name: string; width_dots: number; roll: string; last_poll_at: Date; online: boolean }>(
         `SELECT device_id, name, width_dots, roll, last_poll_at,
                 last_poll_at > now() - make_interval(secs => $2::int) AND NOT COALESCE(cooldown_until > now(), false) AS online
-         FROM print_stations WHERE shop_id = $1
+         FROM print_stations WHERE shop_id = $1 AND NOT own_only
          ORDER BY COALESCE(cooldown_until > now(), false), last_poll_at DESC LIMIT 1`,
         [shopId, ONLINE_SECONDS],
       )).rows[0];
@@ -136,14 +169,14 @@ export class PrintService {
    * Station: the oldest waiting slip, claimed for this device — or null once [waitSeconds]
    * pass without one. Each call also marks the station online.
    */
-  async next(p: Principal, name: string, widthDots: number, waitSeconds: number, gone: () => boolean, roll = '', bills = false):
+  async next(p: Principal, name: string, widthDots: number, waitSeconds: number, gone: () => boolean, roll = '', bills = false, ownOnly = false):
     Promise<{ id: string; title: string; widthDots: number; image: string | null; billId: string | null; createdAt: string } | null> {
     const shopId = await this.db.tx(async (tx) => {
       const shopId = await this.member(tx, p);
       await tx.query(
-        `INSERT INTO print_stations (device_id, shop_id, name, width_dots, roll, last_poll_at) VALUES ($1, $2, $3, $4, $5, now())
-         ON CONFLICT (device_id) DO UPDATE SET shop_id = $2, name = $3, width_dots = $4, roll = $5, last_poll_at = now()`,
-        [p.deviceId, shopId, name, widthDots, roll],
+        `INSERT INTO print_stations (device_id, shop_id, name, width_dots, roll, own_only, last_poll_at) VALUES ($1, $2, $3, $4, $5, $6, now())
+         ON CONFLICT (device_id) DO UPDATE SET shop_id = $2, name = $3, width_dots = $4, roll = $5, own_only = $6, last_poll_at = now()`,
+        [p.deviceId, shopId, name, widthDots, roll, ownOnly],
       );
       await this.tidy(tx, shopId);
       return shopId;
@@ -156,7 +189,7 @@ export class PrintService {
     for (;;) {
       if (gone()) return null;
       // Sitting out: wait the poll through, claim nothing.
-      const job = cooling ? null : await this.claim(shopId, p.deviceId, bills);
+      const job = cooling ? null : await this.claim(shopId, p.deviceId, bills, ownOnly);
       if (job) return job;
       const left = deadline - Date.now();
       if (left <= 0) break;
@@ -199,15 +232,20 @@ export class PrintService {
 
   // ---------------------------------------------------------------- internals
 
-  private async claim(shopId: string, deviceId: string, bills: boolean) {
+  /**
+   * [ownOnly]: a counter's Pine takes only the slips sent to it. The office station takes the
+   * unaddressed ones, its own, and any addressed slip its machine left for a minute.
+   */
+  private async claim(shopId: string, deviceId: string, bills: boolean, ownOnly = false) {
     const r = (await this.db.query<{ id: string; title: string; width_dots: number; image: Buffer | null; bill_id: string | null; created_at: Date }>(
       `UPDATE print_jobs SET status = 'printing', station = $2, claimed_at = now()
        WHERE id = (
          SELECT id FROM print_jobs WHERE shop_id = $1 AND status = 'queued' AND (bill_id IS NULL OR $3)
+           AND (target_device = $2 OR (NOT $4 AND (target_device IS NULL OR created_at < now() - make_interval(secs => ${TARGET_WAIT_SECONDS}))))
          ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
        )
        RETURNING id, title, width_dots, image, bill_id, created_at`,
-      [shopId, deviceId, bills],
+      [shopId, deviceId, bills, ownOnly],
     ))[0];
     return r ? {
       id: r.id, title: r.title, widthDots: r.width_dots, image: r.image?.toString('base64') ?? null, billId: r.bill_id,

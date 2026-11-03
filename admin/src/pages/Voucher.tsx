@@ -6,6 +6,8 @@ import { href } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { editEntry } from '../entries/kinds'
 import { t } from '../i18n'
+import { useSession } from '../App'
+import { CheekuWhatsappSheet } from '../entries/CheekuWhatsapp'
 
 type Bill = {
   id: string; number: string; slipNo: number | null; at: string; date: string; buyerId: string | null; buyerName: string; payMode: string
@@ -79,6 +81,10 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
   const remove = () => { if (live && !picked) setDeleting(true) }
   // Again to the shop's print machine; says so when no machine is on, so nobody waits for paper.
   const [printing, setPrinting] = useState(false)
+  // Cheeku: the parchi to the grahak on WhatsApp from here as well.
+  const { shops } = useSession()
+  const cheeku = shops?.find((x) => x.id === shopId)?.commodity === 'cheeku'
+  const [whatsapp, setWhatsapp] = useState(false)
   const print = async () => {
     if (!b || !live || printing) return
     setPrinting(true)
@@ -95,6 +101,7 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
         <>
           {b.buyerId && <a className="btn ghost" href={href({ page: 'grahak', shopId, buyerId: b.buyerId })} onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', marginRight: 'auto' }}>{t('{name} ka khata', { name: b.buyerName })} ›</a>}
           {live && picked && <span className="muted">{t('Maal uth chuka hai — yeh parchi ab nahi badlegi')}</span>}
+          {live && cheeku && <button type="button" className="btn ghost" onClick={() => setWhatsapp(true)}>WhatsApp</button>}
           {live && <button type="button" className="btn ghost" disabled={printing} onClick={() => void print()}><kbd>P: </kbd>{printing ? '…' : t('Print')}</button>}
           {live && !picked && <button type="button" className="btn ghost" onClick={alter}><kbd>A: </kbd>{t('Alter')}</button>}
           {live && !picked && <button type="button" className="btn ghost" onClick={remove}><kbd>D: </kbd>{t('Delete')}</button>}
@@ -153,6 +160,7 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
           {blocked && <p className="error" role="alert">{blocked}</p>}
         </>
       )}
+      {whatsapp && b && <CheekuWhatsappSheet shopId={shopId} billId={b.id} onClose={() => setWhatsapp(false)} onSent={(msg) => { setWhatsapp(false); onDone(msg) }} />}
       {deleting && b && <DeleteParchi shopId={shopId} b={b} qty={qty} onClose={() => setDeleting(false)} onDone={onDone} />}
     </Scrim>
   )

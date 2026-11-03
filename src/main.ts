@@ -5,6 +5,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import compression from 'compression';
 import { AppModule } from './app.module';
 import { adminOrigins, config } from './config';
+import { printTarget } from './print/print.service';
 
 /** Shared by main() and the tests so both run the same middleware. */
 export function configure(app: INestApplication) {
@@ -16,7 +17,12 @@ export function configure(app: INestApplication) {
   // udhaar bhav sheet sends up to six page photos (~250 KB each as base64) in one request.
   express.useBodyParser('json', { limit: '12mb' });
   // Only the admin portal calls from a browser; the terminals don't need CORS at all.
-  app.enableCors({ origin: adminOrigins(), methods: ['GET', 'POST'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 });
+  app.enableCors({ origin: adminOrigins(), methods: ['GET', 'POST'], allowedHeaders: ['Authorization', 'Content-Type', 'X-Print-Device'], maxAge: 86400 });
+  // The website's picked print machine rides along with every request (see printTarget).
+  express.use((req: { headers: Record<string, string | string[] | undefined> }, _res: unknown, next: () => void) => {
+    const h = req.headers['x-print-device'];
+    printTarget.run(typeof h === 'string' ? h : undefined, next);
+  });
   app.enableShutdownHooks();
 }
 

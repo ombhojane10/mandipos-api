@@ -1077,6 +1077,12 @@ export class AdminController {
     return this.entries.reprint(v.phone, mine(v, id), parse(Id, billId));
   }
 
+  /** The machines listening for the shop's slips, for the website's "kis machine se chhape" choice. */
+  @Get('shops/:id/print-machines')
+  async printMachines(@See() v: Viewer, @Param('id') id: string) {
+    return { machines: await this.entries.printMachines(mine(v, id)) };
+  }
+
   @Get('shops/:id/print-station')
   printStation(@See() v: Viewer, @Param('id') id: string) {
     return this.entries.printStation(v.phone, mine(v, id));

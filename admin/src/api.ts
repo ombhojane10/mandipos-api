@@ -28,13 +28,23 @@ export class ApiError extends Error {
 let onSignedOut = () => {}
 export function whenSignedOut(fn: () => void) { onSignedOut = fn }
 
+/** The print machine picked in this browser for a shop (PrintMachinePick); website slips print there. */
+export const printDeviceKey = (shopId: string) => `mp.printDevice.${shopId}`
+function printDeviceFor(path: string): string | null {
+  const shop = /\/shops\/([0-9a-f-]{36})/i.exec(path)?.[1]
+  if (!shop) return null
+  try { return localStorage.getItem(printDeviceKey(shop)) } catch { return null }
+}
+
 export async function api<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   const token = getToken()
+  const printDevice = printDeviceFor(path)
   const res = await fetch(`${BASE}${path}`, {
     method: init.method ?? 'GET',
     headers: {
       ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(printDevice ? { 'X-Print-Device': printDevice } : {}),
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     signal: init.signal,

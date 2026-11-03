@@ -806,9 +806,16 @@ export class EntriesService {
       `SELECT b.slip_no FROM ${LIVE_BILLS} b WHERE b.id = $1`, [billId])).rows[0]);
     if (!bill) throw new NotFoundException('Yeh parchi nahi mili');
     const p = await this.device(phone, shopId);
-    await this.print.queueBill(p, billId, `Order Parchi #${bill.slip_no}`);
+    const { target } = await this.print.queueBill(p, billId, `Order Parchi #${bill.slip_no}`);
     const st = await this.print.stationOf(shopId);
-    return { slipNo: bill.slip_no, station: st && st.online ? { name: st.name } : null };
+    // The picked machine when it is on; else the office station, which also takes a slip its machine left.
+    const to = target?.online ? { name: target.code || target.name } : st && st.online ? { name: st.name } : null;
+    return { slipNo: bill.slip_no, station: to };
+  }
+
+  /** The machines listening for the shop's slips (office station first). */
+  printMachines(shopId: string) {
+    return this.print.machines(shopId);
   }
 
   /** Whether the shop's print machine is listening now, for the page to say so after a save. */

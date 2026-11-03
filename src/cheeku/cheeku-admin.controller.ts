@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard, See, mine, type Viewer } from '../admin/admin.controller';
 import { EntriesService } from '../admin/entries.service';
@@ -12,6 +12,8 @@ import { CheekuDeskService } from './cheeku-desk.service';
 import { CheekuEntriesService } from './cheeku-entries.service';
 import { CheekuForwardSendsService } from './cheeku-forward-sends.service';
 import { CheekuForwardService } from './cheeku-forward.service';
+import { CheekuSlipSendsService } from './cheeku-slip-sends.service';
+import { LIVE_BILLS, n } from '../admin/sql';
 
 // The grapes admin bodies, each its own copy.
 const Day = z.iso.date();
@@ -57,8 +59,37 @@ export class CheekuAdminController {
     private readonly db: Db, private readonly desk: CheekuDeskService, private readonly creditors: CheekuCreditorsService,
     private readonly entries: CheekuEntriesService, private readonly shared: EntriesService,
     private readonly commissions: CheekuCommissionsService, private readonly forward: CheekuForwardService,
-    private readonly forwardSends: CheekuForwardSendsService,
+    private readonly forwardSends: CheekuForwardSendsService, private readonly slipSends: CheekuSlipSendsService,
   ) {}
+
+  /**
+   * The website's "WhatsApp par bhejein" (after a scan, or from the parchi): the slip as the
+   * website drew it, to the number given, with the same words the machine sends. A number typed
+   * for a grahak who had none is saved to them, as the app does; Cash / Bank walk-ins keep none.
+   */
+  @Post('shops/:id/cheeku/bills/:billId/whatsapp')
+  @HttpCode(200)
+  async slipWhatsapp(@See() v: Viewer, @Param('id') id: string, @Param('billId') billId: string, @Body() body: unknown) {
+    const shopId = mine(v, id);
+    const bid = parse(z.uuid(), billId);
+    const b = parse(z.object({ phone: z.string().trim().regex(/^[6-9][0-9]{9}$/, 'mobile number 10 ank ka'), image: z.string().max(700_000) }), body);
+    const row = await this.db.withShop(shopId, async (tx) => (await tx.query<{
+      buyer_name: string; slip_no: number | null; number: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string;
+      qty: string; buyer_id: string | null; buyer_phone: string | null; firm: string;
+    }>(
+      `SELECT b.buyer_name, b.slip_no, b.number, b.total_paise, b.paid_paise, b.cash_paise, b.upi_paise,
+              (SELECT COALESCE(SUM(qty), 0) FROM bill_lines l WHERE l.bill_id = b.id) AS qty,
+              b.buyer_id, g.phone AS buyer_phone, (SELECT name FROM shops WHERE id = $2) AS firm
+       FROM ${LIVE_BILLS} b LEFT JOIN buyers g ON g.id = b.buyer_id WHERE b.id = $1`, [bid, shopId])).rows[0]);
+    if (!row) throw new NotFoundException('Yeh parchi nahi mili');
+    const total = n(row.total_paise);
+    const rs = (p: number) => `₹${Math.round(p / 100).toLocaleString('en-IN')}`;
+    const money = total - n(row.paid_paise) > 0 ? 'उधार' : total === 0 ? '-' : n(row.upi_paise) > 0 && n(row.cash_paise) === 0 ? `${rs(total)} UPI` : `${rs(total)} नकद`;
+    const p = await this.shared.device(v.phone, shopId);
+    await this.slipSends.send(p, 'slip', bid, b.phone, b.image, [row.buyer_name, row.firm || 'Mandi Plus', `${row.slip_no ?? row.number}`, `${n(row.qty)}`, money]);
+    if (row.buyer_id && !row.buyer_phone) await this.shared.updateGrahak(v.phone, shopId, row.buyer_id, { phone: b.phone }).catch(() => undefined);
+    return { sent: true };
+  }
 
   /** The cheeku desk: dispatch, open gaadis and where they stand, party commission (each party's own %), APMC, mazdoori. */
   @Get('shops/:id/cheeku')

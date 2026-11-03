@@ -1309,3 +1309,8 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .tbl.branch-staff td select.field { min-width: 96px; }
 .tbl.branch-staff .add-row td { background: var(--box, #fffbd8); }
 @media (max-width: 700px) { .tbl.branch-staff td select.field { min-width: 0; width: 100%; } .tbl.branch-staff .add-row .main-col div { flex-direction: column; } }
+
+/* Top bar: which machine the website's slips print on (only with two or more listening). */
+.print-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
+.print-pick select { height: 26px; border: 1px solid var(--line); background: #fff; font: inherit; padding: 0 4px; max-width: 160px; }
+@media (max-width: 700px) { .print-pick select { max-width: 110px; } }

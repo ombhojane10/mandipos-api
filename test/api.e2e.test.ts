@@ -4558,4 +4558,48 @@ describe('cheeku', () => {
     ] }).expect(200);
     await http().post(`/v1/cheeku/trucks/${gt}/delete`).set(auth(grapes.accessToken)).expect(422);
   });
+
+});
+
+describe('print machines', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  async function web(phone: string, body: object) {
+    const s = await login(phone);
+    const res = await createApproved(s.accessToken, { mandi: 'Azadpur', shopNo: 'P-1', role: 'owner', ...body });
+    await http().post('/v1/admin/auth/otp').send({ phone }).expect(204);
+    const w = auth((await http().post('/v1/admin/auth/verify').send({ phone, code: OtpService.issuedForTests.get(phone) }).expect(200)).body.token);
+    return { id: res.me.shop.id as string, term: auth(res.accessToken), w, base: `/v1/admin/shops/${res.me.shop.id}` };
+  }
+
+  it('prints a website slip on the machine picked there; the office station takes the rest, and a picked one left a minute', async () => {
+    const { w, base, term, id: shopId } = await web('9845900051', { name: 'Two Counters' });
+    const office = term;
+    const counterLogin = await login('9845900051', uuidv7());
+    const counter = auth(counterLogin.accessToken);
+    const counterId = counterLogin.me.device.id as string;
+    const poll = (who: Record<string, string>, mine: boolean) => http().get(`/v1/print/next?name=P052&widthDots=384&wait=0&roll=TERMINAL&bills=1${mine ? '&mine=1' : ''}`).set(who);
+    // Both machines listening: the office station, and the counter's Pine (its own slips only).
+    await poll(office, false).expect(204);
+    await poll(counter, true).expect(204);
+    const machines = (await http().get(`${base}/print-machines`).set(w).expect(200)).body.machines;
+    expect(machines.map((m: any) => [m.deviceId === counterId, m.main])).toEqual(expect.arrayContaining([[true, false], [false, true]]));
+
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA01', supplier: 'Pollachi', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const truckId = (await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0].truckId;
+    // Saved on the website with the counter picked: only the counter gets it.
+    const slip = (await http().post(`${base}/entries/parchi`).set(w).set('X-Print-Device', counterId)
+      .send({ truckId, lines: [{ grade: '1', qty: 5, ratePaise: 2000 }], pay: 'cash', packing: 'loose' }).expect(201)).body;
+    await poll(office, false).expect(204);
+    const got = (await poll(counter, true).expect(200)).body;
+    expect(got.billId).toBe(slip.billId);
+    // Reprint with nothing picked: the office station, never the counter.
+    expect((await http().post(`${base}/bills/${slip.billId}/print`).set(w).expect(201)).body.slipNo).toBe(slip.slipNo);
+    await poll(counter, true).expect(204);
+    expect((await poll(office, false).expect(200)).body.billId).toBe(slip.billId);
+    // Picked, but the counter never comes for it: after a minute the office prints it.
+    await http().post(`${base}/bills/${slip.billId}/print`).set(w).set('X-Print-Device', counterId).expect(201);
+    await poll(office, false).expect(204);
+    await owner(`UPDATE print_jobs SET created_at = now() - interval '2 minutes' WHERE shop_id = '${shopId}' AND status = 'queued'`);
+    expect((await poll(office, false).expect(200)).body.billId).toBe(slip.billId);
+  });
 });

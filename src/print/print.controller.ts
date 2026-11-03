@@ -19,6 +19,8 @@ const NextQuery = z.object({
   roll: z.enum(['TERMINAL', 'SEZNIK', 'WIFI', '']).default(''),
   /** 1: this station can draw a slip from its own books (website slips come as a bill id). */
   bills: z.enum(['0', '1']).default('0'),
+  /** 1: a counter's Pine that prints only the slips sent to it (not the office station). */
+  mine: z.enum(['0', '1']).default('0'),
 });
 /** requeue: the printer couldn't be reached and nothing was sent — give the slip back for another device. */
 const DoneBody = z.object({ ok: z.boolean(), error: z.string().max(500).default(''), requeue: z.boolean().default(false) });
@@ -74,7 +76,7 @@ export class PrintController {
     // fires only when the station hangs up before we answer — then a slip must not be claimed.
     let gone = false;
     res.on('close', () => { if (!res.writableFinished) gone = true; });
-    const job = await this.print.next(p, q.name, q.widthDots, q.wait, () => gone, q.roll, q.bills === '1');
+    const job = await this.print.next(p, q.name, q.widthDots, q.wait, () => gone, q.roll, q.bills === '1', q.mine === '1');
     if (gone) return;
     if (job) res.status(200).json(job);
     else res.status(204).end();
