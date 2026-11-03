@@ -80,8 +80,8 @@ export class CheekuAppController {
   }
 
   /**
-   * Keeps the picture of the party's slip and the grahak's mobile; the server sends it on the first scan, from any
-   * device, and tries again until WhatsApp takes it.
+   * Keeps the picture of the party's slip and the grahak's mobile; it goes when someone presses the button (resend),
+   * never on a scan.
    */
   @Post('forward-bills/:billId/whatsapp')
   @HttpCode(200)
@@ -94,8 +94,8 @@ export class CheekuAppController {
   }
 
   /**
-   * Any slip (not only one sent on): its picture and the grahak's mobile, kept until the QR is scanned — then the
-   * server sends it on WhatsApp and an SMS with the bill link, from whichever device scanned.
+   * Any slip (not only one sent on): its picture and the grahak's mobile, kept for the button (resend). Older apps still
+   * call this; a scan no longer sends anything.
    */
   @Post('slips/:billId/on-scan')
   @HttpCode(200)

@@ -22,6 +22,12 @@ export type SendState = 'none' | 'notqueued' | 'onscan' | 'pending' | 'sent' | '
 /** Sends one transactional SMS (to a 10-digit mobile) with the template's variables in order; swapped out in tests. */
 export type CheekuSmsSender = (to: string, vars: string[]) => Promise<string>;
 
+/** The cheeku slip template, else the grapes one: the bill goes as a grapes slip does. */
+function slipTemplate(): string {
+  const c = config();
+  return c.CHEEKU_SLIP_TEMPLATE || c.SLIP_TEMPLATE;
+}
+
 /** A short random code for the SMS link (10 letters, ~59 bits: not guessable). */
 function linkCode(): string {
   return Array.from(randomBytes(10), (b) => B62[b % 62]).join('');
@@ -33,12 +39,11 @@ function smsVar(s: string): string {
 }
 
 /**
- * The bill that goes to the grahak when the QR of a Cheeku slip is scanned — a slip sent on (Bikri laddan)
- * or any ordinary slip: the picture on WhatsApp, and an SMS with a link to the same picture.
+ * The bill that goes to the grahak of a Cheeku slip — a slip sent on (Bikri laddan) or any ordinary slip:
+ * the picture on WhatsApp, and an SMS with a link to the same picture.
  *
- * The terminal that made the slip uploads its picture with the grahak's mobile ({@link queue}); after that
- * the server alone decides: a scan from any device (the app's scanner, the website's) lands in pickups, and
- * the first one sends it. Each channel keeps its own status: a refusal (WhatsApp off, a template still with
+ * The terminal that made the slip uploads its picture with the grahak's mobile ({@link queue}); it goes only
+ * when someone presses the button ({@link resend}), as a grapes slip does — a scan never sends it. Each channel keeps its own status: a refusal (WhatsApp off, a template still with
  * Meta or DLT, a bad moment) is kept and tried again every five minutes for a day — never dropped silently —
  * and every slip shows where its send stands, with a way to send it again ({@link resend}).
  */
@@ -58,7 +63,7 @@ export class CheekuForwardSendsService implements OnApplicationBootstrap, OnModu
 
   /** The bot can send, and the shop's slip template is set. */
   on(): boolean {
-    return this.alerts.canSend() && !!config().CHEEKU_SLIP_TEMPLATE;
+    return this.alerts.canSend() && !!slipTemplate();
   }
 
   /** 2Factor's key, the DLT sender header and the SMS template are all set. */
@@ -130,7 +135,7 @@ export class CheekuForwardSendsService implements OnApplicationBootstrap, OnModu
     if (this.running) return out;
     this.running = true;
     try {
-      const template = config().CHEEKU_SLIP_TEMPLATE;
+      const template = slipTemplate();
       const sms = this.smsReady();
       const shops = await this.db.query<{ id: string; name: string }>(`SELECT id, name FROM shops WHERE commodity = 'cheeku' AND approved_at IS NOT NULL`);
       for (const shop of shops) {
@@ -138,7 +143,7 @@ export class CheekuForwardSendsService implements OnApplicationBootstrap, OnModu
           `UPDATE forward_sends SET status = 'sending' WHERE bill_id IN (
              SELECT fs.bill_id FROM forward_sends fs JOIN ${LIVE_BILLS} lb ON lb.id = fs.bill_id
              WHERE fs.status = 'waiting' AND fs.retry_at <= $1
-               AND (fs.force OR EXISTS (SELECT 1 FROM pickups p WHERE p.bill_id = fs.bill_id))
+               AND fs.force
              LIMIT 20 FOR UPDATE OF fs SKIP LOCKED)
            RETURNING bill_id, phone, image, params, tries, created_at`, [now])).rows);
         for (const d of due) {
@@ -175,7 +180,7 @@ export class CheekuForwardSendsService implements OnApplicationBootstrap, OnModu
          UPDATE forward_sends SET sms_status = 'sending' WHERE bill_id IN (
            SELECT fs.bill_id FROM forward_sends fs JOIN ${LIVE_BILLS} lb ON lb.id = fs.bill_id
            WHERE fs.sms_status = 'waiting' AND fs.sms_retry_at <= $1
-             AND (fs.sms_force OR EXISTS (SELECT 1 FROM pickups p WHERE p.bill_id = fs.bill_id))
+             AND fs.sms_force
            LIMIT 20 FOR UPDATE OF fs SKIP LOCKED)
          RETURNING bill_id, phone, sms_tries, created_at)
        SELECT t.bill_id, t.phone, t.sms_tries, t.created_at, b.slip_no, b.number, b.buyer_name,

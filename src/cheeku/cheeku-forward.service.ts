@@ -138,15 +138,14 @@ export class CheekuForwardService {
         smsOn: this.sends.smsOn(),
         bills: bills.map((b) => {
           const rates = b.rates ?? {};
-          // Where this slip's bill stands on WhatsApp.
-          const scanned = n(b.scanned) > 0;
+          // Where this slip's bill stands on WhatsApp: a scan never sends it, only the button does.
           const state: SendState = !b.phone ? 'none' : !b.wa_status ? 'notqueued'
             : b.wa_status === 'sent' ? 'sent' : b.wa_status === 'failed' ? 'failed'
-            : b.wa_status === 'sending' || scanned || b.wa_force ? 'pending' : 'onscan';
+            : b.wa_status === 'sending' || b.wa_force ? 'pending' : 'onscan';
           // The SMS with the bill link, which goes alongside (slips queued before SMS existed say none).
           const smsState: SendState = !b.phone || b.sms_status === 'none' ? 'none' : !b.sms_status ? 'notqueued'
             : b.sms_status === 'sent' ? 'sent' : b.sms_status === 'failed' ? 'failed'
-            : b.sms_status === 'sending' || scanned || b.sms_force ? 'pending' : 'onscan';
+            : b.sms_status === 'sending' || b.sms_force ? 'pending' : 'onscan';
           const own = lines.filter((l) => l.bill_id === b.id).map((l) => ({
             brandId: l.brand_id, quality: l.quality, qty: n(l.qty), slipRatePaise: n(l.rate), ratePaise: rates[l.brand_id] ?? n(l.rate), costRatePaise: n(l.cost),
           }));
