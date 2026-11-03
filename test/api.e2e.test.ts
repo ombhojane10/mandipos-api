@@ -3942,4 +3942,36 @@ describe('vouchers (Journal Voucher, Credit Note, Generate Invoices, Bikri Entry
     // Jaipur has two owners: one may step down there.
     await http().post(`/v1/admin/shops/${j}/branch-team`).set(w).send({ phone: '9845910009', roles: { [j]: 'accountant' } }).expect(200);
   });
+
+  it('resets a shop’s books with the admin’s PIN: data gone and kept on the server, team and settings stay, terminals told', async () => {
+    const { w, base, term } = await web('9845900041', { name: 'Reset Nariyal' });
+    const g = (await http().post(`${base}/entries/grahak`).set(w).send({ name: 'Ramesh', openingPaise: 500000 }).expect(201)).body;
+    await http().post(`${base}/entries/gaadi`).set(w).send({ number: 'KA01', supplier: 'Pollachi Traders', lots: [{ brandName: 'Pollachi', grade: '1', qty: 100, ratePaise: 1000 }] }).expect(201);
+    const truckId = (await http().get(`${base}/stock`).set(w).expect(200)).body.rows[0].truckId;
+    await http().post(`${base}/entries/parchi`).set(w).send({ buyerId: g.id, truckId, lines: [{ grade: '1', qty: 10, ratePaise: 2000 }], pay: 'credit', packing: 'loose' }).expect(201);
+    await http().post(`${base}/entries/vasooli`).set(w).send({ buyerId: g.id, cashPaise: 10000, upiPaise: 0 }).expect(201);
+    await http().post('/v1/shops/members').set(term).send({ phone: '9845900042', name: 'Munim' }).expect(204);
+    const munim = await login('9845900042');
+
+    // Only an admin, and only with the PIN.
+    await http().post('/v1/shops/reset').set(auth(munim.accessToken)).send({ pin: '654321' }).expect(403);
+    expect((await http().post('/v1/shops/reset').set(term).send({ pin: '111111' }).expect(403)).body.message).toMatch(/PIN/);
+    const done = (await http().post('/v1/shops/reset').set(term).send({ pin: '654321' }).expect(200)).body;
+    expect(done.counts).toMatchObject({ buyers: 1, trucks: 1, bills: 1, collections: 1 });
+
+    // Fresh books; the shop, its team and its maal stay; every terminal is told to start again.
+    expect((await http().get(`${base}/buyers?all=1&q=`).set(w).expect(200)).body.buyers).toEqual([]);
+    expect((await http().get(`${base}/stock`).set(w).expect(200)).body.rows).toEqual([]);
+    const me = (await http().get('/v1/me').set(term).expect(200)).body;
+    expect(me.shop).toMatchObject({ name: 'Reset Nariyal' });
+    expect((await http().get('/v1/shops/members').set(term).expect(200)).body.members).toHaveLength(2);
+    const feed = (await http().get('/v1/sync/pull?after=0&limit=500').set(term).expect(200)).body.changes;
+    expect(feed[0].table).toBe('_reset');
+    expect(feed.map((c: any) => c.table)).not.toContain('bills');
+    expect(feed.some((c: any) => c.table === 'brands')).toBe(true);
+
+    // Five wrong PINs lock it, even for the right one.
+    for (let i = 0; i < 5; i++) await http().post('/v1/shops/reset').set(term).send({ pin: '000000' }).expect(403);
+    expect((await http().post('/v1/shops/reset').set(term).send({ pin: '654321' }).expect(403)).body.message).toMatch(/15 minute/);
+  });
 });

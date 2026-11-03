@@ -35,6 +35,8 @@ const schema = z
     SLIP_TEMPLATE: z.string().default(''),
     // Every other shop's slip (coconut, amrud): "कुल माल {{4}}" with its own unit, no gaadi pickup line.
     SLIP_TEMPLATE_ALL: z.string().default('pos_parchi_v2'),
+    // The PIN an admin types in Settings › Data reset before a shop's books are wiped.
+    RESET_PIN: z.string().regex(/^\d{4,8}$/).default('654321'),
     // Angoor: "maal de diya" to the grahak after a gaadi scan (UTILITY, hi). Empty switches it off.
     PICKUP_TEMPLATE: z.string().default('pos_maal_diya_v1'),
     BEEJAK_TEMPLATE: z.string().default(''),

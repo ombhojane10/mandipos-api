@@ -154,6 +154,13 @@ export class ShopsController {
     await this.accounts.setSlipWhatsapp(p, parse(z.object({ on: z.boolean() }), body).on);
   }
 
+  /** Admin, with the reset PIN: wipe the shop's books and start fresh (kept on the server). */
+  @Post('reset')
+  @HttpCode(200)
+  reset(@Me() p: Principal, @Body() body: unknown) {
+    return this.accounts.resetShop(p, parse(z.object({ pin: z.string().trim().max(12) }), body).pin);
+  }
+
   /** Admin: the backup code for the accountant lock (angoor). */
   @Post('staff-backup-code')
   @HttpCode(204)
