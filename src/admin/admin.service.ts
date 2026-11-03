@@ -473,16 +473,6 @@ export class AdminService {
          FROM bill_voids v LEFT JOIN devices d ON d.id = v.device_id WHERE v.bill_id = $1 LIMIT 1`, [billId])).rows[0];
       const delivery = (await tx.query<{ address: string; destination: string }>(
         `SELECT address, destination FROM delivery_slips WHERE bill_id = $1 ORDER BY created_at DESC LIMIT 1`, [billId])).rows[0];
-      // What the machine's slip prints beyond the lines (Store.cheekuSlip): each gaadi it came off
-      // with where it stands and whose maal, each quality's box weight, and the grahak's pata.
-      const gaadis = (await tx.query<{ number: string; location: string; supplier: string }>(
-        `SELECT t.number, t.location, t.supplier FROM trucks t WHERE t.id IN (SELECT truck_id FROM bill_lines WHERE bill_id = $1)
-         ORDER BY t.arrived_at`, [billId])).rows;
-      const grams = (await tx.query<{ brand_id: string; grams: number }>(
-        `SELECT l.brand_id, MAX(g.box_grams) AS grams FROM bill_lines l JOIN truck_grades g ON g.truck_id = l.truck_id AND g.brand_id = l.brand_id
-         WHERE l.bill_id = $1 GROUP BY l.brand_id`, [billId])).rows;
-      const buyer = b.buyer_id ? (await tx.query<{ address: string; destination: string }>(
-        `SELECT address, destination FROM buyers WHERE id = $1`, [b.buyer_id])).rows[0] : undefined;
       const live = later.filter((c) => !c.voided);
       const paidLater = live.reduce((s, c) => s + n(c.amount), 0);
       return {
@@ -506,12 +496,6 @@ export class AdminService {
         payments: later.map((c) => ({ id: c.id, at: c.at.toISOString(), amountPaise: n(c.amount), receiptNo: c.receipt_no, voided: c.voided })),
         voided: voided ? { reason: voided.reason, at: voided.at.toISOString(), by: voided.by ?? '' } : null,
         delivery: delivery ? { address: delivery.address, stand: delivery.destination } : null,
-        slip: {
-          // '-' is the app's "no vehicle" gaadi: it prints without a number.
-          gaadis: gaadis.map((g) => ({ number: g.number === '-' ? '' : g.number, location: g.location ?? '', supplier: g.supplier ?? '' })),
-          gramsByBrand: Object.fromEntries(grams.filter((g) => Number(g.grams) > 0).map((g) => [g.brand_id, Number(g.grams)])),
-          buyerAddress: buyer?.address ?? '', buyerStand: buyer?.destination ?? '',
-        },
       };
     });
   }
