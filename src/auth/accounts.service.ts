@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { uuidv7 } from '../common/uuid';
+import { config } from '../config';
 import { Db, Tx } from '../db/db.service';
 import { Principal, Tokens, TokensService } from './tokens.service';
 
@@ -294,6 +295,28 @@ export class AccountsService {
   }
 
   /** Admin: whether each slip goes to the grahak on WhatsApp as it is saved. */
+  /**
+   * Settings › Data reset: an admin with the reset PIN wipes the shop's books (grahak, gaadis,
+   * parchi, payments, hisab) and it starts fresh; settings, team and masters stay. The removed rows
+   * are kept on the server (shop_resets.archive). Five wrong PINs lock it for 15 minutes.
+   */
+  async resetShop(p: Principal, pin: string): Promise<{ counts: Record<string, number> }> {
+    const key = p.shopId ?? '';
+    const tries = (this.resetTries.get(key) ?? []).filter((t) => Date.now() - t < 15 * 60_000);
+    if (tries.length >= 5) throw new ForbiddenException('Bahut baar galat PIN — 15 minute baad');
+    return this.db.tx(async (tx) => {
+      await this.requireAdmin(tx, p);
+      if (pin !== config().RESET_PIN) {
+        this.resetTries.set(key, [...tries, Date.now()]);
+        throw new ForbiddenException('PIN galat hai');
+      }
+      this.resetTries.delete(key);
+      const counts = (await tx.query<{ c: Record<string, number> }>(`SELECT reset_shop_data($1, $2, $3) AS c`, [p.shopId, p.userId, p.deviceId])).rows[0].c;
+      return { counts };
+    });
+  }
+  private readonly resetTries = new Map<string, number[]>();
+
   async setSlipWhatsapp(p: Principal, on: boolean) {
     return this.db.tx(async (tx) => {
       await this.requireAdmin(tx, p);
