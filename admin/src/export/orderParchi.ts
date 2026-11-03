@@ -159,7 +159,8 @@ class Pen {
   private readonly L = 5
   private readonly R = LAYOUT - 5
   private readonly CW = LAYOUT - 10
-  constructor(private readonly c: CanvasRenderingContext2D) {}
+  private readonly c: CanvasRenderingContext2D
+  constructor(c: CanvasRenderingContext2D) { this.c = c }
 
   private set(p: Paint) {
     this.c.font = `${p.size}px ${FAMILY[p.face]}`

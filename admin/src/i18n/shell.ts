@@ -162,6 +162,7 @@ export const SHELL: Record<string, readonly [string, string]> = {
   'Export': ['Export', 'एक्सपोर्ट'],
   'Share': ['Share', 'शेयर'],
   'Print': ['Print', 'प्रिंट'],
+  'Naye grahak ka mobile (optional)': ["New customer's mobile (optional)", 'नए ग्राहक का मोबाइल (वैकल्पिक)'],
   'Computer se print': ['Print on computer', 'कंप्यूटर से प्रिंट'],
   'Machine par print': ['Print on machine', 'मशीन पर प्रिंट'],
   'Parchi · jaisi machine par chhapi': ['Slip · as the machine printed it', 'पर्ची · जैसी मशीन पर छपी'],

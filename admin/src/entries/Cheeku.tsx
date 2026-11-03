@@ -77,6 +77,8 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
   const [stand, setStand] = useState(editing?.delivery?.stand ?? '')
   const [staff, setStaff] = useState(() => editing ? (editing.staff === 'Website' ? '' : editing.staff) : remembered('mp.staff', ''))
   const [slipNo, setSlipNo] = useState(editing?.slipNo ? String(editing.slipNo) : '')
+  // A grahak typed new (not picked, not Cash/Bank): their mobile, asked once here as the app asks it.
+  const [newPhone, setNewPhone] = useState('')
   useEffect(() => { if (!bank && o.banks[0]) setBank(o.banks[0]) }, [o]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // A slip being changed keeps its own gaadis on offer, even closed since.
@@ -97,9 +99,11 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
   const labourPaise = !free && credit && labour ? boxes * rate : 0
   const total = goods + apmc + labourPaise
   const walkIn = !buyer || (buyer.id === null && isWalkInName(buyer.name))
+  const isNew = !editing && !walkIn && !!buyer && buyer.id === null && !!buyer.name.trim()
   const set = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const pickBuyer = (b: PickedBuyer | null) => {
     setBuyer(b)
+    if (b?.id) setNewPhone('')
     if (b?.id === null && b.name === 'Cash') setPay('cash')
     else if (b?.id === null && b.name === 'Bank') setPay('upi')
     else if (b?.id && pay === 'cash') setPay('credit')
@@ -132,9 +136,10 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
         if (!filled.length) return setError(t('Quality aur box daalein'))
         if (!free && walkIn && (credit || (pay === 'split' && cash + upi < total))) return setError(t('Udhaar ke liye grahak chunein'))
         if (delivery && !address.trim() && !stand.trim()) return setError(t('Delivery ka pata daalein'))
+        if (isNew && newPhone && !/^[6-9]\d{9}$/.test(newPhone)) return setError(t('Mobile number 10 ank ka hona chahiye'))
         remember('mp.cheekuLabourRate', String(rate)); remember('mp.staff', staff.trim())
         void save(editing ? `/v1/admin/shops/${shopId}/bills/${editing.id}/edit` : `/v1/admin/shops/${shopId}/entries/parchi`, {
-          buyerId: buyer?.id ?? undefined, buyerName: buyer && !buyer.id ? buyer.name : undefined,
+          buyerId: buyer?.id ?? undefined, buyerName: buyer && !buyer.id ? buyer.name : undefined, buyerPhone: isNew && newPhone ? newPhone : undefined,
           lots: filled.map((l) => { const c = lot(l.key)!; return { truckId: c.truckId, brandId: c.brandId, qty: l.qty, ratePaise: l.ratePaise } }),
           pay, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined,
           labour: credit && labour, labourRatePaise: rate, apmc: apmcOn,
@@ -145,6 +150,7 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
       }}>
       {draft?.notes.length ? <p className="muted">{draft.notes.join(' · ')}</p> : null}
       <Field label={t('Grahak')}><BuyerPicker shopId={shopId} value={buyer} onChange={pickBuyer} walkIn autoFocus={!draft} /></Field>
+      {isNew && <Field label={t('Naye grahak ka mobile (optional)')}><input className="field" inputMode="tel" maxLength={10} value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, ''))} /></Field>}
 
       <div className="fld">
         <span className="fld-lb">{t('Quality')}</span>
