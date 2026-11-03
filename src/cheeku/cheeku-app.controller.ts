@@ -170,6 +170,13 @@ export class CheekuAppController {
   async staffBackupCode(@Me() p: Principal, @Body() body: unknown) {
     await this.settings.setStaffBackupCode(p, parse(z.object({ code: z.string().trim().regex(/^[0-9]{2,8}$/, '2 to 8 digits') }), body).code);
   }
+
+  /** Admin: a gaadi entered by mistake or as a test, removed from every machine (only while unused). */
+  @Post('trucks/:truckId/delete')
+  @HttpCode(200)
+  deleteTruck(@Me() p: Principal, @Param('truckId') truckId: string) {
+    return this.settings.deleteTruck(p, parse(z.uuid(), truckId));
+  }
 }
 
 export { CheekuBeejakBody };

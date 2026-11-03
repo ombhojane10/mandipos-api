@@ -4506,4 +4506,48 @@ describe('cheeku', () => {
     expect(await notices.tick(new Date(Date.now() + 240_000))).toMatchObject({ sent: 1 });
     expect(sent).toHaveLength(2);
   });
+
+  it('removes a gaadi entered by mistake from every machine, but only an admin, only a cheeku shop and only while nothing uses it', async () => {
+    const s = await login('9829208181');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Hatao', mandi: 'Azadpur', shopNo: 'C-91', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const t = new Date().toISOString();
+    const brandId = uuidv7(), spare = uuidv7(), used = uuidv7(), billId = uuidv7();
+    const grade = (truckId: string) => ({ id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 10, received_qty: 10, rate_paise: 0, box_grams: 10000 });
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Royal' } },
+      { table: 'trucks', row: { id: spare, created_at: t, updated_at: t, number: 'TEST1', supplier: 'Test', arrived_at: t } },
+      { table: 'truck_grades', row: grade(spare) },
+      { table: 'trucks', row: { id: used, created_at: t, updated_at: t, number: 'REAL1', supplier: 'Ravi', arrived_at: t } },
+      { table: 'truck_grades', row: grade(used) },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 50000, paid_paise: 50000, cash_paise: 50000, slip_no: 1 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: used, brand_id: brandId, grade: '1', qty: 1, rate_paise: 50000 } },
+    ] }).expect(200);
+    const before = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body;
+
+    // A munim can't; a gaadi something was sold from stays (close it instead); an unknown one is 404.
+    await http().post('/v1/shops/members').set(auth(owner)).send({ phone: '9829208182', name: 'Munim' }).expect(204);
+    const munim = await login('9829208182');
+    await http().post(`/v1/cheeku/trucks/${spare}/delete`).set(auth(munim.accessToken)).expect(403);
+    await http().post(`/v1/cheeku/trucks/${used}/delete`).set(auth(owner)).expect(422);
+    await http().post(`/v1/cheeku/trucks/${uuidv7()}/delete`).set(auth(owner)).expect(404);
+
+    // The unused one goes, with its quality row, and every terminal is told to drop both.
+    expect((await http().post(`/v1/cheeku/trucks/${spare}/delete`).set(auth(owner)).expect(200)).body).toEqual({ deleted: true });
+    const after = (await http().get(`/v1/sync/pull?after=${before.lastSeq}&limit=500`).set(auth(owner)).expect(200)).body;
+    const dropped = after.changes.filter((c: any) => c.table === '_delete').map((c: any) => c.row);
+    expect(dropped).toEqual(expect.arrayContaining([{ table: 'trucks', id: spare }, expect.objectContaining({ table: 'truck_grades' })]));
+    const all = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body.changes;
+    expect(all.some((c: any) => c.table === 'trucks' && c.row.id === spare)).toBe(false);
+    expect(all.some((c: any) => c.table === 'trucks' && c.row.id === used)).toBe(true);
+
+    // Not on another fruit's shop.
+    const g = await login('9829208183');
+    const grapes = await createApproved(g.accessToken, { name: 'Angoor Hatao', mandi: 'Azadpur', shopNo: 'G-91', role: 'owner', commodity: 'angoor' });
+    const gt = uuidv7();
+    await http().post('/v1/sync/push').set(auth(grapes.accessToken)).send({ items: [
+      { table: 'trucks', row: { id: gt, created_at: t, updated_at: t, number: 'G1', supplier: 'X', arrived_at: t } },
+    ] }).expect(200);
+    await http().post(`/v1/cheeku/trucks/${gt}/delete`).set(auth(grapes.accessToken)).expect(422);
+  });
 });
