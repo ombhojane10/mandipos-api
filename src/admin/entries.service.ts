@@ -40,6 +40,8 @@ export type Grade = '1' | '2' | '3' | 'mix';
 
 export type ParchiInput = {
   buyerId?: string; buyerName?: string; truckId?: string;
+  /** Cheeku: the mobile of a grahak typed new on this slip. */
+  buyerPhone?: string;
   lines?: { grade: Grade; qty: number; ratePaise: number }[];
   /** Angoor: each line is one quality off one gaadi. */
   lots?: { truckId: string; brandId: string; qty: number; ratePaise: number }[];

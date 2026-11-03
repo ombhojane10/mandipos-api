@@ -97,7 +97,7 @@ export class CheekuEntriesService {
     if (!buyerId && buyerName && !walkIn) {
       buyerId = uuidv7();
       if (CHEEKU_CAPS_NAMES) buyerName = buyerName.toUpperCase();
-      items.push({ table: 'buyers', row: this.e.buyerRow(buyerId, { name: buyerName }, now), txn: uuidv7() });
+      items.push({ table: 'buyers', row: this.e.buyerRow(buyerId, { name: buyerName, phone: input.buyerPhone || '' }, now), txn: uuidv7() });
     }
     if (buyerId && !input.buyerName) buyerName = (await this.db.withShop(shopId, async (tx) => (await tx.query<{ name: string }>(`SELECT name FROM buyers WHERE id = $1`, [buyerId])).rows[0]?.name)) ?? '';
     if (free) { buyerId = null; buyerName = 'Free'; }
