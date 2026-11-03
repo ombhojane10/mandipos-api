@@ -6,6 +6,7 @@ import { count } from './format'
 import { t } from './i18n'
 import { Field, Sheet } from './entries/fields'
 import { booksChanged } from './useLoad'
+import { CheekuWhatsappSheet } from './entries/CheekuWhatsapp'
 
 /**
  * Dispatch at the gaadi from the website, as the app's scanner does it: the slip's QR (its bill
@@ -87,6 +88,8 @@ function ScanSheet({ shopId, onClose, onSaved }: { shopId: string; onClose: () =
   const [error, setError] = useState('')
   const [camera, setCamera] = useState<'on' | 'off' | 'none'>('on')
   const [broken, setBroken] = useState<{ line: number; qty: string; note: string } | null>(null)
+  // After a scan the slip can go to the grahak on WhatsApp from here too (their khata number, editable).
+  const [whatsapp, setWhatsapp] = useState<string | null>(null)
   const video = useRef<HTMLVideoElement>(null)
   const looking = useRef(false)
 
@@ -177,6 +180,11 @@ function ScanSheet({ shopId, onClose, onSaved }: { shopId: string; onClose: () =
     } finally { setBusy(false) }
   }
 
+  if (whatsapp) {
+    return <CheekuWhatsappSheet shopId={shopId} billId={whatsapp} onClose={() => setWhatsapp(null)}
+      onSent={(msg) => { setWhatsapp(null); onSaved(msg) }} />
+  }
+
   if (slip && broken) {
     return (
       <Sheet title={`${t('Toote box')} · ${slip.slipNo ? `#${slip.slipNo}` : t('Parchi')}`} onClose={() => { setBroken(null); setError('') }}
@@ -212,6 +220,9 @@ function ScanSheet({ shopId, onClose, onSaved }: { shopId: string; onClose: () =
         {slip.left > 0
           ? <Field label={t('Abhi kitne box')}><input className="field scan-qty" inputMode="numeric" autoFocus value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ''))} /></Field>
           : <p className="error">{t('Is parchi ka saara maal ja chuka hai')}</p>}
+        <button type="button" className="link-row" onClick={() => { setError(''); setWhatsapp(slip.billId) }}>
+          {t('WhatsApp par bhejein')} ›
+        </button>
         {slip.picked > 0 && slip.lines.length > 0 && (
           <button type="button" className="link-row" onClick={() => { setError(''); setBroken({ line: 0, qty: '', note: '' }) }}>
             {t('Toote box batayein')} ›

@@ -8,6 +8,7 @@ import { useLoad } from '../useLoad'
 import { openRaseed, openVoucher } from '../keys'
 import { PeriodBar, Skeleton } from '../ui'
 import { t } from '../i18n'
+import { useSession } from '../App'
 import { dayRange, fileName, longDay, rs, type ExportRow, useExport } from '../export/doc'
 
 const FILTERS = [
@@ -27,6 +28,7 @@ export const HEADS: Record<string, string> = {
 
 /** Tally's Day Book: every parchi, vasooli and kharcha, newest first; a cancelled parchi struck through. */
 export function DayBook({ shopId }: { shopId: string }) {
+  const unit = useUnit(shopId)
   const [period, setPeriod] = usePeriod()
   const [filter, setFilter] = useState<Filter>(() => FILTERS.find((f) => f.key === hashQuery().get('f'))?.key ?? 'sab')
   const { data, error, loading } = useLoad(
@@ -43,7 +45,7 @@ export function DayBook({ shopId }: { shopId: string }) {
     for (const e of shown) {
       if (period.from !== period.to && e.date !== day) rows.push({ kind: 'band', cells: [longDay(e.date)] })
       day = e.date
-      const v = describe(e)
+      const v = describe(e, unit)
       rows.push({ strike: !!e.voided, cells: [time(e.at), v.type, v.no, [v.name, v.detail].filter(Boolean).join(' · '), e.nags ? count(e.nags) : '', v.amount, e.voided ? '' : v.pay ?? ''] })
     }
     return {
@@ -83,6 +85,7 @@ export function DayBook({ shopId }: { shopId: string }) {
 
 /** Time · Type · No. · Naam · Nag · Amount · Payment — the Day Book's table, and the dashboard's recent list. */
 export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: string; entries: DayEntry[]; multiDay?: boolean; compact?: boolean }) {
+  const unit = useUnit(shopId)
   let lastDay = ''
   return (
     <div className="wrap-x">
@@ -97,7 +100,7 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
           {entries.map((e) => {
             const header = multiDay && e.date !== lastDay ? <tr className="day"><td colSpan={compact ? 6 : 7}>{dayHeader(e.date)}</td></tr> : null
             lastDay = e.date
-            const v = describe(e)
+            const v = describe(e, unit)
             // Enter opens what the line is: a parchi as its voucher, a vasooli as its raseed.
             const go = e.kind === 'slip' ? () => openVoucher(shopId, e.id)
               : e.kind === 'payment' ? () => openRaseed(shopId, e.id) : undefined
@@ -135,13 +138,20 @@ export function EntryTable({ shopId, entries, multiDay, compact }: { shopId: str
 
 function Rows({ children }: { children: React.ReactNode }) { return <>{children}</> }
 
-function describe(e: DayEntry) {
+/** A slip's count word: fruit (angoor, cheeku, amrud) goes by the box, coconut by the nag. */
+function useUnit(shopId: string) {
+  const { shops } = useSession()
+  const c = shops?.find((x) => x.id === shopId)?.commodity
+  return !c || c === 'nariyal' ? '{n} nag' : '{n} box'
+}
+
+function describe(e: DayEntry, unit = '{n} nag') {
   if (e.kind === 'slip') {
     const parts = [e.cashPaise && 'Cash', e.upiPaise && 'UPI', e.udhaarPaise && 'Udhaar'].filter(Boolean) as string[]
     const pay = e.payMode === 'free' ? 'Free' : parts.length > 1 ? 'Mixed' : parts[0] ?? 'Udhaar'
     return {
       type: t('Parchi'), tone: 'green', no: e.title.replace(/^Parchi /, ''), name: e.party || t('Cash'),
-      detail: [e.nags && t('{n} nag', { n: count(e.nags) }), parts.length > 1 && [e.cashPaise && `${t('Cash')} ${rupees(e.cashPaise)}`, e.upiPaise && `UPI ${rupees(e.upiPaise)}`, e.udhaarPaise && `${t('Udhaar')} ${rupees(e.udhaarPaise)}`].filter(Boolean).join(' + '), e.staff].filter(Boolean).join(' · '),
+      detail: [e.nags && t(unit, { n: count(e.nags) }), parts.length > 1 && [e.cashPaise && `${t('Cash')} ${rupees(e.cashPaise)}`, e.upiPaise && `UPI ${rupees(e.upiPaise)}`, e.udhaarPaise && `${t('Udhaar')} ${rupees(e.udhaarPaise)}`].filter(Boolean).join(' + '), e.staff].filter(Boolean).join(' · '),
       amount: rupees(e.amountPaise), pay: t(pay), payTone: pay === 'Udhaar' ? 'amber' : pay === 'UPI' ? 'blue' : pay === 'Mixed' ? 'grey' : 'green',
     }
   }
