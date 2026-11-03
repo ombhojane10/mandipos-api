@@ -6,18 +6,23 @@ import { href } from '../routes'
 import { booksChanged, useLoad } from '../useLoad'
 import { editEntry } from '../entries/kinds'
 import { t } from '../i18n'
+import { Sheet } from '../entries/fields'
+import { isCheeku } from '../commodity'
+import { drawSlip, orderParchi, printSlip, type SlipShop } from '../export/orderParchi'
 
 type Bill = {
   id: string; number: string; slipNo: number | null; at: string; date: string; buyerId: string | null; buyerName: string; payMode: string
   totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; chungiPaise: number; openPaise: number
   packing: string; panniName: string; packs: number; staff: string; upiBank: string; truckId: string | null; truck: string | null; machine: string
-  lines: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
+  lines: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean; brandId: string }[]
   payments: { id: string; at: string; amountPaise: number; receiptNo: number | null; voided: boolean }[]
   collected: { cashPaise: number; upiPaise: number }
   pickedQty?: number
   pickups?: { at: string; qty: number; by: string }[]
   voided: { reason: string; at: string; by: string } | null
   delivery: { address: string; stand: string } | null
+  /** What the machine's slip prints beyond the lines: gaadis and where they stand, box weights, pata. */
+  slip?: { gaadis: { number: string; location: string; supplier: string }[]; gramsByBrand: Record<string, number>; buyerAddress: string; buyerStand: string }
 }
 type Raseed = {
   id: string; receiptNo: number | null; buyerId: string; buyerName: string; at: string; date: string
@@ -79,6 +84,10 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
   const remove = () => { if (live && !picked) setDeleting(true) }
   // Again to the shop's print machine; says so when no machine is on, so nobody waits for paper.
   const [printing, setPrinting] = useState(false)
+  // Cheeku: the same ORDER PARCHI the Pine Labs machine prints, on this computer's printer.
+  const { data: shop } = useLoad(() => api<SlipShop & { commodity: string }>(`/v1/admin/shops/${shopId}/settings`), [shopId])
+  const [slipOpen, setSlipOpen] = useState(false)
+  const cheeku = isCheeku(shop?.commodity)
   const print = async () => {
     if (!b || !live || printing) return
     setPrinting(true)
@@ -95,7 +104,8 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
         <>
           {b.buyerId && <a className="btn ghost" href={href({ page: 'grahak', shopId, buyerId: b.buyerId })} onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', marginRight: 'auto' }}>{t('{name} ka khata', { name: b.buyerName })} ›</a>}
           {live && picked && <span className="muted">{t('Maal uth chuka hai — yeh parchi ab nahi badlegi')}</span>}
-          {live && <button type="button" className="btn ghost" disabled={printing} onClick={() => void print()}><kbd>P: </kbd>{printing ? '…' : t('Print')}</button>}
+          {cheeku && <button type="button" className="btn ghost" onClick={() => setSlipOpen(true)}>{t('Computer se print')}</button>}
+          {live && <button type="button" className="btn ghost" disabled={printing} onClick={() => void print()}><kbd>P: </kbd>{printing ? '…' : cheeku ? t('Machine par print') : t('Print')}</button>}
           {live && !picked && <button type="button" className="btn ghost" onClick={alter}><kbd>A: </kbd>{t('Alter')}</button>}
           {live && !picked && <button type="button" className="btn ghost" onClick={remove}><kbd>D: </kbd>{t('Delete')}</button>}
         </>
@@ -154,6 +164,7 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
         </>
       )}
       {deleting && b && <DeleteParchi shopId={shopId} b={b} qty={qty} onClose={() => setDeleting(false)} onDone={onDone} />}
+      {slipOpen && b && shop && <SlipSheet b={b} shop={shop} onClose={() => setSlipOpen(false)} />}
     </Scrim>
   )
 }
@@ -292,6 +303,33 @@ function RaseedVoucher({ shopId, id, onClose, onDone }: VoucherProps & { id: str
         </div>
       )}
     </Scrim>
+  )
+}
+
+/**
+ * Cheeku: the parchi exactly as the Pine Labs machine printed it — the same drawing, the same
+ * faces — shown here and printed on this computer (a 58 mm thermal printer gives the same slip;
+ * an A4 printer, or Save as PDF, the same picture at the roll's width).
+ */
+function SlipSheet({ b, shop, onClose }: { b: Bill; shop: SlipShop; onClose: () => void }) {
+  const [png, setPng] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let gone = false
+    api<{ phone: string }>('/v1/admin/me').catch(() => ({ phone: '' }))
+      .then((me) => drawSlip(orderParchi(b, shop, me.phone)))
+      .then((c) => { if (!gone) setPng(c.toDataURL('image/png')) })
+      .catch((e: Error) => { if (!gone) setError(e.message) })
+    return () => { gone = true }
+  }, [b, shop])
+  const title = `Order Parchi #${b.slipNo ?? b.number}`
+  const print = () => { if (png && !printSlip(png, title)) setError(t('Print window nahi khula — popup allow karein')) }
+  return (
+    <Sheet title={t('Parchi · jaisi machine par chhapi')} onClose={onClose} onSave={print} saving={!png && !error} error={error} saveLabel={t('Print')}>
+      <div style={{ display: 'flex', justifyContent: 'center', background: '#f3f3f3', padding: 12, borderRadius: 8 }}>
+        {png ? <img src={png} alt={title} style={{ width: 'min(100%, 384px)', height: 'auto', imageRendering: 'pixelated', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,.2)' }} /> : !error && <div className="sk" style={{ width: 320, height: 480 }} />}
+      </div>
+    </Sheet>
   )
 }
 
