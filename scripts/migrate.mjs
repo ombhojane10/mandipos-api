@@ -2,6 +2,7 @@
 // Uses the DIRECT (unpooled) connection: migrations need a real session.
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const url = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
@@ -10,7 +11,8 @@ if (!url) {
   process.exit(1);
 }
 
-const dir = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'migrations');
+// fileURLToPath, not URL.pathname: on Windows the latter gives '/C:/…%20…' and the folder is not found.
+const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 const client = new pg.Client({ connectionString: url });
 await client.connect();
 try {

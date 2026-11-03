@@ -186,4 +186,6 @@ export type ShopSettings = {
   phone: string; dispatchPhone: string; slipCode: string; slipLimitPaise: number; udhaarRates: boolean; udhaarAlerts: boolean
   address: string; bankAccounts: BankAccount[]; printerHost: string; printerDots: number
   licenceNo: string; companyCode: string; contactPerson: string; email: string
+  /** Sent for every shop; only a cheeku shop's Settings page shows the switch. */
+  apmcOn: boolean
 }

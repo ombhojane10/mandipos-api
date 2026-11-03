@@ -28,6 +28,7 @@ import { UdhaarAlertsService } from '../alerts/udhaar-alerts.service';
 import { PortalTurnBody, PortalVoiceService } from '../voice/portal-voice.service';
 import { RemindersService } from '../alerts/reminders.service';
 import { GeminiClient } from '../voice/gemini.client';
+import { COMMODITIES } from '../common/commodity';
 
 const SpeakBody = z.object({ text: z.string().trim().min(1).max(500) });
 
@@ -81,7 +82,7 @@ export class AdminGuard implements CanActivate {
   }
 }
 
-const See = createParamDecorator((_: unknown, ctx: ExecutionContext): Viewer => ctx.switchToHttp().getRequest<PortalRequest>().viewer!);
+export const See = createParamDecorator((_: unknown, ctx: ExecutionContext): Viewer => ctx.switchToHttp().getRequest<PortalRequest>().viewer!);
 
 const Id = z.uuid();
 const Day = z.iso.date();
@@ -97,7 +98,7 @@ const NewShopBody = z.object({
   gstin: z.string().trim().toUpperCase().regex(/^([0-9]{2}[A-Z0-9]{13})?$/, 'GSTIN 15 akshar ka hota hai').default(''),
   address: z.string().trim().max(200).default(''),
   slipCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9&]{0,6}$/, 'Slip code 6 akshar tak').default(''),
-  commodity: z.enum(['nariyal', 'amrud', 'angoor']).default('nariyal'),
+  commodity: z.enum(COMMODITIES).default('nariyal'),
   people: z.array(Person).min(1).max(30),
 });
 const LabelBody = z.object({ nickname: z.string().trim().max(60) });
@@ -122,6 +123,7 @@ const ParchiBody = z.object({
   packing: z.enum(['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni']).default('loose'), panniName: z.string().max(40).optional(),
   kattaName: z.string().max(20).optional(), parchune: z.boolean().optional(),
   labour: z.boolean().optional(), labourQty: z.number().int().min(0).max(100_000).optional(), labourRatePaise: z.number().int().min(0).max(10_000).optional(),
+  apmc: z.boolean().optional(),
   delivery: z.object({ address: z.string().max(200), stand: z.string().max(120) }).optional(),
   staff: z.string().max(60).optional(), slipNo: z.number().int().positive().max(9_999_999).optional(),
 });
@@ -1339,7 +1341,7 @@ export class AdminController {
 }
 
 /** The shop id, if this viewer may open it; anything else is refused. */
-function mine(v: Viewer, id: string): string {
+export function mine(v: Viewer, id: string): string {
   const shopId = parse(Id, id);
   if (!v.admin && !v.shopIds.includes(shopId)) throw new ForbiddenException('Yeh aapki dukaan nahi');
   return shopId;

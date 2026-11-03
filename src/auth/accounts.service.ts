@@ -324,7 +324,7 @@ export class AccountsService {
     });
   }
 
-  /** Any member: what the shop sells — tender coconut, amrud or angoor. */
+  /** Any member: what the shop sells — tender coconut, amrud, angoor or cheeku. */
   async setCommodity(p: Principal, commodity: string) {
     return this.db.tx(async (tx) => {
       await this.requireMember(tx, p);
@@ -388,7 +388,8 @@ export class AccountsService {
     await this.roleOf(tx, p);
   }
 
-  private async requireAdmin(tx: Tx, p: Principal) {
+  /** Also used by cheeku's shop settings (an admin check, nothing more). */
+  async requireAdmin(tx: Tx, p: Principal) {
     if ((await this.roleOf(tx, p)) !== 'admin') throw new ForbiddenException('Yeh sirf admin kar sakte hain');
   }
 

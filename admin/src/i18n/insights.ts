@@ -79,6 +79,7 @@ export const INSIGHTS: Record<string, readonly [string, string]> = {
   'Khata PDF ke saath WhatsApp bhej diya': ['Sent on WhatsApp with the ledger PDF', 'खाता PDF के साथ व्हाट्सऐप भेज दिया'],
   // Grapes desk
   'Angoor': ['Grapes', 'अंगूर'],
+  'Cheeku': ['Sapota', 'चीकू'],
   'Dispatch': ['Dispatch', 'डिस्पैच'],
   'Gaadi kahan': ['Where gaadis stand', 'गाड़ी कहाँ'],
   'Supplier commission': ['Supplier commission', 'सप्लायर कमीशन'],

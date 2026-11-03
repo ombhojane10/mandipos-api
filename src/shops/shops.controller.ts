@@ -5,6 +5,7 @@ import { AccountsService } from '../auth/accounts.service';
 import { AuthGuard, Me } from '../auth/auth.guard';
 import { Principal } from '../auth/tokens.service';
 import { parse, phone } from '../common/validate';
+import { COMMODITIES } from '../common/commodity';
 
 const CreateShopBody = z.object({
   name: z.string().trim().min(1).max(120),
@@ -15,8 +16,8 @@ const CreateShopBody = z.object({
   gstin: z.string().trim().toUpperCase().max(15).default(''),
   role: z.enum(['owner', 'manager', 'munim']).default('owner'),
   ownerName: z.string().trim().max(80).default(''),
-  // What the shop sells. Tender coconut is every shop so far; amrud is sold on commission.
-  commodity: z.enum(['nariyal', 'amrud', 'angoor']).default('nariyal'),
+  // What the shop sells. Tender coconut by the piece; amrud, angoor and cheeku on commission.
+  commodity: z.enum(COMMODITIES).default('nariyal'),
 });
 
 const JoinBody = z.object({ code: z.string().regex(/^\d{6}$/, 'must be the 6-digit shop code') });
@@ -137,7 +138,7 @@ export class ShopsController {
   @Post('commodity')
   @HttpCode(204)
   async commodity(@Me() p: Principal, @Body() body: unknown) {
-    await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(['nariyal', 'amrud', 'angoor']) }), body).commodity);
+    await this.accounts.setCommodity(p, parse(z.object({ commodity: z.enum(COMMODITIES) }), body).commodity);
   }
 
   /** Admin: APMC on new slips, on or off (angoor). */

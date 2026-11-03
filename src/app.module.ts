@@ -49,9 +49,23 @@ import { VoiceController } from './voice/voice.controller';
 import { VoiceService } from './voice/voice.service';
 import { PortalVoiceService } from './voice/portal-voice.service';
 import { SheetService } from './voice/sheet.service';
+// Cheeku Fruits: its own copy of the grapes flow (src/cheeku/), registered after the shared services.
+import { CheekuAdminController } from './cheeku/cheeku-admin.controller';
+import { CheekuAppController } from './cheeku/cheeku-app.controller';
+import { CheekuBillLinkController } from './cheeku/cheeku-bill-link.controller';
+import { CheekuCommissionsService } from './cheeku/cheeku-commissions.service';
+import { CheekuCreditorsService } from './cheeku/cheeku-creditors.service';
+import { CheekuDeskService } from './cheeku/cheeku-desk.service';
+import { CheekuEntriesService } from './cheeku/cheeku-entries.service';
+import { CheekuForwardSendsService } from './cheeku/cheeku-forward-sends.service';
+import { CheekuForwardService } from './cheeku/cheeku-forward.service';
+import { CheekuPickupNoticesService } from './cheeku/cheeku-pickup-notices.service';
+import { CheekuSettingsService } from './cheeku/cheeku-settings.service';
+import { CheekuSlipSendsService } from './cheeku/cheeku-slip-sends.service';
 
 @Module({
-  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController],
-  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, CreditorsService, MachinesService, ConsoleService, DepositsService, MastersService, CratesService, ColdStoreService, BooksService, VouchersService, InvoicesService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService],
+  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController, CheekuAppController, CheekuAdminController, CheekuBillLinkController],
+  providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, CreditorsService, MachinesService, ConsoleService, DepositsService, MastersService, CratesService, ColdStoreService, BooksService, VouchersService, InvoicesService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService,
+    CheekuEntriesService, CheekuDeskService, CheekuCreditorsService, CheekuPickupNoticesService, CheekuSlipSendsService, CheekuSettingsService, CheekuCommissionsService, CheekuForwardService, CheekuForwardSendsService],
 })
 export class AppModule {}

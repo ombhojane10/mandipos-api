@@ -30,6 +30,8 @@ export const openBolo = () => dispatchEvent(new Event(OPEN_BOLO))
 export type EditBill = {
   id: string; slipNo: number | null; buyerId: string | null; buyerName: string; payMode: string; truckId: string | null; truck: string | null
   totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; packs: number
+  /** The 1% APMC the slip carried (0 when it had none). */
+  apmcPaise?: number
   packing: string; panniName: string; staff: string; upiBank: string
   lines: { grade: string; qty: number; ratePaise: number; leak: boolean; brand: string; truckId?: string; brandId?: string }[]
   delivery: { address: string; stand: string } | null

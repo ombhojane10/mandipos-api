@@ -40,6 +40,16 @@ const schema = z
     // Angoor: "maal de diya" to the grahak after a gaadi scan (UTILITY, hi). Empty switches it off.
     PICKUP_TEMPLATE: z.string().default('pos_maal_diya_v1'),
     BEEJAK_TEMPLATE: z.string().default(''),
+    // Cheeku's own WhatsApp templates (slip, "maal de diya", beejak). They start as the angoor
+    // ones' values but are separate keys, so either fruit can change its template alone.
+    CHEEKU_SLIP_TEMPLATE: z.string().default(''),
+    CHEEKU_PICKUP_TEMPLATE: z.string().default('pos_maal_diya_v1'),
+    CHEEKU_BEEJAK_TEMPLATE: z.string().default(''),
+    // Cheeku: the SMS that goes with the scanned slip's WhatsApp bill (2Factor transactional SMS, same
+    // TWOFACTOR_API_KEY as the OTP). The DLT sender header (6 letters) and the template's name as saved in
+    // 2Factor; either empty = no SMS. Its five variables: name, firm, slip no, boxes, bill link.
+    CHEEKU_SMS_SENDER: z.string().default(''),
+    CHEEKU_SMS_TEMPLATE: z.string().default(''),
     /**
      * Grahak eKYC through ULIP's DigiLocker APIs (same account as the MandiPlus backend).
      * Unset = the eKYC screen says it is not switched on. A staging URL means test KYCs:

@@ -4,6 +4,8 @@ import { Db, Tx } from '../db/db.service';
 import { fyOf, fyRange } from './creditors.service';
 import { SettingsService } from './settings.service';
 import { LIVE_BILLS, n } from './sql';
+import { isAngoor, isCheeku } from '../common/commodity';
+import { CHEEKU_INVOICE } from '../cheeku/cheeku';
 
 const isDay = (d?: string | null): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
 export const GSTIN = /^[0-9]{2}[A-Z0-9]{13}$/;
@@ -11,6 +13,7 @@ export const GSTIN = /^[0-9]{2}[A-Z0-9]{13}$/;
 /** Fresh fruit is nil-rated under GST: the invoice keeps the tax columns, at 0%, saying so. */
 const HSN: Record<string, { hsn: string; item: string; unit: string }> = {
   angoor: { hsn: '0806 10', item: 'Fresh grapes', unit: 'Box' },
+  cheeku: { hsn: CHEEKU_INVOICE.hsn, item: CHEEKU_INVOICE.item, unit: CHEEKU_INVOICE.unit },
   nariyal: { hsn: '0801 19', item: 'Tender coconut', unit: 'Nag' },
   amrud: { hsn: '0804 50', item: 'Fresh guava', unit: 'Box' },
 };
@@ -167,13 +170,13 @@ export class InvoicesService {
     for (const b of bills) {
       for (const l of lines.filter((x) => x.bill_id === b.id)) {
         const qty = n(l.qty), rate = n(l.rate_paise);
-        out.push({ slipNo: b.slip_no, date: b.day, quality: l.quality ?? kind.item, grade: s.commodity === 'angoor' ? '' : l.grade, gaadi: l.gaadi ?? '', hsn: kind.hsn,
+        out.push({ slipNo: b.slip_no, date: b.day, quality: l.quality ?? kind.item, grade: isCheeku(s.commodity) ? '' : isAngoor(s.commodity) ? '' : l.grade, gaadi: l.gaadi ?? '', hsn: kind.hsn,
           qty, unit: kind.unit, kg: Math.round(qty * (l.grams ?? 0) / 10) / 100, ratePaise: rate, amountPaise: qty * rate });
       }
     }
     const goods = out.reduce((t, l) => t + l.amountPaise, 0);
     const total = bills.reduce((t, b) => t + n(b.total_paise), 0);
-    // What rides on the slip besides the goods: APMC, and the rest of chungi_paise (grapes: mazdoori; amrud: chungi).
+    // What rides on the slip besides the goods: APMC, and the rest of chungi_paise (grapes: mazdoori; cheeku: its own label; amrud: chungi).
     // APMC as the slip prints it (chungi less labour — the Trial Balance's rule): an old slip whose
     // chungi was labour only collected no APMC, whatever apmc_paise says.
     const apmcOf = (b: Bill) => Math.min(n(b.apmc_paise), Math.max(0, n(b.chungi_paise) - n(b.labour_paise)))
@@ -181,7 +184,7 @@ export class InvoicesService {
     const rest = bills.reduce((t, b) => t + Math.max(0, n(b.chungi_paise) - apmcOf(b)), 0);
     const charges = [
       ...(apmc ? [{ label: 'APMC (mandi fee)', amountPaise: apmc }] : []),
-      ...(rest ? [{ label: s.commodity === 'angoor' ? 'Mazdoori (labour)' : 'Chungi', amountPaise: rest }] : []),
+      ...(rest ? [{ label: isCheeku(s.commodity) ? CHEEKU_INVOICE.chargesLabel : isAngoor(s.commodity) ? 'Mazdoori (labour)' : 'Chungi', amountPaise: rest }] : []),
     ];
     const other = total - goods - apmc - rest;
     if (other) charges.push({ label: 'Other', amountPaise: other });

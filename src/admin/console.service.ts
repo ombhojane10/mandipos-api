@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { uuidv7 } from '../common/uuid';
 import { Db, Tx } from '../db/db.service';
 import { SettingsService } from './settings.service';
+import type { Commodity } from '../common/commodity';
 
 /**
  * The MandiPlus admin console: setting a customer up without their phone in hand. A shop made
@@ -15,7 +16,7 @@ const fromDb = (r: string): ConsoleRole => (r === 'owner' ? 'admin' : r === 'lab
 
 export type NewShop = {
   name: string; nickname: string; mandi: string; shopNo: string; phad: string; gstin: string; address: string; slipCode: string
-  commodity: 'nariyal' | 'amrud' | 'angoor'
+  commodity: Commodity
   people: { phone: string; name: string; role: ConsoleRole }[]
 };
 

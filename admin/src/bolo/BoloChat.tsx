@@ -9,11 +9,15 @@ import { chatStore, useChats } from './chats'
 import { useBolo } from './useBolo'
 import { Composer, type ComposerHandle } from './Composer'
 import { BoloMark, Thread } from './Thread'
+import { isCheeku } from '../commodity'
+import { loadCheekuDesk } from '../pages/Cheeku'
+import { cheekuTopics } from './CheekuTopics'
 
 type Topic = { key: string; label: string; asks: string[] }
 
 /** What to ask, by topic, in the shop's own trade: grapes in boxes off gaadis, coconut in dana. */
 function topics(commodity: string, top: string): Topic[] {
+  if (isCheeku(commodity)) return cheekuTopics(top)
   const angoor = commodity === 'angoor'
   const who = top || 'Ramesh'
   return [
@@ -43,7 +47,8 @@ function useHints(shopId: string, commodity: string) {
       const out: Hint[] = []
       const [owe, desk] = await Promise.all([
         api<Outstanding>(`/v1/admin/shops/${shopId}/outstanding`).catch(() => null),
-        commodity === 'angoor' ? loadDesk(shopId, day, day).catch(() => null) : Promise.resolve(null),
+        commodity === 'angoor' ? loadDesk(shopId, day, day).catch(() => null)
+          : isCheeku(commodity) ? loadCheekuDesk(shopId, day, day).catch(() => null) : Promise.resolve(null),
       ])
       if (desk) {
         const left = desk.totals.boxes - desk.totals.picked

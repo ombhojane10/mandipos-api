@@ -13,6 +13,10 @@ import { t } from '../i18n'
 import { useSession } from '../App'
 import { AngoorStrip } from './Angoor'
 import { openScan } from '../Scan'
+import { isCheeku } from '../commodity'
+import { CheekuStrip } from './Cheeku'
+import { CheekuForwardCard } from './CheekuForward'
+import { openCheekuScan } from '../CheekuScan'
 
 const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: string; icon: () => React.ReactNode }[] = [
   { kind: 'parchi', key: 'F8', label: t('Nayi Parchi'), sub: t('Bikri'), tone: 'green', icon: I.IRupee },
@@ -25,7 +29,8 @@ const QUICK: { kind: EntryKind; key: string; label: string; sub: string; tone: s
 export function Dashboard({ shopId }: { shopId: string }) {
   const [period, setPeriod] = usePeriod()
   const angoor = useSession().shops?.find((s) => s.id === shopId)?.commodity === 'angoor'
-  const unit = (n: number) => t(angoor ? '{n} box' : '{n} nag', { n: count(n) })
+  const cheeku = isCheeku(useSession().shops?.find((s) => s.id === shopId)?.commodity)
+  const unit = (n: number) => t(angoor ? '{n} box' : cheeku ? '{n} box' : '{n} nag', { n: count(n) })
   const { data, error, loading } = useLoad(async () => {
     const [d, book] = await Promise.all([
       api<Dash>(`/v1/admin/shops/${shopId}/dashboard?from=${period.from}&to=${period.to}`),
@@ -39,10 +44,15 @@ export function Dashboard({ shopId }: { shopId: string }) {
     <>
       <div className="quick" style={{ marginBottom: 10 }}>
         <a className="quick-bolo" href={href({ page: 'report', shopId, report: 'bolo' })}>
-          <span className="ic t-blue"><MicIcon /></span><span><b>{t('Bolo')}</b> · {angoor ? t('Parchi bolein, kuch bhi poochhein') : t('Kuch bhi poochhein')}</span>
+          <span className="ic t-blue"><MicIcon /></span><span><b>{t('Bolo')}</b> · {angoor ? t('Parchi bolein, kuch bhi poochhein') : cheeku ? t('Parchi bolein, kuch bhi poochhein') : t('Kuch bhi poochhein')}</span>
         </a>
         {angoor && (
           <button type="button" onClick={() => openScan(shopId)}>
+            <span className="ic t-green"><I.IScan /></span><span><b>{t('Scan')}</b> · {t('Maal dein')}</span>
+          </button>
+        )}
+        {cheeku && (
+          <button type="button" onClick={() => openCheekuScan(shopId)}>
             <span className="ic t-green"><I.IScan /></span><span><b>{t('Scan')}</b> · {t('Maal dein')}</span>
           </button>
         )}
@@ -68,6 +78,8 @@ export function Dashboard({ shopId }: { shopId: string }) {
           </div>
 
           {angoor && <AngoorStrip shopId={shopId} from={period.from} to={period.to} />}
+          {cheeku && <CheekuStrip shopId={shopId} from={period.from} to={period.to} />}
+          {cheeku && <CheekuForwardCard shopId={shopId} from={period.from} to={period.to} />}
 
           <div className="grid g2-1">
             <div className="card">
