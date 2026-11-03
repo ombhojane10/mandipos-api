@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { count, date, rupees } from '../format'
 import { t } from '../i18n'
 import { href } from '../routes'
+import { useSession } from '../App'
 
 type Summary = {
   from: string; to: string; salesPaise: number; slips: number; nags: number; cashPaise: number; upiPaise: number; creditPaise: number
@@ -30,6 +31,9 @@ function Head({ label, value, tone }: { label: string; value: string; tone?: 'du
 
 /** One answer card. Memoised: a card never changes once shown, and the meter must not redraw it. */
 export const VoiceCard = memo(function VoiceCard({ c, shopId }: { c: Card; shopId: string }) {
+  // Fruit is counted in boxes, coconut in dana.
+  const { shops } = useSession()
+  const unit = (shops?.find((x) => x.id === shopId)?.commodity ?? 'nariyal') === 'nariyal' ? t('dana') : t('box')
   switch (c.view) {
     case 'udhaar':
       return (
@@ -52,7 +56,7 @@ export const VoiceCard = memo(function VoiceCard({ c, shopId }: { c: Card; shopI
       return (
         <div className="vc">
           <Head label={`${t('Bikri')} · ${span(c.from, c.to)}`} value={rupees(c.salesPaise)} />
-          <Row label={t('Parchi · dana')} value={`${count(c.slips)} · ${count(c.nags)}`} />
+          <Row label={`${t('Parchi')} · ${unit}`} value={`${count(c.slips)} · ${count(c.nags)}`} />
           <Row label={t('Cash')} value={rupees(c.cashPaise)} />
           <Row label="UPI" value={rupees(c.upiPaise)} />
           <Row label={t('Udhaar')} value={rupees(c.creditPaise)} tone="due" />
@@ -84,7 +88,7 @@ export const VoiceCard = memo(function VoiceCard({ c, shopId }: { c: Card; shopI
     case 'stock':
       return (
         <div className="vc">
-          <Head label={t('Maal bacha')} value={`${count(c.totalLeft)} ${t('dana')}`} />
+          <Head label={t('Maal bacha')} value={`${count(c.totalLeft)} ${unit}`} />
           {c.rows.map((r) => <Row key={r.truckId} label={`${r.number}${r.supplier ? ` · ${r.supplier}` : ''}`} value={count(r.left)} />)}
           <a className="vc-link" href={href({ page: 'report', shopId, report: 'stock' })}>{t('Stock kholein')}</a>
         </div>

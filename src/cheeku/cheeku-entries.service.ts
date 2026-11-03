@@ -375,6 +375,50 @@ export class CheekuEntriesService {
     return { truckId, number };
   }
 
+  /** Gaadi band karein (it leaves New slip and Gaadi kahan; its books stay) or wapas chalu karein. */
+  async closeGaadi(phone: string, shopId: string, truckId: string, closed: boolean) {
+    await requireCheeku(this.db, shopId);
+    const p = await this.e.device(phone, shopId);
+    const t = await this.db.withShop(shopId, async (tx) => (await tx.query<{ id: string; created_at: Date; number: string; supplier: string; arrived_at: Date; freight_paise: string; labour_paise: string; commission_paise: string; closed_at: Date | null; location: string }>(
+      `SELECT id, created_at, number, supplier, arrived_at, freight_paise, labour_paise, commission_paise, closed_at, location FROM trucks WHERE id = $1`, [truckId])).rows[0]);
+    if (!t) throw new NotFoundException('Gaadi nahi mili');
+    if (!!t.closed_at === closed) return;
+    const now = new Date().toISOString();
+    await this.e.push(p, shopId, [{ table: 'trucks', txn: uuidv7(), row: {
+      id: t.id, created_at: t.created_at.toISOString(), updated_at: now, number: t.number, supplier: t.supplier, arrived_at: t.arrived_at.toISOString(),
+      freight_paise: n(t.freight_paise), labour_paise: n(t.labour_paise), commission_paise: n(t.commission_paise),
+      closed_at: closed ? now : null, location: t.location,
+    } }]);
+  }
+
+  /** Gaadi hatayein: gone from every machine, only while no slip, set-aside or beejak uses it (migration 074). */
+  async deleteGaadi(phone: string, shopId: string, truckId: string) {
+    await requireCheeku(this.db, shopId);
+    const p = await this.e.device(phone, shopId);
+    const r = await this.db.withShop(shopId, async (tx) =>
+      (await tx.query<{ r: string }>(`SELECT cheeku_delete_truck($1, $2, $3) AS r`, [shopId, truckId, p.deviceId])).rows[0].r);
+    if (r === 'not_found') throw new NotFoundException('Gaadi nahi mili');
+    if (r === 'used') throw new ConflictException('Is gaadi ki parchi ya hisaab ban chuka hai, ise hataya nahi ja sakta. Ise band kar dein.');
+    if (r !== 'deleted') throw new BadRequestException('Yeh dukaan cheeku ki nahi hai');
+    return { deleted: true };
+  }
+
+  /** The gaadis closed in the last 60 days, newest first, with what came and what sold. */
+  async closedGaadis(shopId: string) {
+    await requireCheeku(this.db, shopId);
+    return this.db.withShop(shopId, async (tx) => ({
+      gaadis: (await tx.query<{ id: string; number: string; supplier: string; location: string; arrived: Date; closed: Date; received: string; sold: string; used: boolean }>(
+        `SELECT t.id, t.number, TRIM(t.supplier) AS supplier, t.location, t.arrived_at AS arrived, t.closed_at AS closed,
+                COALESCE((SELECT SUM(received_qty) FROM truck_grades g WHERE g.truck_id = t.id), 0)
+                  - COALESCE((SELECT SUM(qty) FROM spoilage s WHERE s.truck_id = t.id AND s.kind = 'correction'), 0) AS received,
+                (SELECT COALESCE(SUM(l.qty), 0) FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id WHERE l.truck_id = t.id) AS sold,
+                EXISTS (SELECT 1 FROM bill_lines l WHERE l.truck_id = t.id) OR EXISTS (SELECT 1 FROM spoilage s WHERE s.truck_id = t.id AND s.kind <> 'correction') AS used
+         FROM trucks t WHERE t.closed_at > now() - interval '60 days' ORDER BY t.closed_at DESC LIMIT 200`)).rows
+        .map((r) => ({ truckId: r.id, number: r.number, supplier: r.supplier, location: r.location, arrivedAt: r.arrived, closedAt: r.closed,
+          received: n(r.received), sold: n(r.sold), used: r.used })),
+    }));
+  }
+
   // ---------------------------------------------------------------- the gaadi scanner and the labour page
 
   /**

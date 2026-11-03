@@ -917,7 +917,10 @@ a.vc-row:hover { background: var(--accent-soft); }
 .desk-actions svg, .btn.line svg { width: 16px; height: 16px; }
 .btn.sm { padding: 3px 10px; font-size: 12.5px; min-height: 0; }
 .tbl td.row-act { width: 1%; white-space: nowrap; text-align: right; }
-.gaadi-acts { display: flex; gap: 6px; margin-top: 10px; }
+.gaadi-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.btn.line.warn { color: var(--due); }
+.tbl td.acts { white-space: nowrap; text-align: right; }
+.tbl td.acts .btn + .btn { margin-left: 6px; }
 button.chip { border: 0; cursor: pointer; }
 .beejak-links { display: flex !important; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .sheet.beejak { max-width: 620px; }
@@ -1165,7 +1168,7 @@ button.chip { border: 0; cursor: pointer; }
 .vb .vb-x:hover { background: rgb(20 28 27 / 0.12); }
 .vb-stage { flex: 1; min-height: 0; overflow-y: auto; display: flex; padding: 12px 20px; }
 .vb-center { margin: auto; width: 100%; max-width: 440px; display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; animation: vb-rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.vb-center.wide { max-width: 560px; }
+.vb-center.wide { max-width: 720px; min-width: 0; }
 @keyframes vb-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .vb-title { margin: 0; font-size: clamp(22px, 4.6vw, 30px); line-height: 1.25; font-weight: 650; letter-spacing: -0.015em; text-decoration: none !important; color: #141c1b; }
 .vb-title.soft { color: #3a4644; font-weight: 550; font-size: clamp(18px, 3.6vw, 22px); }
@@ -1206,8 +1209,11 @@ button.chip { border: 0; cursor: pointer; }
 .vb .vb-type:focus-within { border-color: #2a6b73; box-shadow: 0 0 0 4px rgb(42 107 115 / 0.12) !important; }
 .vb-type input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 20px; letter-spacing: 0.03em; color: #141c1b; }
 .vb .vb-go { width: 46px; height: 46px; display: grid; place-items: center; border: 0; background: #2a6b73; color: #fff; border-radius: 14px !important; cursor: pointer; }
-.vb-cards { width: 100%; display: grid; gap: 10px; text-align: left; }
+.vb-cards { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; text-align: left; }
 .vb .vb-cards .vc { background: #fff; border: 1px solid #e2e6db !important; border-radius: 18px !important; padding: 4px 0; overflow: hidden; font-family: inherit; }
+/* A wide answer scrolls sideways inside its card (the card's own overflow: hidden clipped it). */
+.vb .vb-cards .vc.vc-scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x pan-y; }
+.vb .vb-cards .vc-scroll .vc-table th:first-child, .vb .vb-cards .vc-scroll .vc-table td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; }
 .vb .vc-head { padding: 12px 18px; }
 .vb .vc-head small { font-size: 13px; font-weight: 550; color: #6b7673; }
 .vb .vc-head strong { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }

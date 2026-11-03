@@ -202,6 +202,25 @@ export class CheekuAdminController {
     return this.entries.editGaadi(v.phone, mine(v, id), parse(z.uuid(), truckId), parse(GaadiBody, body));
   }
 
+  /** Gaadi band karein / wapas chalu karein, as the app's Gaadi screen does. */
+  @Post('shops/:id/cheeku/gaadi/:truckId/close')
+  @HttpCode(204)
+  async closeGaadi(@See() v: Viewer, @Param('id') id: string, @Param('truckId') truckId: string, @Body() body: unknown) {
+    await this.entries.closeGaadi(v.phone, mine(v, id), parse(z.uuid(), truckId), parse(z.object({ closed: z.boolean() }), body).closed);
+  }
+
+  /** A gaadi entered by mistake, removed on every machine — only while nothing uses it. */
+  @Post('shops/:id/cheeku/gaadi/:truckId/delete')
+  deleteGaadi(@See() v: Viewer, @Param('id') id: string, @Param('truckId') truckId: string) {
+    return this.entries.deleteGaadi(v.phone, mine(v, id), parse(z.uuid(), truckId));
+  }
+
+  /** Gaadis closed in the last 60 days (by hand or by themselves once empty), newest first. */
+  @Get('shops/:id/cheeku/gaadis/closed')
+  closedGaadis(@See() v: Viewer, @Param('id') id: string) {
+    return this.entries.closedGaadis(mine(v, id));
+  }
+
   /** Dispatch at the gaadi: a slip by its QR (bill id) or number, and boxes handed over against it. */
   @Get('shops/:id/cheeku/pickup')
   pickupSlip(@See() v: Viewer, @Param('id') id: string, @Query('code') code?: string) {

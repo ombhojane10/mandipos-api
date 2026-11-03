@@ -81,8 +81,25 @@ export class SyncService {
         }
         i = end;
       }
+      await this.cheekuAutoclose(tx, p, shopId, items, results);
       return results;
     });
+  }
+
+  /**
+   * Cheeku: a gaadi this push emptied — its last box sold, or the last box of its slips handed
+   * over — closes by itself, on every machine (migration 076). Other shops: nothing happens.
+   */
+  private async cheekuAutoclose(tx: Tx, p: Principal, shopId: string, items: PushItem[], results: PushResult[]) {
+    const trucks = new Set<string>(), bills = new Set<string>();
+    items.forEach((item, i) => {
+      if (results[i]?.status !== 'applied') return;
+      const row = item.row ?? {};
+      if ((item.table === 'bill_lines' || item.table === 'spoilage') && typeof row.truck_id === 'string') trucks.add(row.truck_id);
+      if ((item.table === 'pickups' || item.table === 'bill_lines') && typeof row.bill_id === 'string') bills.add(row.bill_id);
+    });
+    if (!trucks.size && !bills.size) return;
+    await tx.query(`SELECT cheeku_autoclose($1, $2::uuid[], $3::uuid[], $4)`, [shopId, [...trucks], [...bills], p.deviceId]);
   }
 
   /** All of [group] or none of it. */

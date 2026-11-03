@@ -4603,3 +4603,75 @@ describe('print machines', () => {
     expect((await poll(office, false).expect(200)).body.billId).toBe(slip.billId);
   });
 });
+
+describe('cheeku gaadi close', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('closes a gaadi by itself once every box is sold and handed over, and the website can close, reopen and delete one', async () => {
+    const s = await login('9829209081');
+    const res = await createApproved(s.accessToken, { name: 'Cheeku Close', mandi: 'Azadpur', shopNo: 'C-95', role: 'owner', commodity: 'cheeku' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    const t = new Date().toISOString();
+    const day = t.slice(0, 10);
+    const brandId = uuidv7(), truckId = uuidv7(), billId = uuidv7(), spare = uuidv7(), loose = uuidv7();
+    const push = (items: unknown[]) => http().post('/v1/sync/push').set(auth(owner)).send({ items }).expect(200);
+    const truck = async (tid: string) => (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body.changes
+      .filter((c: any) => c.table === 'trucks' && c.row.id === tid).pop()?.row;
+
+    // Gaadi 4411: 10 boxes, all on one slip from the app. Sold out, but the boxes are still on it: open.
+    await push([
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kalipatti' } },
+      { table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: '4411', supplier: 'Ravi', arrived_at: t, location: 'Shed 2' } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 10, received_qty: 10, rate_paise: 40000 } },
+      // A gaadi with nothing counted in yet (boxes to follow) and one never used.
+      { table: 'trucks', row: { id: loose, created_at: t, updated_at: t, number: '4412', supplier: 'Ravi', arrived_at: t } },
+      { table: 'trucks', row: { id: spare, created_at: t, updated_at: t, number: '4413', supplier: 'Ravi', arrived_at: t } },
+    ]);
+    await push([
+      { table: 'bills', txn: 'a', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: day, pay_mode: 'cash', total_paise: 500000, paid_paise: 500000, cash_paise: 500000, slip_no: 1 } },
+      { table: 'bill_lines', txn: 'a', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 10, rate_paise: 50000 } },
+    ]);
+    expect((await truck(truckId)).closed_at).toBeNull();
+
+    // 6 handed over: still open. The last 4: the gaadi closes on every machine.
+    await push([{ table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: billId, qty: 6 } }]);
+    expect((await truck(truckId)).closed_at).toBeNull();
+    await push([{ table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: billId, qty: 4 } }]);
+    expect((await truck(truckId)).closed_at).not.toBeNull();
+
+    // A slip off a gaadi with nothing counted in never closes it.
+    const lb = uuidv7();
+    await push([
+      { table: 'bills', txn: 'b', row: { id: lb, created_at: t, number: 'A1/2627/000002', kind: 'kachchi', buyer_name: 'Cash', business_date: day, pay_mode: 'cash', total_paise: 100000, paid_paise: 100000, cash_paise: 100000, slip_no: 2 } },
+      { table: 'bill_lines', txn: 'b', row: { id: uuidv7(), created_at: t, bill_id: lb, truck_id: loose, brand_id: brandId, grade: '1', qty: 2, rate_paise: 50000 } },
+      { table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: lb, qty: 2 } },
+    ]);
+    expect((await truck(loose)).closed_at).toBeNull();
+
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829209081' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829209081', code: OtpService.issuedForTests.get('9829209081') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${id}`;
+
+    // The website lists it under Band gaadiyan, opens it again, and closes it by hand.
+    expect((await http().get(`${base}/cheeku/gaadis/closed`).set(web).expect(200)).body.gaadis)
+      .toEqual([expect.objectContaining({ truckId, number: '4411', received: 10, sold: 10, used: true })]);
+    await http().post(`${base}/cheeku/gaadi/${truckId}/close`).set(web).send({ closed: false }).expect(204);
+    expect((await truck(truckId)).closed_at).toBeNull();
+    expect((await http().get(`${base}/cheeku?from=${day}&to=${day}`).set(web).expect(200)).body.gaadis.map((g: any) => g.number)).toContain('4411');
+    await http().post(`${base}/cheeku/gaadi/${loose}/close`).set(web).send({ closed: true }).expect(204);
+    expect((await truck(loose)).closed_at).not.toBeNull();
+
+    // Delete: only a gaadi nothing uses.
+    await http().post(`${base}/cheeku/gaadi/${truckId}/delete`).set(web).expect(409);
+    expect((await http().post(`${base}/cheeku/gaadi/${spare}/delete`).set(web).expect(201)).body).toEqual({ deleted: true });
+    const after = (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body.changes;
+    expect(after.some((c: any) => c.table === '_delete' && c.row.id === spare)).toBe(true);
+
+    // A website slip that sells a reopened gaadi past its count and is handed over closes it again.
+    const w = (await http().post(`${base}/entries/parchi`).set(web).send({ buyerName: 'Grahak', lots: [{ truckId, brandId, qty: 1, ratePaise: 50000 }], pay: 'credit' }).expect(201)).body;
+    expect((await truck(truckId)).closed_at).toBeNull();
+    await http().post(`${base}/cheeku/pickup`).set(web).send({ billId: w.billId, qty: 1 }).expect(201);
+    expect((await truck(truckId)).closed_at).not.toBeNull();
+  });
+});

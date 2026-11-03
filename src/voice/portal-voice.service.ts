@@ -82,27 +82,72 @@ const titleCase = (n: string) => n.trim().replace(/\s+/g, ' ').replace(/\b\w/g, 
 const plate = (n: unknown) => String(n ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const PACKINGS = ['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni'] as const;
 
-/** One cell as it is said: "505 dana", "₹1,25,000", "₹44.5" for a rate, a count plain. */
-function cellText(k: string, v: unknown): string {
+/** Columns that count pieces (dana, or boxes on a fruit shop), not rupees. */
+const COUNT_COL = /dana|nag|qty|box|diye|bacha$|bika$|aaya$|kharab$/i;
+const MONEY_COL = /rakam|udhaar|kharid|bikri|baaki|amount|rupay|total|kul|jama|cash|upi|munafa|kharcha|mila/i;
+/** What a slip's bhugtan code is called, in the table and when said. */
+const PAY_WORD: Record<string, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', credit: 'Udhaar', mixed: 'Cash + UPI', after: 'Baad mein', free: 'Free' };
+const PAY_COL = /bhugtan|^mode$|pay_?mode/i;
+
+/** One cell as it is said: "505 dana" (or "505 box"), "₹1,25,000", "₹44.5" for a rate, a count plain. */
+function cellText(k: string, v: unknown, unit = 'dana'): string {
   if (typeof v !== 'number') return String(v ?? '');
-  if (/dana|nag|qty|box|diye|bacha$|bika$|aaya$|kharab$/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} dana`;
+  if (COUNT_COL.test(k)) return `${Math.round(v).toLocaleString('en-IN')} ${unit}`;
   if (/parchiyan|parchi/i.test(k)) return `${Math.round(v).toLocaleString('en-IN')} parchi`;
   if (/count|ginti|kitne|baar/i.test(k)) return Math.round(v).toLocaleString('en-IN');
   if (/bhav|rate/i.test(k)) return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
-  if (/rakam|udhaar|kharid|bikri|baaki|amount|rupay|total|kul|jama|cash|upi|munafa|kharcha|mila/i.test(k)) return `₹${Math.round(v).toLocaleString('en-IN')}`;
+  if (MONEY_COL.test(k)) return `₹${Math.round(v).toLocaleString('en-IN')}`;
   return v.toLocaleString('en-IN');
 }
 
+/** A money column said with its name ("cash ₹6,464"), except the plain amount ("₹6,464"). */
+function moneyPart(k: string, v: number): string {
+  const name = k.replace(/_/g, ' ').replace(/\b(total|kul)\b ?/gi, '').trim();
+  const amt = cellText(k, v);
+  return !name || /^(rakam|amount)$/i.test(name) ? amt : `${name} ${amt}`;
+}
+
 /**
- * A query's answer in one line, from the rows: one row reads out its figures; several read the
- * first three by their name (or date) and figure, and how many there are. The table shows the rest.
+ * A query's answer said the way a munim would — short, every figure from the rows, the table
+ * below carries the rest:
+ *  - one row: its figures ("2 parchi, 10 box, ₹6,464, cash ₹6,464"), other rupee columns by name, ₹0 ones left out;
+ *  - a few rows with a name each: one short clause per row ("Cash — 2 parchi, ₹6,464. Udhaar — …");
+ *  - many rows: how many, and what they add up to ("30 parchi · 1,234 box · ₹2,43,000").
  */
-function sayRows(title: string, cols: string[], rows: Record<string, unknown>[]): string {
-  if (!rows.length) return `${title}: kuch nahi mila`;
-  const line = (r: Record<string, unknown>) => cols.map((k) => cellText(k, r[k])).filter((x) => x && x !== 'null').join(', ');
-  if (rows.length === 1) return `${title}: ${line(rows[0])}`;
-  const top = rows.slice(0, 3).map(line).join('; ');
-  return `${title}: ${top}${rows.length > 3 ? ` — kul ${rows.length}` : ''}`;
+export function sayRows(title: string, cols: string[], rows: Record<string, unknown>[], unit = 'dana'): string {
+  if (!rows.length) return `${title} — kuch nahi mila`;
+  const nums = cols.filter((k) => rows.some((r) => typeof r[k] === 'number') && !/bhav|rate/i.test(k));
+  const counts = nums.filter((k) => COUNT_COL.test(k) || (/parchiyan|parchi$/i.test(k) && !/_no$/i.test(k)));
+  const money = nums.filter((k) => !counts.includes(k) && MONEY_COL.test(k));
+  const words = cols.filter((k) => !nums.includes(k) && rows.some((r) => typeof r[k] === 'string' && r[k] !== ''));
+  const label = ['grahak', 'naam', 'supplier', 'party', 'maal', 'bhugtan', 'mode', 'gaadi_no', 'din'].find((k) => words.includes(k))
+    ?? words.find((k) => !/_no$|samay|time/i.test(k)) ?? words[0];
+  // The amount that matters most: rakam / total first, else the first rupee column.
+  const main = money.find((k) => /rakam|total|kul|bikri/i.test(k)) ?? money[0];
+  const figures = (r: Record<string, unknown>) => [
+    ...counts.slice(0, 2).map((k) => cellText(k, r[k], unit)),
+    ...(main && typeof r[main] === 'number' ? [cellText(main, r[main], unit)] : []),
+  ];
+
+  if (rows.length === 1) {
+    const r = rows[0];
+    const parts = [
+      ...words.map((k) => String(r[k] ?? '')).filter(Boolean),
+      ...counts.map((k) => cellText(k, r[k], unit)),
+      // The main amount always, plain (the title says what it is); the others by name, ₹0 left out.
+      ...money.filter((k) => typeof r[k] === 'number' && (k === main || r[k] !== 0)).map((k) => (k === main ? cellText(k, r[k], unit) : moneyPart(k, r[k] as number))),
+      ...nums.filter((k) => !counts.includes(k) && !money.includes(k)).map((k) => `${k.replace(/_/g, ' ')} ${cellText(k, r[k], unit)}`),
+    ];
+    return `${title}: ${parts.join(', ') || cellText(cols[0], r[cols[0]], unit)}`;
+  }
+  if (rows.length <= 4 && label) return rows.map((r) => `${String(r[label] ?? '—')} — ${figures(r).join(', ')}`).join('. ');
+  const what = cols.includes('parchi_no') ? 'parchi' : label === 'grahak' || label === 'naam' ? 'grahak' : label === 'gaadi_no' ? 'gaadi' : 'line';
+  const sum = (k: string) => rows.reduce((t, r) => t + (typeof r[k] === 'number' ? (r[k] as number) : 0), 0);
+  const totals = [
+    ...counts.filter((k) => !/parchi/i.test(k)).slice(0, 1).map((k) => cellText(k, sum(k), unit)),
+    ...(main ? [cellText(main, sum(main), unit)] : []),
+  ];
+  return `${title}: ${[`${rows.length >= 50 ? 'Pehli ' : ''}${rows.length} ${what}`, ...totals].join(' · ')}. Poori list neeche.`;
 }
 
 type SlipSaid = {
@@ -1188,12 +1233,14 @@ export class PortalVoiceService {
       if (!result) return { title, columns: [], rows: [], say: lang === 'english' ? "Couldn't find that in the books" : 'Ye hisab nahi nikal paaye, alag tarah se poochiye', speak: 'ये हिसाब नहीं निकल पाए, अलग तरह से पूछिए' };
     }
     // The answer is said from the rows themselves — no second model call, so no number can drift.
-    const shown = result.columns ?? Object.keys(result.rows[0] ?? {}).filter((k) => k !== 'id' && !k.endsWith('_id'));
-    // Grapes are counted in boxes: the same columns, said as box. Cheeku the same way, its own rule.
-    const say = isAngoor(books.commodity) ? sayRows(title, shown, result.rows).replace(/\bdana\b/g, 'box')
-      : isCheeku(books.commodity) ? sayRows(title, shown, result.rows).replace(/dana/g, 'box')
-      : sayRows(title, shown, result.rows);
-    return { title, ...result, say, speak: say };
+    // Fruit is counted in boxes: a "dana" column is named and said as box (grapes, cheeku, amrud).
+    const boxes = isAngoor(books.commodity) || isCheeku(books.commodity) || books.commodity === 'amrud';
+    const rename = (k: string) => (boxes ? k.replace(/dana/g, 'box') : k);
+    const columns = (result.columns ?? Object.keys(result.rows[0] ?? {}).filter((k) => k !== 'id' && !k.endsWith('_id'))).map(rename);
+    const rows = result.rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) =>
+      [rename(k), PAY_COL.test(k) && typeof v === 'string' ? PAY_WORD[v] ?? v : v])));
+    const say = sayRows(title, columns, rows, boxes ? 'box' : 'dana');
+    return { title, columns, rows, say, speak: say };
   }
 
   /** A failed query, corrected with the database's error. Returns the new SELECT. */

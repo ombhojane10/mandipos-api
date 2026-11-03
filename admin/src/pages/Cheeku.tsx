@@ -219,6 +219,18 @@ export function CheekuGaadiPata({ shopId }: { shopId: string }) {
   const today = todayIst()
   const { data, error, loading } = useLoad(() => loadCheekuDesk(shopId, today, today), [shopId, today])
   const [beejak, setBeejak] = useState<string | null>(null)
+  const [busy, setBusy] = useState('')
+  const [actError, setActError] = useState('')
+  // Band karein / wapas chalu karein / hatayein: as the app's Gaadi screen, then every page re-reads.
+  const act = async (truckId: string, ask: string, path: string, body?: unknown) => {
+    if (!window.confirm(ask)) return
+    setBusy(truckId); setActError('')
+    try { await api(`/v1/admin/shops/${shopId}/cheeku/gaadi/${truckId}/${path}`, { method: 'POST', body: body ?? {} }); booksChanged() }
+    catch (e) { setActError((e as Error).message) } finally { setBusy('') }
+  }
+  const close = (g: Gaadi) => act(g.truckId, (g.left > 0 ? t('{n} box abhi baaki hai. ', { n: count(g.left) }) : '')
+    + t('Gaadi {n} band karein? Yeh nayi parchi aur Gaadi kahan mein nahi dikhegi; hisaab rahega.', { n: g.number }), 'close', { closed: true })
+  const remove = (g: { truckId: string; number: string }) => act(g.truckId, t('Gaadi {n} hamesha ke liye hatayein? Har machine se hat jayegi.', { n: g.number }), 'delete')
   const edit = (g: Gaadi) => editEntry({ kind: 'gaadi', gaadi: { truckId: g.truckId, number: g.number, supplier: g.supplier, location: g.location, freightPaise: g.freightPaise,
     qualities: g.qualities.map((q) => ({ brandId: q.brandId, name: q.name, kg: q.kg, ratePaise: q.ratePaise, received: q.received })) } })
 
@@ -232,6 +244,7 @@ export function CheekuGaadiPata({ shopId }: { shopId: string }) {
     <>
       <Actions shopId={shopId}><button type="button" className="btn line" onClick={() => openEntry('gaadi')}>+ {t('Nayi Gaadi')}</button></Actions>
       {error && <p className="error">{error}</p>}
+      {actError && <p className="error">{actError}</p>}
       {!data ? <Skeleton /> : (
         <div className={`stack${loading ? ' dim' : ''}`}>
           <div className="card sum">
@@ -270,6 +283,10 @@ export function CheekuGaadiPata({ shopId }: { shopId: string }) {
                   <div className="gaadi-acts">
                     <button type="button" className="btn line sm" onClick={() => edit(g)}>{t('Badlein')}</button>
                     <button type="button" className="btn line sm" onClick={() => setBeejak(g.truckId)}>{t('Beejak')}</button>
+                    <button type="button" className="btn line sm warn" disabled={busy === g.truckId} onClick={() => void close(g)}>{t('Band karein')}</button>
+                    {g.sold === 0 && g.qualities.every((q) => q.off === 0) && (
+                      <button type="button" className="btn line sm warn" disabled={busy === g.truckId} onClick={() => void remove(g)}>{t('Hatayein')}</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -277,8 +294,53 @@ export function CheekuGaadiPata({ shopId }: { shopId: string }) {
           </div>
         </div>
       )}
+      {data && <ClosedGaadis shopId={shopId} busy={busy}
+        reopen={(g) => act(g.truckId, t('Gaadi {n} wapas chalu karein? Nayi parchi aur Gaadi kahan mein phir dikhegi.', { n: g.number }), 'close', { closed: false })}
+        remove={remove} beejak={setBeejak} />}
       {beejak && <CheekuBeejakSheet shopId={shopId} truckId={beejak} onClose={() => setBeejak(null)} />}
     </>
+  )
+}
+
+type ClosedGaadi = { truckId: string; number: string; supplier: string; location: string; arrivedAt: string; closedAt: string; received: number; sold: number; used: boolean }
+
+/** Band gaadiyan (last 60 days): closed by hand, or by themselves once every box sold and went. Each can open again. */
+function ClosedGaadis({ shopId, busy, reopen, remove, beejak }: {
+  shopId: string; busy: string; reopen: (g: ClosedGaadi) => void; remove: (g: ClosedGaadi) => void; beejak: (truckId: string) => void
+}) {
+  const { data } = useLoad(() => api<{ gaadis: ClosedGaadi[] }>(`/v1/admin/shops/${shopId}/cheeku/gaadis/closed`), [shopId])
+  const [open, setOpen] = useState(false)
+  if (!data?.gaadis.length) return null
+  return (
+    <div className="card stack-sm">
+      <div className="hd">
+        <h3>{t('Band gaadiyan')} <small className="muted">{count(data.gaadis.length)}</small></h3>
+        <button type="button" className="btn ghost sm" onClick={() => setOpen(!open)}>{open ? t('Chhupayein') : t('Dikhayein')}</button>
+      </div>
+      {open && (
+        <div className="wrap-x">
+          <table className="tbl">
+            <thead><tr><th>{t('Gaadi')}</th><th>{t('Supplier')}</th><th className="num">{t('Aaya')}</th><th className="num">{t('Bika')}</th><th>{t('Band hui')}</th><th /></tr></thead>
+            <tbody>
+              {data.gaadis.map((g) => (
+                <tr key={g.truckId}>
+                  <td><b>{g.number}</b>{g.location && <small className="muted"> · {g.location}</small>}</td>
+                  <td>{g.supplier}</td>
+                  <td className="num money">{count(g.received)}</td>
+                  <td className="num money">{count(g.sold)}</td>
+                  <td>{shortDate(g.closedAt.slice(0, 10))} <small className="muted">{time(g.closedAt)}</small></td>
+                  <td className="acts">
+                    <button type="button" className="btn line sm" onClick={() => beejak(g.truckId)}>{t('Beejak')}</button>
+                    <button type="button" className="btn line sm" disabled={busy === g.truckId} onClick={() => reopen(g)}>{t('Wapas chalu karein')}</button>
+                    {!g.used && <button type="button" className="btn line sm warn" disabled={busy === g.truckId} onClick={() => remove(g)}>{t('Hatayein')}</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   )
 }
 
