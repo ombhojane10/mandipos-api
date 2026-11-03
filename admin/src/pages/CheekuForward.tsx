@@ -235,39 +235,12 @@ function ForwardForm({ shopId, initialName = '', onClose, onDone }: { shopId: st
 
 // ================================================================ the slip that goes with the maal
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
-
-/** Opens a page to print or save as PDF. */
-function printPage(title: string, body: string) {
-  const w = window.open('', '_blank', 'width=720,height=900')
-  if (!w) return
-  w.document.write(`<!doctype html><meta charset="utf-8"><title>${esc(title)}</title>
-<style>body{font:16px system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px;margin:0}p{margin:4px 0;color:#444}
-table{border-collapse:collapse;width:100%;margin-top:18px}th,td{border-bottom:1px solid #ccc;padding:8px 6px;text-align:left}.n{text-align:right}
-.tot td{font-weight:700;border-bottom:2px solid #111}.sign{display:flex;justify-content:space-between;margin-top:56px}.sign div{border-top:1px solid #111;width:40%;text-align:center;padding-top:4px;font-size:13px}
-.qr{text-align:center;margin-top:24px}.qr img{width:200px;height:200px}</style>${body}`)
-  w.document.close(); w.focus(); setTimeout(() => w.print(), 250)
-}
-
 function PartySlipView({ shopId, billId, onClose }: { shopId: string; billId: string; onClose: () => void }) {
   const { data, error } = useLoad(() => api<PartySlip>(`/v1/admin/shops/${shopId}/cheeku/forward/${billId}/slip`), [shopId, billId])
   const [qr, setQr] = useState('')
   useEffect(() => { void QRCode.toDataURL(billId, { margin: 1, width: 240 }).then(setQr).catch(() => setQr('')) }, [billId])
-  const print = () => {
-    if (!data) return
-    const rows = data.lines.map((l) => `<tr><td>${esc(l.quality)}</td><td class="n">${l.qty}</td></tr>`).join('')
-    printPage(`${data.from.name} #${data.slipNo ?? ''}`, `
-<h1>${esc(data.from.name)}</h1><p>${esc([data.from.mandi, data.from.phone].filter(Boolean).join(' · '))}</p>
-<p><b>LADAN PARCHI ${data.slipNo ? '#' + data.slipNo : ''}</b> · ${esc(data.date)}</p>
-${data.grahak ? `<p>${esc(t('Grahak'))}: <b>${esc(data.grahak)}</b></p>` : ''}
-${data.vehicle ? `<p>${esc(t('Gaadi number'))}: <b>${esc(data.vehicle)}</b></p>` : ''}
-<table><thead><tr><th>${esc(t('Quality'))}</th><th class="n">${esc(t('Box'))}</th></tr></thead><tbody>${rows}
-<tr class="tot"><td>${esc(t('Kul box'))}</td><td class="n">${data.lines.reduce((s, l) => s + l.qty, 0)}</td></tr></tbody></table>
-${qr ? `<div class="qr"><img src="${qr}" alt="QR"><p>${esc(t('Gaadi par scan karein'))}</p></div>` : ''}
-<div class="sign"><div>${esc(t('Maal mila'))}</div><div>${esc(t('Accountant'))}</div></div>`)
-  }
   return (
-    <Sheet title={t('Party ki parchi')} onClose={onClose} onSave={print} saving={!data} error={error ?? ''} saveLabel={t('Print')}>
+    <Sheet title={t('Party ki parchi')} onClose={onClose} onSave={onClose} saving={!data} error={error ?? ''} saveLabel={t('Band karein')}>
       {data && (
         <div className="stack">
           {data.grahak && <p><b>{data.grahak}</b></p>}
@@ -403,27 +376,14 @@ function PartySheet({ shopId, person, onlyDone, onClose }: { shopId: string; per
   )
 }
 
-/** The party's Ledger on screen, laid out like an agent's bill, with Print. */
+/** The party's Ledger on screen, laid out like an agent's bill. */
 function PartyLedgerSheet({ shopId, person, done, onClose }: { shopId: string; person: string; done: FBill[]; onClose: () => void }) {
   const shop = useSession().shops?.find((s) => s.id === shopId)
   const f = ledgerFigures(done)
   const dates = done.map((b) => b.date).sort()
   const when = dates.length ? (dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} – ${dates[dates.length - 1]}`) : ''
-  const print = () => {
-    const rows = f.rows.map((r) => `<tr><td>${esc(r.what)}</td><td class="n">${r.qty}</td><td class="n">${rupees(r.rate)}</td><td class="n">${rupees(r.amount)}</td></tr>`).join('')
-    const line = (label: string, v: number) => (v > 0 ? `<tr><td colspan="3">${esc(label)}</td><td class="n">${rupees(v)}</td></tr>` : '')
-    printPage(`${t('Ledger')} · ${person}`, `
-<h1>${esc(shop?.name ?? '')}</h1><p>${esc([shop?.mandi].filter(Boolean).join(' · '))}</p>
-<p><b>LEDGER</b> · ${esc(when)}</p>
-<p>M/s. <b>${esc(person)}</b></p>
-<table><thead><tr><th>PARTICULARS</th><th class="n">QTY</th><th class="n">RATE</th><th class="n">AMOUNT</th></tr></thead><tbody>${rows}
-<tr class="tot"><td>${esc(t('Kul'))}</td><td class="n">${f.boxes}</td><td></td><td class="n">${rupees(f.goods)}</td></tr>
-${line('Kharcha (−)', f.charges)}
-<tr class="tot"><td colspan="3">NET</td><td class="n">${rupees(f.net)}</td></tr></tbody></table>
-${f.charges > 0 ? `<table><tbody>${line('Bhada', f.bhada)}${line('Mazdoori', f.mazdoori)}${line('Commission', f.commission)}<tr class="tot"><td colspan="3">Total</td><td class="n">${rupees(f.charges)}</td></tr></tbody></table>` : ''}`)
-  }
   return (
-    <Sheet wide title={`${t('Ledger')} · ${person}`} onClose={onClose} onSave={print} saving={false} error="" saveLabel={t('Print')}>
+    <Sheet wide title={`${t('Ledger')} · ${person}`} onClose={onClose} onSave={onClose} saving={false} error="" saveLabel={t('Band karein')}>
       <div className="stack">
         <p className="muted">{shop?.name} · {when}</p>
         <p>M/s. <b>{person}</b></p>
@@ -612,19 +572,6 @@ function BillSheet({ shopId, bill, onClose, onSaved }: { shopId: string; bill: F
     try { await api(`/v1/admin/shops/${shopId}/cheeku/forward-bills/${bill.billId}/whatsapp/resend`, { method: 'POST', body: {} }); setWaMsg(t('Bill dobara bheja ja raha hai')) }
     catch (e) { setWaMsg((e as Error).message) }
   }
-  const print = () => {
-    const rows = lines.map((l) => `<tr><td>${esc(l.quality)}</td><td class="n">${l.qty}</td><td class="n">${rupees(l.ratePaise)}</td><td class="n">${rupees(l.qty * l.ratePaise)}</td></tr>`).join('')
-    const head = (label: string, v: number) => (v > 0 ? `<tr><td colspan="3">${esc(label)}</td><td class="n">${rupees(v)}</td></tr>` : '')
-    printPage(`${t('Bill')} #${bill.slipNo ?? ''}`, `
-<h1>${esc(shop?.name ?? '')}</h1><p>${esc([shop?.mandi].filter(Boolean).join(' · '))}</p>
-<p><b>BILL ${bill.slipNo ? 'No. ' + bill.slipNo : ''}</b> · ${esc(bill.date)}</p>
-<p>M/s. <b>${esc(bill.person || 'Cash')}</b>${bill.vehicle ? ` · ${esc(bill.vehicle)}` : ''}</p>
-<table><thead><tr><th>PARTICULARS</th><th class="n">QTY</th><th class="n">RATE</th><th class="n">AMOUNT</th></tr></thead><tbody>${rows}
-<tr class="tot"><td>${esc(t('Kul'))}</td><td class="n">${boxes}</td><td></td><td class="n">${rupees(goods)}</td></tr>
-${head('Bhada', bhada)}${head('Mazdoori', mazdoori)}${head('Commission', commission)}${charges > 0 ? head('Kul kharcha', charges) : ''}
-<tr class="tot"><td colspan="3">NET</td><td class="n">${rupees(net)}</td></tr></tbody></table>`)
-  }
-
   return (
     <Sheet wide title={`${t('Parchi')} #${bill.slipNo ?? ''} · ${bill.person || 'Cash'}`} onClose={onClose} onSave={() => void save()} saving={saving} error={error} saveLabel={t('Save karein')}>
       <div className="stack">
@@ -660,7 +607,6 @@ ${head('Bhada', bhada)}${head('Mazdoori', mazdoori)}${head('Commission', commiss
         <p className="muted">{t('Kul kharcha')}: <b className="money">{rupees(charges)}</b></p>
         <div className="total-line"><span>{t('Net')}</span><b className="money">{rupees(net)}</b></div>
         {profit !== null && <p><Profit paise={profit} /></p>}
-        <div><button type="button" className="btn" onClick={print}>{t('Bill chhapein')}</button></div>
       </div>
     </Sheet>
   )
