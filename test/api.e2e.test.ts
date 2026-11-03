@@ -4362,8 +4362,13 @@ describe('cheeku', () => {
     expect(await sends.tick()).toMatchObject({ sent: 0 });
     expect(calls).toHaveLength(0);
 
-    // A scan from any device (a pickup lands as a row) sends the bill once; a second scan does not send it again.
+    // A scan never sends it: as on grapes, the bill goes only when the button is pressed.
     await scan(a.billId);
+    expect(await sends.tick()).toMatchObject({ sent: 0 });
+    expect(calls).toHaveLength(0);
+    expect(await state(a.billId)).toMatchObject({ state: 'onscan' });
+    // The button sends it once; a later scan does not send it again.
+    await http().post(`${base}/cheeku/forward-bills/${a.billId}/whatsapp/resend`).set(web).expect(201);
     expect(await sends.tick()).toMatchObject({ sent: 1 });
     expect(calls).toEqual([{ to: '919000000071', params: ['Bill Co', 'Cheeku Bills', '1', '3', '-'], bytes: 8 }]);
     expect(await state(a.billId)).toMatchObject({ state: 'sent', tries: 1 });
@@ -4373,7 +4378,7 @@ describe('cheeku', () => {
 
     // WhatsApp refuses: it is kept, shown with the reason, and tried again later — never dropped.
     sends.sender = async () => { throw new Error('132001 template not approved'); };
-    await scan(b.billId);
+    await http().post(`/v1/cheeku/forward-bills/${b.billId}/whatsapp/resend`).set(auth(owner)).expect(200);
     expect(await sends.tick()).toMatchObject({ sent: 0, waiting: 1 });
     expect(await state(b.billId)).toMatchObject({ state: 'pending', tries: 1, error: expect.stringContaining('132001') });
     expect(await sends.tick()).toMatchObject({ sent: 0, waiting: 0 });   // not before its time
@@ -4400,7 +4405,7 @@ describe('cheeku', () => {
     const other = await createApproved((await login('9829209062')).accessToken, { name: 'Not Cheeku', mandi: 'Azadpur', shopNo: 'C-99', role: 'owner', commodity: 'nariyal' });
     await http().post(`/v1/cheeku/forward-bills/${a.billId}/whatsapp`).set(auth(other.accessToken)).send({ phone: '9000000071', image: png, params: ['x'] }).expect(422);
   });
-  it('sends any scanned cheeku slip to its grahak on WhatsApp and by SMS with a link that opens the same picture', async () => {
+  it('sends any cheeku slip to its grahak on WhatsApp and by SMS (a link that opens the same picture) only on the button, never on a scan', async () => {
     const { CheekuForwardSendsService } = await import('../src/cheeku/cheeku-forward-sends.service');
     const sends = app.get(CheekuForwardSendsService);
     const s = await login('9829209063');
@@ -4435,8 +4440,11 @@ describe('cheeku', () => {
       // Not scanned: nothing on either channel.
       expect(await sends.tick()).toMatchObject({ sent: 0, sms: { sent: 0 } });
 
-      // Scanned: the picture on WhatsApp and the SMS, once each.
+      // Scanned: still nothing, as on grapes.
       await http().post('/v1/sync/push').set(auth(owner)).send({ items: [{ table: 'pickups', row: { id: uuidv7(), created_at: t, bill_id: slip.billId, qty: 2, note: '' } }] }).expect(200);
+      expect(await sends.tick()).toMatchObject({ sent: 0, sms: { sent: 0 } });
+      // The button: the picture on WhatsApp and the SMS, once each.
+      await http().post(`/v1/cheeku/forward-bills/${slip.billId}/whatsapp/resend`).set(auth(owner)).expect(200);
       expect(await sends.tick()).toMatchObject({ sent: 1, sms: { sent: 1 } });
       expect(wa).toEqual(['919000000081']);
       expect(sms).toHaveLength(1);

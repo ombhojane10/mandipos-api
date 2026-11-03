@@ -27,7 +27,8 @@ export class CheekuSlipSendsService {
     if (!p.shopId) throw new ForbiddenException('Pehle dukaan se judein');
     await requireCheeku(this.db, p.shopId);
     const c = config();
-    const template = kind === 'slip' ? c.CHEEKU_SLIP_TEMPLATE : c.CHEEKU_BEEJAK_TEMPLATE;
+    // A cheeku slip goes on the grapes slip template (same five values, same order) unless cheeku is given its own.
+    const template = kind === 'slip' ? c.CHEEKU_SLIP_TEMPLATE || c.SLIP_TEMPLATE : c.CHEEKU_BEEJAK_TEMPLATE;
     if (!template) throw new ConflictException('WhatsApp template abhi approve nahi hui');
     if (!c.WHATSAPP_TOKEN || !c.WHATSAPP_PHONE_NUMBER_ID) throw new ServiceUnavailableException('WhatsApp abhi chalu nahi hai');
     const png = Buffer.from(imageBase64, 'base64');

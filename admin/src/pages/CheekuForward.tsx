@@ -39,11 +39,11 @@ const keyOf = (truckId: string, brandId: string) => `${truckId}:${brandId}`
 /** Where a bill's WhatsApp stands, in words. */
 const waWords = (s: FBill['whatsapp']['state']) => ({
   none: '', sent: t('WhatsApp par bill gaya'), failed: t('WhatsApp par bill nahi ja paya'), pending: t('WhatsApp par bhejne ki koshish chal rahi hai'),
-  onscan: t('Maal gaadi par scan hote hi bill WhatsApp par apne aap jayega'), notqueued: t('Bill abhi server tak nahi pahuncha — app se kholein'),
+  onscan: t('Bill bhejne ke liye "WhatsApp par bhejein" dabayein'), notqueued: t('Bill abhi server tak nahi pahuncha — app se kholein'),
 })[s]
 
 /** The same, in a word or two, for the list. */
-const waShort = (s: FBill['whatsapp']['state']) => ({ none: '', sent: t('WA gaya'), failed: t('WA nahi gaya'), pending: t('WA pending'), onscan: t('WA scan par'), notqueued: t('WA taiyari') })[s]
+const waShort = (s: FBill['whatsapp']['state']) => ({ none: '', sent: t('WA gaya'), failed: t('WA nahi gaya'), pending: t('WA pending'), onscan: t('WA bheja nahi'), notqueued: t('WA taiyari') })[s]
 
 /** The first calculation: the boxes at the rate put on the slip when it was made. */
 const slipAmount = (lines: FLine[]) => lines.reduce((s, l) => s + l.qty * l.slipRatePaise, 0)
@@ -609,7 +609,7 @@ function BillSheet({ shopId, bill, onClose, onSaved }: { shopId: string; bill: F
   }
   const resend = async () => {
     setWaMsg('')
-    try { await api(`/v1/admin/shops/${shopId}/cheeku/forward-bills/${bill.billId}/whatsapp/resend`, { method: 'POST', body: {} }); setWaMsg(t('Bill dobara bheja ja raha hai')) }
+    try { await api(`/v1/admin/shops/${shopId}/cheeku/forward-bills/${bill.billId}/whatsapp/resend`, { method: 'POST', body: {} }); setWaMsg(t('Bill WhatsApp par bheja ja raha hai')) }
     catch (e) { setWaMsg((e as Error).message) }
   }
   const print = () => {
@@ -633,7 +633,7 @@ ${head('Bhada', bhada)}${head('Mazdoori', mazdoori)}${head('Commission', commiss
           <div className="box">
             <p className={bill.whatsapp.state === 'failed' ? 'due' : 'muted'}>{waWords(bill.whatsapp.state)}</p>
             {bill.whatsapp.error && bill.whatsapp.state !== 'sent' && <small className="muted">{bill.whatsapp.error}</small>}
-            {bill.whatsapp.state !== 'notqueued' && <p><button type="button" className="btn" onClick={() => void resend()}>{t('WhatsApp par dobara bhejein')}</button> {waMsg && <small className="muted">{waMsg}</small>}</p>}
+            {bill.whatsapp.state !== 'notqueued' && <p><button type="button" className="btn" onClick={() => void resend()}>{bill.whatsapp.state === 'onscan' ? t('WhatsApp par bhejein') : t('WhatsApp par dobara bhejein')}</button> {waMsg && <small className="muted">{waMsg}</small>}</p>}
           </div>
         )}
         <table className="tbl">
