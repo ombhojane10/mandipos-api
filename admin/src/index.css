@@ -1320,3 +1320,15 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .print-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
 .print-pick select { height: 26px; border: 1px solid var(--line); background: #fff; font: inherit; padding: 0 4px; max-width: 160px; }
 @media (max-width: 700px) { .print-pick select { max-width: 110px; } }
+/* Cheeku: print machine + "WhatsApp karein" at the right end of the page's Aaj / Kal row, as tall as its boxes. */
+.cheeku-tools { order: 99; margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.cheeku-tools-row { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.cheeku-tools-row:has(> .cheeku-tools:empty) { display: none; }
+.wa-btn { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid #1ebe5a; background: #25d366; color: #fff; font-family: inherit; font-size: 11.5px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.wa-btn:hover { background: #1ebe5a; }
+.wa-btn svg { width: 15px; height: 15px; }
+@media (max-width: 700px) { .wa-btn span { display: none; } .wa-btn { padding: 0 7px; } }
+.print-btn { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid var(--line); background: #fff; color: inherit; font-family: inherit; font-size: 11.5px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.print-btn:hover { background: #f1f5f4; }
+.print-btn svg { width: 15px; height: 15px; }
+@media (max-width: 700px) { .print-btn span { display: none; } .print-btn { padding: 0 7px; } }

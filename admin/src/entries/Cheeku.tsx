@@ -43,7 +43,7 @@ function useSave(onDone: (msg: string) => void) {
 
 /**
  * Angoor's Nayi Parchi, as the app writes it: each line one quality off one gaadi (several gaadis
- * on one slip), no count limit, 1% APMC when the shop has it on, and on an udhaar slip the labour
+ * on one slip), no count limit, 1% APMC when the shop has it on, and on any slip but a Free one the labour
  * at a rate that can be changed.
  */
 export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }: {
@@ -96,7 +96,8 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
   const boxes = lines.reduce((s, l) => s + l.qty, 0)
   const goods = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0)
   const apmc = apmcOn ? Math.round(goods * 0.01) : 0
-  const labourPaise = !free && credit && labour ? boxes * rate : 0
+  // Cheeku: labour can go on any slip but a Free one (Cash, UPI, Udhaar, Kuch, Baad mein).
+  const labourPaise = !free && labour ? boxes * rate : 0
   const total = goods + apmc + labourPaise
   const walkIn = !buyer || (buyer.id === null && isWalkInName(buyer.name))
   const isNew = !editing && !walkIn && !!buyer && buyer.id === null && !!buyer.name.trim()
@@ -142,7 +143,7 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
           buyerId: buyer?.id ?? undefined, buyerName: buyer && !buyer.id ? buyer.name : undefined, buyerPhone: isNew && newPhone ? newPhone : undefined,
           lots: filled.map((l) => { const c = lot(l.key)!; return { truckId: c.truckId, brandId: c.brandId, qty: l.qty, ratePaise: l.ratePaise } }),
           pay, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined,
-          labour: credit && labour, labourRatePaise: rate, apmc: apmcOn,
+          labour: !free && labour, labourRatePaise: rate, apmc: apmcOn,
           delivery: delivery ? { address, stand } : undefined, staff: staff.trim() || undefined,
           slipNo: !editing && Number(slipNo) > 0 ? Number(slipNo) : undefined,
         }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) })
@@ -182,7 +183,7 @@ export function CheekuParchiForm({ shopId, o, editing, draft, onClose, onDone }:
           <Tick label={t('APMC 1%')} on={apmcOn} onChange={setApmcOn} />
         </div>
       )}
-      {credit && (
+      {!free && (
         <div className="box">
           <Tick label={t('Mazdoori jodein')} on={labour} onChange={setLabour}>
             {labour && (

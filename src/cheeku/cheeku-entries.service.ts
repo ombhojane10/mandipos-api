@@ -62,7 +62,7 @@ export class CheekuEntriesService {
   /**
    * Cheeku's parchi (its own copy of the grapes one), as the app writes it (Store.saveParchi): each line one quality off one
    * gaadi, several gaadis on a slip, no count limit. The grahak pays the goods plus 1% APMC
-   * (when the shop has it on) plus, on an udhaar slip with labour ticked, boxes × the labour
+   * (when the shop has it on) plus, on any slip but a Free one with labour ticked, boxes × the labour
    * rate. chungi_paise holds APMC + labour, apmc_paise the APMC, labour_paise the labour.
    */
   async writeParchi(p: Principal, shopId: string, input: ParchiInput, editing: LiveBill | null) {
@@ -107,9 +107,8 @@ export class CheekuEntriesService {
     const goods = free ? 0 : lots.reduce((s, l) => s + l.qty * l.ratePaise, 0);
     // This slip's own switch when the form sent one, else the shop's setting.
     const apmc = (input.apmc ?? pre.apmcOn) ? Math.round(goods * 0.01) : 0;
-    // Labour only for an udhaar grahak who is charged it.
-    const credit = input.pay === 'credit' || input.pay === 'after';
-    const labour = !free && credit && input.labour ? boxes * (input.labourRatePaise ?? 1000) : 0;
+    // Labour for any grahak who is charged it — Cash, UPI or Udhaar — never on a Free slip.
+    const labour = !free && input.labour ? boxes * (input.labourRatePaise ?? 1000) : 0;
     const total = goods + apmc + labour;
     let cash = 0, upi = 0;
     if (input.pay === 'cash') cash = total;

@@ -165,6 +165,11 @@ export const SHELL: Record<string, readonly [string, string]> = {
   'Naye grahak ka mobile (optional)': ["New customer's mobile (optional)", 'नए ग्राहक का मोबाइल (वैकल्पिक)'],
   'Excel file save hui': ['Excel file saved', 'एक्सेल फ़ाइल सेव हुई'],
   'PDF save hui': ['PDF saved', 'PDF सेव हुई'],
+  // Cheeku top bar: the page's PDF straight to WhatsApp.
+  'WhatsApp karein': ['WhatsApp', 'व्हाट्सऐप करें'],
+  'Is page ki PDF WhatsApp par bhejein': ['Send this page as a PDF on WhatsApp', 'इस पेज की PDF व्हाट्सऐप पर भेजें'],
+  'WhatsApp par bhejein': ['Send on WhatsApp', 'व्हाट्सऐप पर भेजें'],
+  'PDF save hui — WhatsApp mein attach karein': ['PDF saved — attach it in WhatsApp', 'PDF सेव हुई — व्हाट्सऐप में अटैच करें'],
   'Page {n} / {of}': ['Page {n} / {of}', 'पेज {n} / {of}'],
   'Export — dekhein, phir Print / Share / Excel': ['Export — preview, then Print / Share / Excel', 'एक्सपोर्ट — देखें, फिर प्रिंट / शेयर / एक्सेल'],
   'Configure': ['Configure', 'सेटिंग्स'],

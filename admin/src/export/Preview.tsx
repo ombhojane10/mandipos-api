@@ -4,7 +4,7 @@ import { api, type ShopSettings } from '../api'
 import { t } from '../i18n'
 import { EXPORT_EVENT, dmyLong, exportBuilder, longDay, type AutoSave, type ExportDoc, type ExportRow } from './doc'
 import { todayIst } from '../format'
-import { csv, download, pdf, share } from './save'
+import { csv, download, pdf, share, whatsapp } from './save'
 
 /** One A4 sheet at 96 dpi, and its margins — the app prints on 595 × 842 pt. */
 const PAGE_W = 794
@@ -104,11 +104,16 @@ function Preview({ doc, firm, auto, onClose }: { doc: ExportDoc; firm: Firm; aut
   }, [firm, doc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const paperEls = () => [...(stack.current?.querySelectorAll<HTMLElement>('.paper') ?? [])]
-  const run = async (what: 'pdf' | 'excel', direct = false) => {
+  const run = async (what: 'pdf' | 'excel' | 'whatsapp', direct = false) => {
     setBusy(what); setNote('')
     try {
       if (what === 'excel') { download(csv(doc), `${doc.file}.csv`); setNote(t('Excel file save hui')); return }
       const blob = await pdf(paperEls())
+      if (what === 'whatsapp') {
+        const done = await whatsapp(blob, `${doc.file}.pdf`, [doc.title, doc.party?.description].filter(Boolean).join(' · '))
+        setNote(done === 'saved' ? t('PDF save hui — WhatsApp mein attach karein') : t('WhatsApp par bhejein'))
+        return
+      }
       if (direct) { download(blob, `${doc.file}.pdf`); setNote(t('PDF save hui')); return }
       const done = await share(blob, `${doc.file}.pdf`, [doc.title, doc.party?.description].filter(Boolean).join(' · '))
       if (done === 'saved') setNote(t('PDF save hui'))
