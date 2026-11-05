@@ -16,6 +16,8 @@ export function configure(app: INestApplication) {
   // Gzipped request bodies from the terminal are inflated by the body parser. 12 MB: the
   // udhaar bhav sheet sends up to six page photos (~250 KB each as base64) in one request.
   express.useBodyParser('json', { limit: '12mb' });
+  // release.sh uploads the signed APK itself, as this type (ReleasePublishController): ~10 MB, up to 60.
+  express.useBodyParser('raw', { type: 'application/vnd.android.package-archive', limit: '60mb' });
   // Only the admin portal calls from a browser; the terminals don't need CORS at all.
   app.enableCors({ origin: adminOrigins(), methods: ['GET', 'POST'], allowedHeaders: ['Authorization', 'Content-Type', 'X-Print-Device'], maxAge: 86400 });
   // The website's picked print machine rides along with every request (see printTarget).

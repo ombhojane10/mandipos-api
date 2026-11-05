@@ -27,6 +27,7 @@ import { OtpService } from './auth/otp.service';
 import { TokensService } from './auth/tokens.service';
 import { Db } from './db/db.service';
 import { PublicReleasesController, ReleasesController, ReleasesStore } from './app/releases.controller';
+import { ReleasePublishController } from './app/release-publish.controller';
 import { HealthController } from './health/health.controller';
 import { DigilockerReturnController, KycController } from './kyc/kyc.controller';
 import { DigilockerKycService } from './kyc/digilocker.service';
@@ -64,7 +65,7 @@ import { CheekuSettingsService } from './cheeku/cheeku-settings.service';
 import { CheekuSlipSendsService } from './cheeku/cheeku-slip-sends.service';
 
 @Module({
-  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController, CheekuAppController, CheekuAdminController, CheekuBillLinkController],
+  controllers: [AdminAuthController, AdminController, HealthController, AuthController, ShopsController, SyncController, RequestsController, PrintController, PhotosController, ReleasesController, PublicReleasesController, ReleasePublishController, KycController, DigilockerReturnController, VoiceController, SlipSendsController, BeejaksController, CheekuAppController, CheekuAdminController, CheekuBillLinkController],
   providers: [Db, ReleasesStore, AdminService, ReportsService, EntriesService, SettingsService, InsightsService, AdminGuard, OtpService, TokensService, AccountsService, AuthGuard, SyncService, SyncHub, RequestsService, PrintService, UdhaarAlertsService, RemindersService, PickupNoticesService, CreditorsService, MachinesService, ConsoleService, DepositsService, MastersService, CratesService, ColdStoreService, BooksService, VouchersService, InvoicesService, SlipSendsService, KycService, UlipClient, DigilockerKycService, SurepassClient, SandboxDigilockerClient, GeminiClient, VoiceService, PortalVoiceService, SheetService,
     CheekuEntriesService, CheekuDeskService, CheekuCreditorsService, CheekuPickupNoticesService, CheekuSlipSendsService, CheekuSettingsService, CheekuCommissionsService, CheekuForwardService, CheekuForwardSendsService],
 })

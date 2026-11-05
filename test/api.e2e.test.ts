@@ -4675,3 +4675,46 @@ describe('cheeku gaadi close', () => {
     expect((await truck(truckId)).closed_at).not.toBeNull();
   });
 });
+
+describe('release publish', () => {
+  // A team member's release.sh: the APK with their own release token, no Render, no owner login.
+  const TOKEN = 'mpr_e2e-token-e2e-token-e2e-token-e2e-token-0001';
+  const APK = 'application/vnd.android.package-archive';
+  const fixture = process.env.APK_FIXTURE;
+
+  beforeAll(async () => {
+    await owner(`INSERT INTO release_publishers (name, token_sha256) VALUES ('tester', sha256(convert_to('${TOKEN}', 'UTF8')))`);
+  });
+
+  it('refuses a missing or unknown token, and anything that is not a release APK', async () => {
+    await http().post('/v1/releases/pos').set('Content-Type', APK).send(Buffer.alloc(5000)).expect(403);
+    await http().post('/v1/releases/pos').set('X-Release-Token', 'mpr_wrong-wrong-wrong-wrong-wrong-wrong-wrong').set('Content-Type', APK).send(Buffer.alloc(5000)).expect(403);
+    await http().post('/v1/releases/tally').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(Buffer.alloc(5000)).expect(400);
+    const junk = await http().post('/v1/releases/pos').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(Buffer.alloc(5000)).expect(400);
+    expect(junk.body.message).toMatch(/Not an APK/);
+  });
+
+  it('cannot be reached around: the API role can neither read the tokens nor insert a release', async () => {
+    const c = new Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    try {
+      await expect(c.query('SELECT * FROM release_publishers')).rejects.toThrow(/permission denied/);
+      await expect(c.query(`INSERT INTO app_releases (flavor, version_code, version_name, sha256, size_bytes, apk) VALUES ('pos', 999999, 'x', '${'0'.repeat(64)}', 1, '\\x00')`)).rejects.toThrow(/permission denied/);
+      await expect(c.query(`SELECT publish_app_release('nope-nope-nope', 'pos', 999999, 'x', '\\x00', '')`)).rejects.toThrow(/not allowed/);
+    } finally { await c.end(); }
+  });
+
+  (fixture ? it : it.skip)('publishes a release-signed APK once, names who did it, and refuses the same version again', async () => {
+    const apk = (await import('node:fs')).readFileSync(fixture!);
+    const r = await http().post('/v1/releases/pos?notes=e2e').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(apk).expect(201);
+    expect(r.body).toMatchObject({ published: true, flavor: 'pos', by: 'tester' });
+    const pub = (await http().get('/v1/public/app').expect(200)).body.pos;
+    expect(pub).toMatchObject({ versionCode: r.body.versionCode, notes: 'e2e', sizeBytes: apk.length });
+    await http().post('/v1/releases/pos').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(apk).expect(409);
+    // The daybook flavor wants the daybook app.
+    await http().post('/v1/releases/daybook').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(apk).expect(400);
+    // Revoked: refused.
+    await owner(`UPDATE release_publishers SET revoked_at = now() WHERE name = 'tester'`);
+    await http().post('/v1/releases/pos').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(apk).expect(403);
+  });
+});
