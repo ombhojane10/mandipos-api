@@ -48,6 +48,27 @@ export function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
+/**
+ * "WhatsApp karein": the PDF itself handed to WhatsApp. Where the browser can share a file (a
+ * phone, Chrome / Edge on Windows) the share sheet opens with the PDF attached — pick WhatsApp,
+ * then the contact. Where it cannot, the PDF is saved and the WhatsApp app opened, to attach it there.
+ */
+export async function whatsapp(blob: Blob, name: string, title: string): Promise<'shared' | 'saved'> {
+  const file = new File([blob], name, { type: blob.type })
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title })
+      return 'shared'
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return 'shared'
+    }
+  }
+  download(blob, name)
+  // The installed WhatsApp app (desktop or phone); nothing happens where it is not installed.
+  location.href = `whatsapp://send?text=${encodeURIComponent(title)}`
+  return 'saved'
+}
+
 /** Share sheet on a phone (WhatsApp etc.), a download where there is none. */
 export async function share(blob: Blob, name: string, title: string): Promise<'shared' | 'saved'> {
   const file = new File([blob], name, { type: blob.type })

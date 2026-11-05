@@ -77,8 +77,11 @@ export function useCanExport() {
 export const EXPORT_EVENT = 'mandipos:export'
 export const openExport = () => { if (current) dispatchEvent(new Event(EXPORT_EVENT)) }
 
-/** Save without asking: Bolo's "download karo". */
-export type AutoSave = 'pdf' | 'excel'
+/** Save without asking: Bolo's "download karo"; or the PDF straight to WhatsApp ("WhatsApp karein"). */
+export type AutoSave = 'pdf' | 'excel' | 'whatsapp'
+
+/** The page's printout as a PDF, handed to WhatsApp (the cheeku top bar's "WhatsApp karein"). */
+export const openWhatsapp = () => { if (current) dispatchEvent(new CustomEvent(EXPORT_EVENT, { detail: { auto: 'whatsapp' } })) }
 
 /**
  * After a navigation (Bolo's "ledger download karo"): waits for the new page to register its

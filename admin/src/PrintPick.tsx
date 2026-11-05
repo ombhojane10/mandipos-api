@@ -9,7 +9,7 @@ type Machine = { deviceId: string; code: string; name: string; main: boolean; on
  * machines at several counters sends each counter's slips to its own machine. Shown only when
  * more than one machine is listening; "Office" (the shop's main station) is the default.
  */
-export function PrintMachinePick({ shopId }: { shopId: string }) {
+export function PrintMachinePick({ shopId, main }: { shopId: string; main?: string }) {
   const [machines, setMachines] = useState<Machine[]>([])
   const [picked, setPicked] = useState(() => { try { return localStorage.getItem(printDeviceKey(shopId)) ?? '' } catch { return '' } })
   useEffect(() => {
@@ -31,7 +31,8 @@ export function PrintMachinePick({ shopId }: { shopId: string }) {
     <label className="print-pick" title={t('Website ki parchi is machine se chhapegi')}>
       <span aria-hidden>🖨</span>
       <select aria-label={t('Print machine')} value={machines.some((m) => m.deviceId === picked) ? picked : ''} onChange={(e) => choose(e.target.value)}>
-        <option value="">{t('Office machine')}</option>
+        {/* The shop's main station: "Office machine" everywhere; cheeku names it "Print" (CheekuTools). */}
+        <option value="">{main ?? t('Office machine')}</option>
         {machines.filter((m) => !m.main).map((m) => <option key={m.deviceId} value={m.deviceId}>{label(m)}</option>)}
       </select>
     </label>

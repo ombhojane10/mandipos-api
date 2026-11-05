@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSession } from '../App'
 import { api, type ItemRow } from '../api'
-import { usePeriod } from '../hooks'
+import { MENU_EVENT, usePeriod } from '../hooks'
+import { isCheeku } from '../commodity'
 import { count, date, rate, rupees, time } from '../format'
 import { openVoucher } from '../keys'
 import { useLoad } from '../useLoad'
@@ -20,11 +21,20 @@ function useUnit(shopId: string) {
 /** Maal-wise bikri over the period: nag (or box), average bhav, rakam, and each maal's share. */
 export function Items({ shopId }: { shopId: string }) {
   const { unit, many } = useUnit(shopId)
+  // 30 din; a cheeku shop always opens on Aaj instead (usePeriod), and the maal opened from here starts on the same day.
   const [period, setPeriod] = usePeriod('30')
+  const cheeku = isCheeku(useSession().shops?.find((s) => s.id === shopId)?.commodity)
   const [open, setOpen] = useState<string | null>(null)
   // By group (Product Group Master): one row per group; opening one shows its maal.
   const [view, setView] = useState<'maal' | 'group'>('maal')
   const [inGroup, setInGroup] = useState<string | null>(null)
+  // Cheeku: clicking Maal-wise Bikri in the menu while inside one maal goes back to the list (usePeriod puts it on Aaj).
+  useEffect(() => {
+    if (!cheeku) return
+    const again = () => { setOpen(null); setView('maal'); setInGroup(null) }
+    addEventListener(MENU_EVENT, again)
+    return () => removeEventListener(MENU_EVENT, again)
+  }, [cheeku])
   const { data: all, error, loading } = useLoad(() => api<ItemRow[]>(`/v1/admin/shops/${shopId}/items?from=${period.from}&to=${period.to}`), [shopId, period.from, period.to])
   const hasGroups = (all ?? []).some((r) => r.group)
   const data = !all ? null : view === 'group' ? byGroup(all) : inGroup !== null ? all.filter((r) => (r.group ?? '') === inGroup) : all

@@ -24,6 +24,7 @@ import { Deposits } from './pages/Deposits'
 import { Machines } from './pages/Machines'
 import { Console } from './pages/Console'
 import { PrintMachinePick } from './PrintPick'
+import { MENU_EVENT } from './hooks'
 import { Creditors, Laddan } from './pages/Creditors'
 import { Areas, Company, Heads, Openings, ProductGroups, Products, Stores } from './pages/Masters'
 import { Crates, StoreEntry } from './pages/CrateStore'
@@ -44,6 +45,7 @@ import { LabourHome } from './pages/Labour'
 import { BoloChat } from './bolo/BoloChat'
 import { BoloDock } from './bolo/Dock'
 import { exportBuilder, openExport, useCanExport } from './export/doc'
+import { CheekuTools } from './CheekuTools'
 import { t } from './i18n'
 import { isCheeku } from './commodity'
 // Cheeku Fruits: its own copies of the grapes pages, scanner, labour page and Bikri Entry.
@@ -245,7 +247,11 @@ export default function App() {
       const el = document.activeElement as HTMLElement | null
       const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
       const mod = e.ctrlKey || e.metaKey || e.altKey
-      const go = (report: Report) => { if (shopId) location.hash = href({ page: 'report', shopId, report }) + periodQuery() }
+      const go = (report: Report) => {
+        if (!shopId) return
+        dispatchEvent(new Event(MENU_EVENT))
+        location.hash = href({ page: 'report', shopId, report }) + periodQuery()
+      }
       if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (!typing && !mod && (e.key === '/' || e.key === 'g' || e.key === 'G')) || (e.altKey && e.code === 'KeyG')) {
         e.preventDefault(); setGoto(true); return
       }
@@ -356,6 +362,7 @@ export default function App() {
                 {g.group && <div className="grp">{g.group}</div>}
                 {g.items.map((it) => (
                   <a key={it.report} href={href({ page: 'report', shopId, report: it.report }) + periodQuery()}
+                    onClick={() => dispatchEvent(new Event(MENU_EVENT))}
                     aria-current={current === it.report || (route.page === 'grahak' && it.report === 'ledger') || (route.page === 'supplier' && it.report === 'suppliers') ? 'page' : undefined}>
                     <it.icon /><span><Hot label={it.label} k={it.key.toLowerCase()} /></span>
                   </a>
@@ -394,7 +401,7 @@ export default function App() {
           </div>
           <span className="spacer" />
           <UpdateReady />
-          {routeShop && <PrintMachinePick shopId={routeShop} />}
+          {routeShop && !isCheeku(shop?.commodity) && <PrintMachinePick shopId={routeShop} />}
           <span className="top-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).replace(/ (\w{3}) /, '-$1-')}</span>
           {canExport && <button className="export-btn" title={`${t('Export')} (E)`} aria-label={t('Export')} onClick={openExport}><I.IExport /><span>{t('Export')}</span></button>}
           {shopId && shop?.commodity === 'angoor' && <button className="export-btn scan-btn" onClick={() => openScan(shopId)} aria-label={t('Scan')}><I.IScan /><span>{t('Scan')}</span></button>}
@@ -409,7 +416,10 @@ export default function App() {
 
         <main className={`main${current === 'bolo' ? ' main-bolo' : ''}`}>
           {routeShop && <BranchBar shopId={routeShop} shops={open} admin={!!me?.admin} report={route.page === 'report' ? route.report : 'dashboard'} />}
-          {route.page === 'report' && <ReportPage shopId={route.shopId} report={route.report} />}
+          {/* Cheeku: print machine + "WhatsApp karein" on the page's Aaj / Kal row, at its right end (not on the pages listed in NO_CHEEKU_TOOLS). */}
+          {routeShop && isCheeku(shop?.commodity) && !(current && NO_CHEEKU_TOOLS.has(current)) && <CheekuTools key={routeShop} shopId={routeShop} canExport={canExport} print={current === 'items'} />}
+          {/* The key carries cheeku so a page drawn before the shop list arrived reopens on Aaj once it says cheeku. */}
+          {route.page === 'report' && <ReportPage key={isCheeku(shop?.commodity) ? 'cheeku' : 'shop'} shopId={route.shopId} report={route.report} />}
           {route.page === 'grahak' && <GrahakKhata key={route.buyerId} shopId={route.shopId} buyerId={route.buyerId} />}
           {route.page === 'supplier' && <SupplierKhata key={route.key} shopId={route.shopId} supplierKey={route.key} />}
           {route.page === 'shops' && <AllShops />}
@@ -442,6 +452,20 @@ export default function App() {
     </SessionContext.Provider>
   )
 }
+
+/** Cheeku pages that show neither the print machine nor "WhatsApp karein" (Bolo is a chat). */
+const NO_CHEEKU_TOOLS = new Set<Report>([
+  'bolo',
+  // Cheeku desk: Dispatch, Gaadi kahan, Beejak, Supplier creditors, Laddan, APMC, Mazdoori (and the grapes keys they mirror).
+  'cheeku-dispatch', 'cheeku-pata', 'cheeku-beejak', 'cheeku-creditors', 'cheeku-laddan', 'cheeku-apmc', 'cheeku-mazdoori',
+  'dispatch', 'pata', 'beejak', 'creditors', 'laddan', 'apmc', 'mazdoori',
+  // Cash / Bank Book, Bank Jama Parchi, Journal Voucher, Credit Note, Generate Invoices, Aaj ka Bhav, Store Entry, Nigrani.
+  'cashbook', 'bankjama', 'jv', 'cn', 'invoices', 'bhav', 'coldstore', 'nigrani',
+  // General Ledger, Trial Balance, Ledger Multiple, Chithi / Schedule, Bade len-den.
+  'gl', 'tb', 'multi', 'chithi', 'big',
+  // Masters: Product Master, Product Group, Area Master, Ledger Master, Store Master, Opening balance.
+  'products', 'groups', 'areas', 'heads', 'stores', 'openings',
+])
 
 function ReportPage({ shopId, report }: { shopId: string; report: Report }) {
   const cheeku = isCheeku(useSession().shops?.find((s) => s.id === shopId)?.commodity)
