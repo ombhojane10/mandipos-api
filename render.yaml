@@ -55,7 +55,9 @@ services:
     region: singapore
     plan: standard
     branch: main
-    autoDeploy: false
+    # Every merge to main deploys by itself (owner, 2026-11-12), and the start command runs new
+    # migrations on live Neon. Make the Neon backup branch BEFORE merging a PR with a migration.
+    autoDeploy: true
     buildCommand: pnpm install --frozen-lockfile && pnpm build
     startCommand: node scripts/migrate.mjs && node --max-old-space-size=1536 dist/main.js
     healthCheckPath: /healthz
