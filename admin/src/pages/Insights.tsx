@@ -279,19 +279,21 @@ export function Munafa({ shopId }: { shopId: string }) {
 
 // ================================================================ Bikri register
 
-type Reg = { from: string; to: string; days: { date: string; slips: number; nags: number; cashPaise: number; upiPaise: number; udhaarPaise: number; totalPaise: number; free: number }[]; totals: { slips: number; nags: number; cashPaise: number; upiPaise: number; udhaarPaise: number; totalPaise: number } }
+type Reg = { from: string; to: string; days: { date: string; slips: number; nags: number; cashPaise: number; upiPaise: number; udhaarPaise: number; rikshawPaise?: number; totalPaise: number; free: number }[]; totals: { slips: number; nags: number; cashPaise: number; upiPaise: number; udhaarPaise: number; rikshawPaise?: number; totalPaise: number } }
 
 /** Tally's Sales Register, columnar: a line per day — parchi, nag, cash, UPI, udhaar, kul. */
 export function SalesRegister({ shopId }: { shopId: string }) {
   const [period, setPeriod] = usePeriod('30')
   const { data, error, loading } = useLoad(() => api<Reg>(`/v1/admin/shops/${shopId}/sales-register?from=${period.from}&to=${period.to}`), [shopId, period.from, period.to])
   const best = data ? Math.max(0, ...data.days.map((d) => d.totalPaise)) : 0
+  // Nariyal: the rickshaw fare came in with the slips but is not bikri. Shown only when there is one.
+  const rikshaw = (data?.totals.rikshawPaise ?? 0) > 0
 
   useExport(data ? () => ({
     style: 'book' as const, title: t('Bikri Register'), dateLine: dayRange(period.from, period.to), file: fileName('Bikri-register', period.from, period.to),
-    columns: [{ label: t('Tarikh') }, { label: t('Parchi'), num: true }, { label: t('Nag'), num: true }, { label: 'Cash', num: true }, { label: 'UPI', num: true }, { label: t('Udhaar'), num: true }, { label: t('Kul'), num: true }],
-    rows: data.days.map((d) => ({ cells: [dmy(d.date), count(d.slips), count(d.nags), rs(d.cashPaise), rs(d.upiPaise), rs(d.udhaarPaise), rs(d.totalPaise)] })),
-    foot: [t('Kul'), count(data.totals.slips), count(data.totals.nags), rs(data.totals.cashPaise), rs(data.totals.upiPaise), rs(data.totals.udhaarPaise), rs(data.totals.totalPaise)],
+    columns: [{ label: t('Tarikh') }, { label: t('Parchi'), num: true }, { label: t('Nag'), num: true }, { label: 'Cash', num: true }, { label: 'UPI', num: true }, { label: t('Udhaar'), num: true }, ...(rikshaw ? [{ label: t('Rikshaw'), num: true }] : []), { label: t('Kul'), num: true }],
+    rows: data.days.map((d) => ({ cells: [dmy(d.date), count(d.slips), count(d.nags), rs(d.cashPaise), rs(d.upiPaise), rs(d.udhaarPaise), ...(rikshaw ? [rs(d.rikshawPaise ?? 0)] : []), rs(d.totalPaise)] })),
+    foot: [t('Kul'), count(data.totals.slips), count(data.totals.nags), rs(data.totals.cashPaise), rs(data.totals.upiPaise), rs(data.totals.udhaarPaise), ...(rikshaw ? [rs(data.totals.rikshawPaise ?? 0)] : []), rs(data.totals.totalPaise)],
   }) : null, [data])
 
   return (
@@ -301,7 +303,7 @@ export function SalesRegister({ shopId }: { shopId: string }) {
       {!data ? <Skeleton /> : (
         <div className={`card wrap-x${loading ? ' dim' : ''}`}>
           <table className="tbl fold">
-            <thead><tr><th>{t('Tarikh')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Nag')}</th><th className="num">Cash</th><th className="num">UPI</th><th className="num">{t('Udhaar')}</th><th className="num">{t('Kul')}</th></tr></thead>
+            <thead><tr><th>{t('Tarikh')}</th><th className="num">{t('Parchi')}</th><th className="num">{t('Nag')}</th><th className="num">Cash</th><th className="num">UPI</th><th className="num">{t('Udhaar')}</th>{rikshaw && <th className="num">{t('Rikshaw')}</th>}<th className="num">{t('Kul')}</th></tr></thead>
             <tbody>
               {data.days.map((d) => {
                 const open = () => { location.hash = `${href({ page: 'report', shopId, report: 'daybook' })}?p=custom&from=${d.date}&to=${d.date}` }
@@ -313,6 +315,7 @@ export function SalesRegister({ shopId }: { shopId: string }) {
                     <td className="num opt-col money">{rupees(d.cashPaise)}</td>
                     <td className="num opt-col money">{rupees(d.upiPaise)}</td>
                     <td className="num opt-col money">{d.udhaarPaise ? rupees(d.udhaarPaise) : ''}</td>
+                    {rikshaw && <td className="num opt-col money">{d.rikshawPaise ? `−${rupees(d.rikshawPaise)}` : ''}</td>}
                     <td className={`num amt-col money b${d.totalPaise === best && best > 0 ? ' jama' : ''}`}>{rupees(d.totalPaise)}</td>
                   </tr>
                 )
@@ -322,7 +325,8 @@ export function SalesRegister({ shopId }: { shopId: string }) {
               <tfoot><tr>
                 <td className="main-col">{t('Kul')}</td><td className="num opt-col money">{count(data.totals.slips)}</td><td className="num opt-col money">{count(data.totals.nags)}</td>
                 <td className="num opt-col money">{rupees(data.totals.cashPaise)}</td><td className="num opt-col money">{rupees(data.totals.upiPaise)}</td>
-                <td className="num opt-col money">{rupees(data.totals.udhaarPaise)}</td><td className="num amt-col money">{rupees(data.totals.totalPaise)}</td>
+                <td className="num opt-col money">{rupees(data.totals.udhaarPaise)}</td>
+                {rikshaw && <td className="num opt-col money">−{rupees(data.totals.rikshawPaise ?? 0)}</td>}<td className="num amt-col money">{rupees(data.totals.totalPaise)}</td>
               </tr></tfoot>
             )}
           </table>

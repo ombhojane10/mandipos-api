@@ -324,14 +324,14 @@ export class ReportsService {
     return this.db.withShop(shopId, async (tx) => {
       const totals = async (a: string, b: string) => {
         const s = (await tx.query<{ sales: string; slips: string }>(
-          `SELECT COALESCE(SUM(total_paise), 0) AS sales, COUNT(*) AS slips FROM ${LIVE_BILLS} lb WHERE business_date BETWEEN $1 AND $2`, [a, b])).rows[0];
+          `SELECT COALESCE(SUM(total_paise - rikshaw_paise), 0) AS sales, COUNT(*) AS slips FROM ${LIVE_BILLS} lb WHERE business_date BETWEEN $1 AND $2`, [a, b])).rows[0];
         const p = await this.purchases(tx, a, b);
         return { salesPaise: n(s.sales), slips: n(s.slips), purchasePaise: p.reduce((t, x) => t + x.paise, 0), gaadis: p.reduce((t, x) => t + x.gaadis, 0) };
       };
       const now = await totals(from, to);
       const before = await totals(prevFrom, prevDay(from));
       const sales = (await tx.query<{ d: string; s: string }>(
-        `SELECT d::date::text AS d, COALESCE(SUM(lb.total_paise), 0) AS s FROM generate_series($1::date, $2::date, interval '1 day') d
+        `SELECT d::date::text AS d, COALESCE(SUM(lb.total_paise - lb.rikshaw_paise), 0) AS s FROM generate_series($1::date, $2::date, interval '1 day') d
          LEFT JOIN ${LIVE_BILLS} lb ON lb.business_date = d::date GROUP BY d ORDER BY d`, [trendFrom, to])).rows;
       const buys = new Map((await this.purchases(tx, trendFrom, to)).map((p) => [p.day, p.paise]));
       const receivables = await this.receivables(tx, today);

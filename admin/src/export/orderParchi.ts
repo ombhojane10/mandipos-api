@@ -16,7 +16,7 @@ import serifUrl from './slip-fonts/slip_slab_bold.ttf?url'
 
 export type SlipBill = {
   id: string; slipNo: number | null; at: string; buyerName: string; payMode: string
-  totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; chungiPaise: number
+  totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; chungiPaise: number; rikshawPaise?: number
   packing: string; panniName: string; packs: number; staff: string; upiBank: string
   lines: { brand: string; qty: number; ratePaise: number; leak: boolean; brandId: string }[]
   pickedQty?: number
@@ -116,6 +116,8 @@ export function orderParchi(b: SlipBill, shop: SlipShop, loginPhone: string): Sl
     if (b.chungiPaise - labour > 0) blocks.push({ k: 'money', label: 'APMC 1%', value: money(b.chungiPaise - labour) })
     if (labour > 0) blocks.push({ k: 'money', label: `Mazdoori (${groupIndian(qty)} box)`, value: money(labour) })
   }
+  // Nariyal: the rickshaw fare the customer pays on top.
+  if (priced && (b.rikshawPaise ?? 0) > 0) blocks.push({ k: 'money', label: 'Rikshaw', value: money(b.rikshawPaise ?? 0) })
   if (priced) {
     blocks.push({ k: 'total', label: 'Kul rakam', value: money(b.totalPaise) })
     const parts = [b.cashPaise > 0 ? ['Cash', b.cashPaise] as const : null, b.upiPaise > 0 ? [upiWay(b.upiBank), b.upiPaise] as const : null].filter((p) => p !== null)

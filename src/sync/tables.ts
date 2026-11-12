@@ -87,6 +87,17 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       // Angoor: where the gaadi stands ("Pillar 320, Shed 11"). Optional with no default, so an
       // older terminal that edits or closes the truck leaves it as it is instead of blanking it.
       location: z.string().trim().max(80).optional(),
+      // Nariyal (079): commission or purchase. Optional with no default, so an older terminal
+      // leaves it as it is; dropped for any other shop in SyncService.applyOne.
+      deal: z.enum(['commission', 'purchase']).nullable().optional(),
+      // Nariyal Bada (080): the gaadi wale's account. Optional with no default, so an older
+      // terminal leaves them as they are; dropped for any other shop in SyncService.applyOne.
+      advance_paise: paise.optional(), dala_paise: paise.optional(), inaam_paise: paise.optional(),
+      fine_paise: paise.optional(), halting_paise: paise.optional(),
+      // Nariyal Bada "All paid" (083): when the gaadi wala was paid off; null = not yet.
+      bada_paid_at: at.nullable().optional(),
+      // ...and who paid him (084): an accountant's or the shopkeeper's name; null = not said.
+      bada_paid_by: z.string().trim().max(40).nullable().optional(),
     }),
   },
   // A lot: this many nuts of one brand and grade off one truck, at the rate they were bought.
@@ -126,6 +137,11 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       upi_bank: text(80),
       // Angoor: the 1% APMC fee on the goods, for the shop's books only — never inside total_paise.
       apmc_paise: paise.default(0),
+      // Nariyal: the rickshaw fare charged to the customer, already inside total_paise; owed on to the rickshaw wala.
+      rikshaw_paise: paise.default(0),
+      // Nariyal (087): an optional one-line remark printed on the order parchi. Optional with no
+      // default, so a terminal that doesn't know it sends nothing and the column keeps ''.
+      remark: z.string().trim().max(120).optional(),
     }),
   },
   // Udhaar not from a slip: a grahak's balance from the old book, or credit added by hand.
@@ -209,6 +225,13 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'fact',
     row: z.object({ id, created_at: at, bill_id: id, qty, note: text(200) }),
   },
+  // Nariyal "Parchi wapas" (086): the grahak brought the parchi back after taking the maal and the
+  // counter scanned its QR. The whole parchi, once; gaadi and dana come from its bill_lines.
+  // Nariyal shops only (sync.service).
+  nariyal_returns: {
+    kind: 'fact',
+    row: z.object({ id, created_at: at, bill_id: id }),
+  },
   // The WhatsApp number a party's beejak goes to, per supplier name (angoor).
   supplier_phones: {
     kind: 'master',
@@ -253,6 +276,10 @@ export const SYNC_TABLES: Record<string, TableDef> = {
       direction: z.enum(['in', 'out']), mode: z.enum(['cash', 'office', 'upi', 'bank']).default('cash'),
       category: text(40), party_name: text(120), note: text(200),
       amount_paise: paise.positive(), business_date: day, hidden: bool.default(false),
+      // Nariyal Supplier Ledger (082): the Purchase gaadi a supplier payment is for, or 'account'
+      // (his oldest unpaid Purchase gaadi first). Optional with no default, so an older terminal
+      // that edits or hides the line leaves it as it is.
+      purchase_bill: z.union([z.literal('account'), id]).nullable().optional(),
     }),
   },
   // Mazdoori typed in by hand (041): + adds to what the palledars earned, − takes off.
@@ -262,6 +289,27 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     row: z.object({
       id, created_at: at, updated_at: at, business_date: day, note: text(200), hidden: bool.default(false),
       amount_paise: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).refine((v) => v !== 0, 'zero'),
+    }),
+  },
+  // Nariyal Supplier Ledger (082): a kaat or a corrected baaki on a supplier's Purchase gaadis.
+  // + brings his baaki down, − takes it up. Not money moved, so no book reads it.
+  supplier_adjustments: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at, business_date: day, hidden: bool.default(false),
+      party_name: z.string().trim().min(1).max(120), kind: z.enum(['kaat', 'badla']), note: text(200), truck_id: id,
+      amount_paise: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).refine((v) => v !== 0, 'zero'),
+    }),
+  },
+  // Office Aaya-Gaya (078), Ashish Brothers only: the office's own money in and out. Its own
+  // table, so no book, Hisab or dashboard figure ever counts it.
+  office_entries: {
+    kind: 'master',
+    row: z.object({
+      id, created_at: at, updated_at: at, business_date: day, hidden: bool.default(false),
+      direction: z.enum(['in', 'out']), note: text(200), amount_paise: paise.positive(),
+      // (088) Cash or UPI. Optional with no default so an older terminal's push does not blank it.
+      mode: z.enum(['cash', 'upi']).optional(),
     }),
   },
   day_closes: {

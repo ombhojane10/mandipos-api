@@ -5,7 +5,11 @@ import { Principal } from '../auth/tokens.service';
 import { Db, Tx } from '../db/db.service';
 import { IMMUTABLE_ON_UPDATE, SYNC_TABLES } from './tables';
 
-const LABOUR_TABLES = new Set(['pickups', 'breakages']);
+// A labour login may also scan a nariyal parchi back (Parchi wapas).
+const LABOUR_TABLES = new Set(['pickups', 'breakages', 'nariyal_returns']);
+// Tables only a nariyal shop writes: Parchi wapas, Supplier Ledger kaat / baaki badla, Office
+// Aaya-Gaya (Ashish Brothers). Any other shop's row is turned away.
+const NARIYAL_TABLES = new Set(['nariyal_returns', 'supplier_adjustments', 'office_entries']);
 
 /** txn: the terminal's local transaction the row was written in; rows sharing one apply together or not at all. */
 export type PushItem = { table: string; row: Record<string, unknown>; txn?: string };
@@ -20,6 +24,8 @@ export type PushResult = {
 
 /** Per push: the numbers its voids freed, as the terminal knew them → as the server holds them. */
 type Freed = { bills: Map<number, number>; collections: Map<number, number> };
+/** Who is pushing, looked up once a push and only when needed: the login's role and the shop's fruit. */
+type Who = { roleOf: () => Promise<string | null>; commodityOf: () => Promise<string | null> };
 
 /** Numbers the shop hands out once: a slip's number, a collection's raseed number. */
 const NUMBERED: Record<string, { col: string; asked: string; voids: string; fk: string }> = {
@@ -68,6 +74,11 @@ export class SyncService {
       let role: string | null | undefined;
       const roleOf = async () => role !== undefined ? role : (role = (await tx.query<{ role: string }>(
         `SELECT role FROM shop_members WHERE shop_id = $1 AND user_id = $2`, [shopId, p.userId])).rows[0]?.role ?? null);
+      // The shop's fruit, read once a push and only when a nariyal-only field or table is sent.
+      let fruit: string | null | undefined;
+      const commodityOf = async () => fruit !== undefined ? fruit : (fruit = (await tx.query<{ commodity: string }>(
+        `SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0]?.commodity ?? null);
+      const who: Who = { roleOf, commodityOf };
       // What the voids in this push freed: the number a terminal knew a slip by → the server's.
       const freed: Freed = { bills: new Map(), collections: new Map() };
       for (let i = 0; i < items.length;) {
@@ -75,9 +86,9 @@ export class SyncService {
         let end = i + 1;
         if (txn) while (end < items.length && items[end]?.txn === txn) end++;
         if (!txn || end - i === 1) {
-          results.push(await this.applyOne(tx, p, shopId, items[i], roleOf, freed));
+          results.push(await this.applyOne(tx, p, shopId, items[i], who, freed));
         } else {
-          results.push(...await this.applyGroup(tx, p, shopId, items.slice(i, end), roleOf, freed));
+          results.push(...await this.applyGroup(tx, p, shopId, items.slice(i, end), who, freed));
         }
         i = end;
       }
@@ -104,12 +115,12 @@ export class SyncService {
 
   /** All of [group] or none of it. */
   private async applyGroup(
-    tx: Tx, p: Principal, shopId: string, group: PushItem[], roleOf: () => Promise<string | null>, freed: Freed,
+    tx: Tx, p: Principal, shopId: string, group: PushItem[], who: Who, freed: Freed,
   ): Promise<PushResult[]> {
     await tx.query('SAVEPOINT txn');
     const out: PushResult[] = [];
     for (const item of group) {
-      const r = await this.applyOne(tx, p, shopId, item, roleOf, freed);
+      const r = await this.applyOne(tx, p, shopId, item, who, freed);
       out.push(r);
       if (r.status === 'rejected') {
         await tx.query('ROLLBACK TO SAVEPOINT txn');
@@ -140,13 +151,14 @@ export class SyncService {
   }
 
   private async applyOne(
-    tx: Tx, p: Principal, shopId: string, item: PushItem, roleOf: () => Promise<string | null>, freed: Freed,
+    tx: Tx, p: Principal, shopId: string, item: PushItem, who: Who, freed: Freed,
   ): Promise<PushResult> {
+    const { roleOf, commodityOf } = who;
     const rawId = typeof item?.row?.id === 'string' ? item.row.id : null;
     const def = SYNC_TABLES[item?.table];
     if (!def) return { id: rawId, status: 'rejected', error: `unknown table ${item?.table}` };
     // A labour login only hands boxes over and reports broken ones.
-    if (!LABOUR_TABLES.has(item.table) && (await roleOf()) === 'labour') return { id: rawId, status: 'rejected', error: 'labour can only record pickups and breakages' };
+    if (!LABOUR_TABLES.has(item.table) && (await roleOf()) === 'labour') return { id: rawId, status: 'rejected', error: 'labour can only record pickups, breakages and parchi scans' };
     const parsed = def.row.safeParse(item.row);
     if (!parsed.success) {
       const i = parsed.error.issues[0];
@@ -155,6 +167,28 @@ export class SyncService {
 
     const row: Record<string, unknown> = { ...parsed.data, shop_id: shopId, device_id: p.deviceId, created_by: p.userId };
     const table = item.table;
+    // Commission / Purchase and the Bada figures are a nariyal gaadi's alone: any other shop's
+    // values are dropped, and the gaadi keeps what it had. Looked up only when one is sent.
+    const nariyalOnly = ['deal', 'advance_paise', 'dala_paise', 'inaam_paise', 'fine_paise', 'halting_paise', 'bada_paid_at', 'bada_paid_by'];
+    if (table === 'trucks' && nariyalOnly.some((k) => row[k] != null && row[k] !== 0) && (await commodityOf()) !== 'nariyal') {
+      for (const k of nariyalOnly) delete row[k];
+    }
+    // The rickshaw fare on a parchi is nariyal's alone too, and so is its remark.
+    if (table === 'bills' && row.rikshaw_paise != null && row.rikshaw_paise !== 0 && (await commodityOf()) !== 'nariyal') row.rikshaw_paise = 0;
+    if (table === 'bills' && typeof row.remark === 'string' && row.remark !== '' && (await commodityOf()) !== 'nariyal') row.remark = '';
+    // A supplier payment tagged to a gaadi (Supplier Ledger, beejak payments) is nariyal's: any
+    // other shop's tag is dropped and the line keeps what it had.
+    if (table === 'daybook_entries' && row.purchase_bill != null && (await commodityOf()) !== 'nariyal') delete row.purchase_bill;
+    if (NARIYAL_TABLES.has(table) && (await commodityOf()) !== 'nariyal') return { id: row.id as string, status: 'rejected', error: 'nariyal only' };
+    if (table === 'nariyal_returns') {
+      // The parchi scanned must be one of this shop's.
+      const bill = await tx.query(`SELECT 1 FROM bills WHERE shop_id = $1 AND id = $2`, [shopId, row.bill_id]);
+      if (!bill.rowCount) return { id: row.id as string, status: 'rejected', error: 'parchi not found' };
+      // A parchi goes back once: a second scan of it (another counter, or gun and camera) is not
+      // stored again. The app counts scans per parchi, so nothing on the machines changes.
+      const seen = await tx.query(`SELECT 1 FROM nariyal_returns WHERE shop_id = $1 AND bill_id = $2 AND id <> $3`, [shopId, row.bill_id, row.id]);
+      if (seen.rowCount) return { id: row.id as string, status: 'skipped' };
+    }
     const settled = await this.settle(tx, shopId, p.deviceId, table, row, freed);
     if (settled.skip) {
       // Already stored (a re-send), or a void of a row another terminal had already voided.
