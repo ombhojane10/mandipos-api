@@ -641,18 +641,20 @@ export class EntriesService {
     if (!number) throw new BadRequestException('Gaadi number daalein');
     const p = await this.device(phone, shopId);
     const now = new Date().toISOString();
-    const { supplier, brandIds } = await this.db.withShop(shopId, async (tx) => {
+    const { supplier, brandIds, nextOrder } = await this.db.withShop(shopId, async (tx) => {
       const shop = (await tx.query<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId])).rows[0];
       if (shop.commodity === 'amrud') throw new UnprocessableEntityException('Is maal ki party app se jodein');
       if (isAngoor(shop.commodity) && !input.supplier.trim()) throw new BadRequestException('Supplier ka naam daalein');
       const known = (await tx.query<{ s: string }>(`SELECT TRIM(supplier) AS s FROM trucks WHERE TRIM(supplier) <> '' ORDER BY arrived_at DESC`)).rows
         .find((r) => nameKey(r.s) === nameKey(input.supplier))?.s;
-      const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;
+      const brands = (await tx.query<{ id: string; name: string; sort_order: number }>(`SELECT id, name, sort_order FROM brands`)).rows;
       const ids = lots.map((l) => l.brandId ?? brands.find((b) => nameKey(b.name) === nameKey(l.brandName ?? ''))?.id ?? null);
-      return { supplier: known ?? (isAngoor(shop.commodity) ? input.supplier.trim().toUpperCase() : input.supplier.trim()), brandIds: ids };
+      return { supplier: known ?? (isAngoor(shop.commodity) ? input.supplier.trim().toUpperCase() : input.supplier.trim()), brandIds: ids, nextOrder: brands.reduce((m, b) => Math.max(m, b.sort_order), 0) + 1 };
     });
     const items: PushItem[] = [];
     const newBrands = new Map<string, string>();
+    // New marks go after every mark the shop has, as a terminal numbers its next one (highest + 1).
+    let order = nextOrder;
     lots.forEach((l, i) => {
       if (brandIds[i]) return;
       const name = (l.brandName ?? '').trim();
@@ -660,7 +662,7 @@ export class EntriesService {
       if (!newBrands.has(nameKey(name))) {
         const id = uuidv7();
         newBrands.set(nameKey(name), id);
-        items.push({ table: 'brands', txn: uuidv7(), row: { id, created_at: now, updated_at: now, name, sort_order: 999, hidden: false, shelf_days: 7 } });
+        items.push({ table: 'brands', txn: uuidv7(), row: { id, created_at: now, updated_at: now, name, sort_order: order++, hidden: false, shelf_days: 7 } });
       }
       brandIds[i] = newBrands.get(nameKey(name))!;
     });
@@ -858,7 +860,7 @@ export class EntriesService {
                   - ${STORE_BACK('$1', 'g.brand_id')} AS qty,
                 (array_agg(g.rate_paise ORDER BY g.created_at DESC))[1] AS rate, MAX(g.box_grams) AS box_grams
          FROM truck_grades g WHERE g.truck_id = $1 GROUP BY g.brand_id`, [truckId])).rows;
-      const brands = (await tx.query<{ id: string; name: string }>(`SELECT id, name FROM brands`)).rows;
+      const brands = (await tx.query<{ id: string; name: string; sort_order: number }>(`SELECT id, name, sort_order FROM brands`)).rows;
       return { truck, have, brands };
     });
     const items: PushItem[] = [{ table: 'trucks', txn: uuidv7(), row: {
@@ -867,14 +869,15 @@ export class EntriesService {
       closed_at: truck.closed_at?.toISOString() ?? null, location: (input.location ?? '').trim().slice(0, 80),
     } }];
     const day = todayIst();
+    let order = brands.reduce((m, b) => Math.max(m, b.sort_order), 0) + 1;
     for (const l of input.lots) {
       let brandId = l.brandId ?? brands.find((b) => nameKey(b.name) === nameKey(l.brandName ?? ''))?.id;
       if (!brandId) {
         const name = (l.brandName ?? '').trim();
         if (!name || !l.qty) continue;
         brandId = uuidv7();
-        brands.push({ id: brandId, name });
-        items.push({ table: 'brands', txn: uuidv7(), row: { id: brandId, created_at: now, updated_at: now, name, sort_order: 999, hidden: false, shelf_days: 7 } });
+        brands.push({ id: brandId, name, sort_order: order });
+        items.push({ table: 'brands', txn: uuidv7(), row: { id: brandId, created_at: now, updated_at: now, name, sort_order: order++, hidden: false, shelf_days: 7 } });
       }
       const old = have.find((h) => h.brand_id === brandId);
       const diff = l.qty - (old ? n(old.qty) : 0);

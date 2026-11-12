@@ -106,7 +106,8 @@ export class MastersService {
       const name = typed ?? mine!.name;
       if (all.some((b) => b.id !== mine?.id && nameKey(b.name) === nameKey(name))) throw new ConflictException(`${name} pehle se hai`);
       if (input.groupId && !(await tx.query(`SELECT 1 FROM product_groups WHERE id = $1`, [input.groupId])).rowCount) throw new BadRequestException('Group nahi mila');
-      return { mine, name, next: Math.min(999, all.filter((b) => b.sort_order < 999).reduce((m, b) => Math.max(m, b.sort_order), 0) + 1) };
+      // A new product goes after every mark, as a terminal numbers its next one (highest + 1).
+      return { mine, name, next: all.reduce((m, b) => Math.max(m, b.sort_order), 0) + 1 };
     });
     const name = pre.name;
     const now = new Date().toISOString();
