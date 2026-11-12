@@ -4718,3 +4718,66 @@ describe('release publish', () => {
     await http().post('/v1/releases/pos').set('X-Release-Token', TOKEN).set('Content-Type', APK).send(apk).expect(403);
   });
 });
+
+describe('mark order', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  it('never refuses a mark (and with it a gaadi and its parchis) for its number or a long name; new marks go after every mark', async () => {
+    const s = await login('9829200091');
+    const res = await createApproved(s.accessToken, { name: 'Mark Order', mandi: 'Azadpur', shopNo: 'C-91', role: 'owner', commodity: 'angoor' });
+    const owner = res.accessToken;
+    const id = res.me.shop.id as string;
+    await http().post('/v1/admin/auth/otp').send({ phone: '9829200091' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9829200091', code: OtpService.issuedForTests.get('9829200091') }).expect(200)).body.token);
+    const t = new Date().toISOString();
+    const pull = async () => (await http().get('/v1/sync/pull?after=0&limit=500').set(auth(owner)).expect(200)).body.changes as any[];
+    const brand = (changes: any[], match: (r: any) => boolean) => changes.filter((c) => c.table === 'brands' && match(c.row)).at(-1)?.row;
+
+    // A mark filed at 999, as the website did before this fix: live shops hold such marks.
+    const oldId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: oldId, created_at: t, updated_at: t, name: 'Royal', sort_order: 999, shelf_days: 7 } },
+    ] }).expect(200);
+
+    // The website's next new mark goes after it (1000), not at 999 again.
+    await http().post(`/v1/admin/shops/${id}/entries/gaadi`).set(web).send({ number: 'mh15ab9100', supplier: 'Sai', lots: [{ brandName: 'Sonaka', grade: '1', qty: 10, ratePaise: 0, boxGrams: 10000 }] }).expect(201);
+    expect(brand(await pull(), (r) => r.name === 'Sonaka').sort_order).toBe(1000);
+
+    // The terminal then adds a gaadi with a new mark (highest + 1 = 1001) and sells off it: none of it is refused.
+    const brandId = uuidv7(), truckId = uuidv7(), billId = uuidv7(), txn = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { txn, table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Kesar', sort_order: 1001, shelf_days: 7 } },
+      { txn, table: 'trucks', row: { id: truckId, created_at: t, updated_at: t, number: 'MH15AB9101', supplier: 'Sai', arrived_at: t } },
+      { txn, table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: truckId, brand_id: brandId, grade: '1', billed_qty: 50, received_qty: 50, rate_paise: 0 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/009101', kind: 'kachchi', buyer_name: 'Cash', business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 100000, paid_paise: 100000, cash_paise: 100000, slip_no: 1, truck_id: truckId } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: truckId, brand_id: brandId, grade: '1', qty: 1, rate_paise: 100000 } },
+    ] }).expect(200);
+    expect(pushed.body.results.map((r: any) => r.status)).toEqual(Array(5).fill('applied'));
+    let changes = await pull();
+    expect(brand(changes, (r) => r.id === brandId).sort_order).toBe(1001);
+    expect(changes.some((c) => c.table === 'bills' && c.row.id === billId)).toBe(true);
+
+    // A mark name over 60 is cut to 60, not refused, and stored one ms newer so the terminal takes the cut name back.
+    const longId = uuidv7(), long = 'K'.repeat(70);
+    const cut = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: longId, created_at: t, updated_at: t, name: long, sort_order: 1002, shelf_days: 7 } },
+    ] }).expect(200);
+    expect(cut.body.results[0].status).toBe('applied');
+    const longRow = brand(await pull(), (r) => r.id === longId);
+    expect(longRow.name).toBe('K'.repeat(60));
+    expect(Date.parse(longRow.updated_at) - Date.parse(t)).toBe(1);
+
+    // Editing a gaadi on the website with a new mark, and a Masters product: both after every mark.
+    await http().post(`/v1/admin/shops/${id}/gaadi/${truckId}`).set(web).send({ number: 'MH15AB9101', supplier: 'Sai', lots: [{ brandId, grade: '1', qty: 50, ratePaise: 0 }, { brandName: 'Pusa', grade: '1', qty: 5, ratePaise: 0 }] }).expect(201);
+    changes = await pull();
+    expect(brand(changes, (r) => r.name === 'Pusa').sort_order).toBe(1003);
+    const product = (await http().post(`/v1/admin/shops/${id}/products`).set(web).send({ name: 'Thompson' }).expect(201)).body;
+    expect(brand(await pull(), (r) => r.id === product.id).sort_order).toBe(1004);
+
+    // Past the int column it is still a clean refusal, not a database error.
+    const big = await http().post('/v1/sync/push').set(auth(owner)).send({ items: [
+      { table: 'brands', row: { id: uuidv7(), created_at: t, updated_at: t, name: 'Huge', sort_order: 2_147_483_648, shelf_days: 7 } },
+    ] }).expect(200);
+    expect(big.body.results[0]).toMatchObject({ status: 'rejected', error: expect.stringMatching(/^sort_order:/) });
+  });
+});

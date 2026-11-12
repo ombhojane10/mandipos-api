@@ -27,8 +27,17 @@ export const SYNC_TABLES: Record<string, TableDef> = {
     kind: 'master',
     row: z.object({
       id, created_at: at, updated_at: at,
-      name: z.string().trim().min(1).max(60), sort_order: z.number().int().min(0).max(999).default(0),
+      // A refused mark takes its gaadi (same txn) and every parchi sold off it down with it, so
+      // nothing a terminal can type is refused here: sort_order is display order only, up to the
+      // int column's own range (a terminal numbers its next mark highest + 1, past 999 too).
+      name: z.string().trim().min(1), sort_order: z.int32().min(0).default(0),
       hidden: bool.default(false), shelf_days: z.number().int().min(1).max(60).default(7),
+    }).overwrite((r) => {
+      // A name longer than 60 is cut, not refused. One ms newer, so the terminal that sent the
+      // long name takes the cut one back on its next pull (masters only take a newer row).
+      const chars = Array.from(r.name);
+      if (chars.length <= 60) return r;
+      return { ...r, name: chars.slice(0, 60).join('').trim(), updated_at: new Date(Date.parse(r.updated_at) + 1).toISOString() };
     }),
   },
   // One row per shop-day-brand-grade; corrections overwrite, yesterday's rows stay for history.
