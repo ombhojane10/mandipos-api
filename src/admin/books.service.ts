@@ -30,6 +30,7 @@ const POTS: Pot[] = ['galla', 'office', 'bank'];
  *  - creditors    — the suppliers: beejak net (grapes, CreditorsService) or gaadi kharid + bhada (others, Supplier Khata);
  *  - sales        — bikri: the slip total less what rides on it (chungi_paise = APMC + mazdoori or chungi);
  *  - apmc / chungi — APMC and chungi collected on slips: owed onward, so liabilities;
+ *  - rikshaw      — nariyal: the rickshaw fare the customer paid on a slip (rikshaw_paise, inside the total): owed to the rickshaw wala;
  *  - mazdoori     — labour as Munafa counts it: earned on slips (labour_paise + adjustments, Dr) less what the
  *                   slip charged the buyer for it (Cr); labour — what is still owed to the labour (earned − paid in Day Book);
  *  - purchase / bhada_in — kharid: beejak gross (grapes) or gaadi goods at kharid bhav and gaadi bhada (others);
@@ -78,7 +79,7 @@ const FRAGMENTS = {
     CROSS JOIN LATERAL (SELECT x0.ap0 AS ap, lb.chungi_paise - x0.ap0 AS ch, x0.ud) x
     CROSS JOIN LATERAL (VALUES
       ('pot:galla', lb.cash_paise, 0::bigint), ('pot:bank', lb.upi_paise, 0), ('g:' || lb.buyer_id, x.ud, 0),
-      ('sales', 0, lb.total_paise - x.ap - x.ch), ('apmc', 0, x.ap),
+      ('sales', 0, lb.total_paise - x.ap - x.ch - lb.rikshaw_paise), ('apmc', 0, x.ap), ('rikshaw', 0, lb.rikshaw_paise),
       ('mazdoori', lb.labour_paise, LEAST(lb.labour_paise, x.ch)), ('chungi', 0, x.ch - LEAST(lb.labour_paise, x.ch)), ('labour', 0, lb.labour_paise),
       ('diff:bill', GREATEST(lb.total_paise - lb.cash_paise - lb.upi_paise - x.ud, 0), GREATEST(lb.cash_paise + lb.upi_paise + x.ud - lb.total_paise, 0))
     ) v(acct, dr, cr)
@@ -189,7 +190,7 @@ type Fragment = keyof typeof FRAGMENTS;
 
 /** The sources an account's postings can come from (all of them for a difference account). */
 function sourcesOf(key: string): Fragment[] {
-  if (['sales', 'apmc', 'chungi'].includes(key)) return ['bills'];
+  if (['sales', 'apmc', 'chungi', 'rikshaw'].includes(key)) return ['bills'];
   if (key === 'mazdoori') return ['bills', 'labourAdj'];
   if (key === 'labour') return ['bills', 'labourAdj', 'daybook'];
   if (key === 'purchase') return ['beejaks', 'cheekuBeejaks', 'gaadis'];
@@ -277,10 +278,14 @@ export class BooksService {
     private readonly cheekuCreditors: CheekuCreditorsService) {}
 
   private async mode(shopId: string): Promise<BookMode> {
+    return modeOf(await this.commodity(shopId));
+  }
+
+  /** The shop's fruit, read once where both the book mode and a fruit check need it. */
+  private async commodity(shopId: string): Promise<string> {
     const s = await this.db.one<{ commodity: string }>(`SELECT commodity FROM shops WHERE id = $1`, [shopId]);
     if (!s) throw new NotFoundException('Dukaan nahi mili');
-    if (isCheeku(s.commodity)) return CHEEKU_BOOKS;
-    return isAngoor(s.commodity) ? 'grapes' : 'gaadi';
+    return s.commodity;
   }
 
   /** What an account is: its name, its group, and whether it closes into the year's P&L. */
@@ -290,6 +295,7 @@ export class BooksService {
       'pot:galla': ['Galla (cash)', 'cash', false], 'pot:office': ['Office cash', 'cash', false], 'pot:bank': ['Bank', 'bank', false],
       sales: ['Bikri', 'sales', true], purchase: [cheeku ? CHEEKU_PURCHASE_NAME : grapes ? 'Kharid (beejak)' : 'Kharid (gaadi)', 'purchase', true], bhada_in: ['Gaadi bhada', 'purchase', true],
       apmc: ['APMC', 'liabilities', false], chungi: ['Chungi', 'liabilities', false], labour: ['Mazdoori dena', 'liabilities', false],
+      rikshaw: ['Rikshaw dena', 'liabilities', false],
       mazdoori: ['Mazdoori', 'expense', true], creditors: ['Sundry creditors', 'creditors', false],
       cnote: ['Credit note (bikri kam)', 'sales', true],
       'b:committee': ['Committee', 'assets', false], 'b:udhaar_diya': ['Udhaar diya (loan)', 'assets', false],
@@ -320,12 +326,13 @@ export class BooksService {
 
   /** Every account the General Ledger can open, in the Trial Balance's groups. */
   async accounts(shopId: string) {
-    const mode = await this.mode(shopId);
-    const grapes = mode === 'grapes', cheeku = mode === CHEEKU_BOOKS;
+    const commodity = await this.commodity(shopId);
+    const mode = modeOf(commodity);
+    const grapes = mode === 'grapes', cheeku = mode === CHEEKU_BOOKS, nariyal = commodity === 'nariyal';
     return this.db.withShop(shopId, async (tx) => {
       const heads = await this.customHeads(tx);
       const keys = [
-        'pot:galla', 'pot:office', 'pot:bank', 'sales', 'cnote', 'purchase', ...(grapes ? [] : cheeku ? [] : ['bhada_in']), 'apmc', 'chungi', 'mazdoori', 'labour', 'creditors',
+        'pot:galla', 'pot:office', 'pot:bank', 'sales', 'cnote', 'purchase', ...(grapes ? [] : cheeku ? [] : ['bhada_in']), 'apmc', 'chungi', ...(nariyal ? ['rikshaw'] : []), 'mazdoori', 'labour', 'creditors',
         ...BUILTIN_HEADS.filter((h) => !TRANSFERS.includes(h.key) && !['supplier', 'mazdoori', ...Object.keys(PAIRED)].includes(h.key)).map((h) => `b:${h.key}`),
         'b:committee', 'b:udhaar_diya',
         ...heads.rows.map((h) => `h:${h.id}`),
@@ -571,7 +578,7 @@ export class BooksService {
     const bucket = (col: string) => (by === 'day' ? `${col}::text` : `to_char(${col}, 'YYYY-MM')`);
     return this.db.withShop(shopId, async (tx) => {
       const q = async (sql: string, params: unknown[] = [from, to]) => (await tx.query<{ b: string; s: string; k?: string; d?: string }>(sql, params)).rows;
-      const sales = await q(`SELECT ${bucket('lb.business_date')} AS b, SUM(lb.total_paise) AS s FROM ${LIVE_BILLS} lb WHERE lb.business_date BETWEEN $1 AND $2 GROUP BY 1`);
+      const sales = await q(`SELECT ${bucket('lb.business_date')} AS b, SUM(lb.total_paise - lb.rikshaw_paise) AS s FROM ${LIVE_BILLS} lb WHERE lb.business_date BETWEEN $1 AND $2 GROUP BY 1`);
       const cogs = await q(`SELECT ${bucket('lb.business_date')} AS b, SUM(l.qty * tc.cost::numeric / NULLIF(tc.recv, 0)) AS s
         FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id JOIN (${TRUCK_COST}) tc ON tc.id = l.truck_id WHERE lb.business_date BETWEEN $1 AND $2 GROUP BY 1`);
       const spoiled = await q(`SELECT ${bucket('s.business_date')} AS b, SUM(s.qty * tc.cost::numeric / NULLIF(tc.recv, 0)) AS s
@@ -751,4 +758,10 @@ export class BooksService {
       await writeXlsx(out, sheets);
     });
   }
+}
+
+/** The books a fruit keeps: cheeku its own, angoor the grapes books, every other fruit the gaadi books. */
+function modeOf(commodity: string): BookMode {
+  if (isCheeku(commodity)) return CHEEKU_BOOKS;
+  return isAngoor(commodity) ? 'grapes' : 'gaadi';
 }

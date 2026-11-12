@@ -125,6 +125,8 @@ const ParchiBody = z.object({
   packing: z.enum(['loose', 'katta10', 'katta15', 'katta20', 'katta25', 'panni']).default('loose'), panniName: z.string().max(40).optional(),
   kattaName: z.string().max(20).optional(), parchune: z.boolean().optional(),
   labour: z.boolean().optional(), labourQty: z.number().int().min(0).max(100_000).optional(), labourRatePaise: z.number().int().min(0).max(10_000).optional(),
+  // Nariyal: the rickshaw fare charged to the customer on top of the maal.
+  rikshawPaise: z.number().int().min(0).max(10_000_000).optional(),
   apmc: z.boolean().optional(),
   delivery: z.object({ address: z.string().max(200), stand: z.string().max(120) }).optional(),
   staff: z.string().max(60).optional(), slipNo: z.number().int().positive().max(9_999_999).optional(),

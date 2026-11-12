@@ -53,6 +53,8 @@ export type ParchiInput = {
   parchune?: boolean;
   /** Mazdoori: on/off, how many dana it is for (default every nag), and the per-nag rate. */
   labour?: boolean; labourQty?: number; labourRatePaise?: number;
+  /** Nariyal: the rickshaw fare the customer pays on top of the maal (inside the total). */
+  rikshawPaise?: number;
   /** Cheeku: APMC on or off for this slip alone; left out, the shop's APMC setting decides. */
   apmc?: boolean;
   delivery?: { address: string; stand: string };
@@ -232,7 +234,10 @@ export class EntriesService {
     if (free) { buyerId = null; buyerName = 'Free'; }
     if (!buyerId && !buyerName) buyerName = 'Cash';
 
-    const goods = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0);
+    const maal = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0);
+    // Nariyal's rickshaw fare rides on top of the maal (none on a Free slip).
+    const rikshaw = free ? 0 : Math.max(0, input.rikshawPaise ?? 0);
+    const goods = maal + rikshaw;
     let cash = 0, upi = 0;
     if (input.pay === 'cash') cash = goods;
     else if (input.pay === 'upi') upi = goods;
@@ -267,7 +272,9 @@ export class EntriesService {
         labour_paise: labourQty * (input.labourRatePaise ?? LABOUR_PAISE_PER_NAG),
         packing: input.packing, panni_name: panniName, packs: labourQty,
         delivery: !!delivery, staff_name: (input.staff ?? '').trim().slice(0, 60) || 'Website', chungi_paise: 0,
-        upi_bank: upi > 0 ? (input.upiBank ?? '') : '',
+        upi_bank: upi > 0 ? (input.upiBank ?? '') : '', rikshaw_paise: rikshaw,
+        // The website form has no Remark box: an edit keeps the one typed on the app (nariyal).
+        ...(editing?.remark ? { remark: editing.remark } : {}),
       },
     });
     for (const l of lines) {
@@ -1130,13 +1137,13 @@ export class EntriesService {
   }
 }
 
-export type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string; day: string; created_at: Date };
+export type LiveBill = { id: string; slip_no: number | null; buyer_id: string | null; buyer_name: string; truck_id: string | null; pay_mode: string; paid_paise: string; cash_paise: string; upi_paise: string; day: string; created_at: Date; remark: string };
 
 /** A slip still on the books; a voided one can't be voided or edited again. */
 async function liveBill(tx: Tx, billId: string): Promise<LiveBill> {
   const b = (await tx.query<LiveBill & { voided: boolean }>(
     `SELECT b.id, b.slip_no, b.buyer_id, b.buyer_name, b.truck_id, b.pay_mode, b.paid_paise, b.cash_paise, b.upi_paise,
-            b.business_date::text AS day, b.created_at,
+            b.business_date::text AS day, b.created_at, b.remark,
             EXISTS (SELECT 1 FROM bill_voids v WHERE v.bill_id = b.id) AS voided
      FROM bills b WHERE b.id = $1`, [billId])).rows[0];
   if (!b) throw new NotFoundException('Parchi nahi mili');

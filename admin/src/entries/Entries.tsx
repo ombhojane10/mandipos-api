@@ -88,7 +88,9 @@ const KATTA_SIZES = [{ key: 'katta10', per: 10 }, { key: 'katta15', per: 15 }, {
 /** katta25 is only ever met on an older slip being altered. */
 type KattaSize = (typeof KATTA_SIZES)[number]['key'] | 'katta25'
 const perKatta = (size: KattaSize) => Number(size.slice(5))
-const PANNI_NAMES = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'] as const
+const PANNI_NAMES = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic', 'DFC'] as const
+/** Loose mazdoori and the rickshaw fare: paise per dana to start (₹0.30), as the app. */
+const PER_DANA = 30
 type Pay = 'cash' | 'upi' | 'credit' | 'split' | 'after' | 'free'
 
 /** What this browser remembers between parchis: the accountant's name and the mazdoori rate. */
@@ -125,8 +127,15 @@ function fromBill(b: EditBill) {
     // A count that was just the slip's dana follows the dana when it is changed; only a hand-corrected one stays.
     labour: b.labourPaise > 0, labourQty: b.labourPaise > 0 && b.packs > 0 && b.packs !== b.lines.reduce((s, l) => s + l.qty, 0) ? String(b.packs) : '',
     rate: b.labourPaise > 0 && b.packs > 0 ? Math.round(b.labourPaise / b.packs) : null,
+    // Rikshaw: the per-dana rate it was written at.
+    rikshaw: (b.rikshawPaise ?? 0) > 0, rikshawRate: (b.rikshawPaise ?? 0) > 0 && qtyOf(b) > 0 ? Math.round((b.rikshawPaise ?? 0) / qtyOf(b)) : PER_DANA,
+    // The fare as saved, and the dana the form shows (leak lines left out): kept on Save while
+    // neither the dana nor the ₹/dana is changed, so fixing a bhav never moves the fare.
+    rikshawSaved: b.rikshawPaise ?? 0, rikshawDana: lines.reduce((s, l) => s + l.qty, 0),
+    looseRate: packing === 'loose' && b.labourPaise > 0 && (b.packs || qtyOf(b)) > 0 ? Math.round(b.labourPaise / (b.packs || qtyOf(b))) : PER_DANA,
   }
 }
+const qtyOf = (b: EditBill) => b.lines.reduce((s, l) => s + l.qty, 0)
 
 function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { editing?: EditBill; draft?: Draft<'parchi'> }) {
   const o = useOptions(shopId)
@@ -148,6 +157,10 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
   const [labour, setLabour] = useState(was?.labour ?? false)
   const [labourQty, setLabourQty] = useState(was?.labourQty ?? '')
   const [rate, setRate] = useState(() => was?.rate ?? (Number(remembered('mp.labourRate', '30')) || 30))
+  const [rikshawOn, setRikshawOn] = useState(was?.rikshaw ?? false)
+  const [rikshawRate, setRikshawRate] = useState(was?.rikshawRate ?? PER_DANA)
+  // Loose mazdoori: always the whole slip's dana, at its own rate (₹0.30 to start).
+  const [looseRate, setLooseRate] = useState(was?.looseRate ?? PER_DANA)
   const [delivery, setDelivery] = useState(!!editing?.delivery || !!draft?.delivery)
   const [address, setAddress] = useState(editing?.delivery?.address ?? '')
   const [stand, setStand] = useState(editing?.delivery?.stand ?? '')
@@ -171,10 +184,14 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
 
   const free = pay === 'free'
   const qty = lines.reduce((s, l) => s + l.qty, 0)
-  const total = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0)
+  // An edited slip keeps its saved fare until its dana or ₹/dana is changed here.
+  const keepFare = !!was && was.rikshawSaved > 0 && qty === was.rikshawDana && rikshawRate === was.rikshawRate
+  const rikshawPaise = !free && rikshawOn ? (keepFare ? was!.rikshawSaved : qty * rikshawRate) : 0
+  const total = free ? 0 : lines.reduce((s, l) => s + l.qty * l.ratePaise, 0) + rikshawPaise
   const walkIn = !buyer || (buyer.id === null && isWalkInName(buyer.name))
   const per = perKatta(size)
-  const labourNag = labour ? (Number(labourQty) || qty) : 0
+  const loose = pack === 'loose'
+  const labourNag = labour ? (loose ? qty : Number(labourQty) || qty) : 0
   const set = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   // "Kitne katta" × what one holds becomes the 1st-line nag, as the app's kattaRow.
   const fillKattas = (count: string, p = per) => {
@@ -216,7 +233,7 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
           lines: lines.filter((l) => l.qty > 0), pay, cashPaise: cash, upiPaise: upi, upiBank: bank || undefined,
           packing: pack === 'katta' ? size : pack, kattaName: pack === 'katta' ? kattaName : undefined,
           panniName: pack === 'panni' ? panniName : undefined, parchune: pack !== 'katta' && parchune,
-          labour, labourQty: labour ? labourNag : 0, labourRatePaise: rate,
+          labour, labourQty: labour ? labourNag : 0, labourRatePaise: loose ? looseRate : rate, rikshawPaise: rikshawPaise || undefined,
           delivery: delivery ? { address, stand } : undefined, staff: staff.trim() || undefined,
           slipNo: !editing && Number(slipNo) > 0 ? Number(slipNo) : undefined,
         }, (r) => (editing ? t('Parchi #{n} badli', { n: String(r.slipNo) })
@@ -281,13 +298,31 @@ function ParchiForm({ shopId, onClose, onDone, editing, draft }: FormProps & { e
 
       <div className="box">
         <Tick label={t('Mazdoori jodein')} on={labour} onChange={setLabour}>
-          {labour && (
+          {labour && loose && (
+            <div className="inline-in">
+              <span className="field short muted">{count(qty)}</span>
+              <span className="muted">{t('dana')} ×</span>
+              <span className="short"><Money value={looseRate} onChange={setLooseRate} /></span>
+              <b className="money">= {rupees(qty * looseRate)}</b>
+            </div>
+          )}
+          {labour && !loose && (
             <div className="inline-in">
               <input className="field short" inputMode="numeric" aria-label={t('Kitne dana')} placeholder={String(qty || 0)} value={labourQty}
                 onChange={(e) => setLabourQty(e.target.value.replace(/\D/g, '').slice(0, 5))} />
               <span className="muted">{t('dana')} ×</span>
               <span className="short"><Money value={rate} onChange={setRate} /></span>
               <b className="money">= {rupees(labourNag * rate)}</b>
+            </div>
+          )}
+        </Tick>
+        <Tick label={t('Rikshaw jodein')} on={rikshawOn} onChange={setRikshawOn}>
+          {rikshawOn && (
+            <div className="inline-in">
+              <span className="field short muted">{count(qty)}</span>
+              <span className="muted">{t('dana')} ×</span>
+              <span className="short"><Money value={rikshawRate} onChange={setRikshawRate} /></span>
+              <b className="money">= {rupees(free ? qty * rikshawRate : rikshawPaise)}</b>
             </div>
           )}
         </Tick>
@@ -382,7 +417,7 @@ function fromDraft(d: Draft<'parchi'>) {
     pay: (d.pay ?? 'cash') as Pay, packing, panni: d.panni,
     size: (d.size ?? 'katta10') as KattaSize, kattaName: d.kattaName, parchune: d.parchune,
     // Tied goods carry mazdoori as a matter of course, as when the packing is tapped.
-    labour: d.labour || packing !== 'loose', labourQty: '', rate: null,
+    labour: d.labour || packing !== 'loose', labourQty: '', rate: null, rikshaw: false, rikshawRate: PER_DANA, rikshawSaved: 0, rikshawDana: 0, looseRate: PER_DANA,
   }
 }
 

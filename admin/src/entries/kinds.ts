@@ -32,6 +32,8 @@ export type EditBill = {
   totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; packs: number
   /** The 1% APMC the slip carried (0 when it had none). */
   apmcPaise?: number
+  /** Nariyal: the rickshaw fare charged on the slip (0 when none). */
+  rikshawPaise?: number
   packing: string; panniName: string; staff: string; upiBank: string
   lines: { grade: string; qty: number; ratePaise: number; leak: boolean; brand: string; truckId?: string; brandId?: string }[]
   delivery: { address: string; stand: string } | null

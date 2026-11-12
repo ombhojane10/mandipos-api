@@ -4781,3 +4781,267 @@ describe('mark order', () => {
     expect(big.body.results[0]).toMatchObject({ status: 'rejected', error: expect.stringMatching(/^sort_order:/) });
   });
 });
+
+describe('nariyal gaadi deal', () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const dealOf = async (truckId: string) => {
+    const c = new Client({ connectionString: OWNER_URL });
+    await c.connect();
+    try { return (await c.query<{ deal: string | null }>('SELECT deal FROM trucks WHERE id = $1', [truckId])).rows[0]?.deal; }
+    finally { await c.end(); }
+  };
+  const truck = (id: string, at: string, extra: Record<string, unknown> = {}) =>
+    ({ table: 'trucks', row: { id, created_at: at, updated_at: at, number: 'DEAL1', supplier: 'Ramu', arrived_at: at, ...extra } });
+
+  it('keeps Commission / Purchase on a nariyal gaadi, and drops it for any other shop', async () => {
+    const nariyal = (await registerShop('9877900001', 'Nariyal Deal')).accessToken;
+    const t1 = new Date().toISOString();
+    const id = uuidv7();
+    const r1 = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [truck(id, t1, { deal: 'commission' })] }).expect(200);
+    expect(r1.body.results[0].status).toBe('applied');
+    expect(await dealOf(id)).toBe('commission');
+    // An older terminal closes it without knowing the field: the deal stays.
+    const t2 = new Date(Date.now() + 1000).toISOString();
+    await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [truck(id, t2, { updated_at: t2, closed_at: t2 })] }).expect(200);
+    expect(await dealOf(id)).toBe('commission');
+    // Only the two words are taken.
+    const bad = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [truck(uuidv7(), t1, { deal: 'udhaar' })] }).expect(200);
+    expect(bad.body.results[0].status).toBe('rejected');
+
+    // Cheeku (and every other fruit): the gaadi is saved, the deal is not.
+    const s = await login('9877900002');
+    const cheeku = (await createApproved(s.accessToken, { name: 'Cheeku Deal', mandi: 'Azadpur', shopNo: '1', role: 'owner', commodity: 'cheeku' })).accessToken;
+    const other = uuidv7();
+    const r2 = await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [truck(other, t1, { deal: 'purchase' })] }).expect(200);
+    expect(r2.body.results[0].status).toBe('applied');
+    expect(await dealOf(other)).toBeNull();
+  });
+
+  it('keeps the rikshaw fare on a nariyal parchi, and drops it for any other shop', async () => {
+    const rikshawOf = async (billId: string) => {
+      const c = new Client({ connectionString: OWNER_URL });
+      await c.connect();
+      try { return (await c.query<{ rikshaw_paise: string }>('SELECT rikshaw_paise FROM bills WHERE id = $1', [billId])).rows[0]?.rikshaw_paise; }
+      finally { await c.end(); }
+    };
+    const t = new Date().toISOString();
+    const bill = (id: string, slip: number) => ({ table: 'bills', row: { id, created_at: t, number: `R1/2627/00000${slip}`, kind: 'kachchi', buyer_name: 'Cash',
+      business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 105000, paid_paise: 105000, cash_paise: 105000, slip_no: slip, rikshaw_paise: 5000 } });
+    const nariyal = (await registerShop('9877900011', 'Nariyal Rikshaw')).accessToken;
+    const n1 = uuidv7();
+    const r1 = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [bill(n1, 1)] }).expect(200);
+    expect(r1.body.results[0].status).toBe('applied');
+    expect(Number(await rikshawOf(n1))).toBe(5000);
+
+    const s = await login('9877900012');
+    const cheeku = (await createApproved(s.accessToken, { name: 'Cheeku Rikshaw', mandi: 'Azadpur', shopNo: '1', role: 'owner', commodity: 'cheeku' })).accessToken;
+    const c1 = uuidv7();
+    const r2 = await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [bill(c1, 1)] }).expect(200);
+    expect(r2.body.results[0].status).toBe('applied');
+    expect(Number(await rikshawOf(c1))).toBe(0);
+  });
+
+  it('keeps the remark on a nariyal parchi, and drops it for any other shop', async () => {
+    const remarkOf = async (billId: string) => {
+      const c = new Client({ connectionString: OWNER_URL });
+      await c.connect();
+      try { return (await c.query<{ remark: string }>('SELECT remark FROM bills WHERE id = $1', [billId])).rows[0]?.remark; }
+      finally { await c.end(); }
+    };
+    const t = new Date().toISOString();
+    const bill = (id: string, slip: number, remark?: string) => ({ table: 'bills', row: { id, created_at: t, number: `M1/2627/00000${slip}`, kind: 'kachchi', buyer_name: 'Cash',
+      business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 100000, paid_paise: 100000, cash_paise: 100000, slip_no: slip, ...(remark === undefined ? {} : { remark }) } });
+    const nariyal = (await registerShop('9877900031', 'Nariyal Remark')).accessToken;
+    const n1 = uuidv7();
+    expect((await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [bill(n1, 1, '  Shaam 5 baje bhejna ')] }).expect(200)).body.results[0].status).toBe('applied');
+    expect(await remarkOf(n1)).toBe('Shaam 5 baje bhejna');
+    // An older terminal sends no remark: the parchi has none.
+    const n2 = uuidv7();
+    await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [bill(n2, 2)] }).expect(200);
+    expect(await remarkOf(n2)).toBe('');
+    // Longer than 120 characters is turned away.
+    const long = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [bill(uuidv7(), 3, 'x'.repeat(121))] }).expect(200);
+    expect(long.body.results[0].status).toBe('rejected');
+
+    const s = await login('9877900032');
+    const cheeku = (await createApproved(s.accessToken, { name: 'Cheeku Remark', mandi: 'Azadpur', shopNo: '1', role: 'owner', commodity: 'cheeku' })).accessToken;
+    const c1 = uuidv7();
+    expect((await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [bill(c1, 1, 'nahi chahiye')] }).expect(200)).body.results[0].status).toBe('applied');
+    expect(await remarkOf(c1)).toBe('');
+  });
+
+  it('takes a parchi scanned back (Parchi wapas) from a nariyal shop only, once, and feeds it to every machine', async () => {
+    const t = new Date().toISOString();
+    const scan = (id: string, billId: string) => ({ table: 'nariyal_returns', row: { id, created_at: t, bill_id: billId } });
+    const nariyal = (await registerShop('9877900021', 'Nariyal Wapas')).accessToken;
+    const billId = uuidv7();
+    await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [{ table: 'bills', row: { id: billId, created_at: t, number: 'W1/2627/000001', kind: 'kachchi',
+      buyer_name: 'Cash', business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 10000, paid_paise: 10000, cash_paise: 10000, slip_no: 1 } }] }).expect(200);
+    // A parchi this shop never made is turned away.
+    const stray = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [scan(uuidv7(), uuidv7())] }).expect(200);
+    expect(stray.body.results[0]).toMatchObject({ status: 'rejected', error: 'parchi not found' });
+    const s1 = uuidv7();
+    const r1 = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [scan(s1, billId)] }).expect(200);
+    expect(r1.body.results[0].status).toBe('applied');
+    // Another counter scanning the same parchi: not stored a second time.
+    const twice = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [scan(uuidv7(), billId)] }).expect(200);
+    expect(twice.body.results[0].status).toBe('skipped');
+    // A re-send of the same scan is ignored.
+    const again = await http().post('/v1/sync/push').set(auth(nariyal)).send({ items: [scan(s1, billId)] }).expect(200);
+    expect(again.body.results[0].status).toBe('skipped');
+    const feed = await http().get('/v1/sync/pull?after=0').set(auth(nariyal)).expect(200);
+    expect(feed.body.changes.filter((c: { table: string }) => c.table === 'nariyal_returns').map((c: { row: { bill_id: string } }) => c.row.bill_id)).toEqual([billId]);
+
+    const s = await login('9877900022');
+    const cheeku = (await createApproved(s.accessToken, { name: 'Cheeku Wapas', mandi: 'Azadpur', shopNo: '1', role: 'owner', commodity: 'cheeku' })).accessToken;
+    const r2 = await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [scan(uuidv7(), uuidv7())] }).expect(200);
+    expect(r2.body.results[0].status).toBe('rejected');
+
+    // The other nariyal-only rows: Office Aaya-Gaya and a Supplier Ledger kaat are refused, and a
+    // supplier payment's gaadi tag is dropped (the payment itself is kept).
+    const day = t.slice(0, 10), pay = uuidv7();
+    const other = await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [
+      { table: 'office_entries', row: { id: uuidv7(), created_at: t, updated_at: t, business_date: day, direction: 'in', note: 'x', amount_paise: 100 } },
+      { table: 'supplier_adjustments', row: { id: uuidv7(), created_at: t, updated_at: t, business_date: day, party_name: 'Ramu', kind: 'kaat', note: '', truck_id: uuidv7(), amount_paise: 100 } },
+      { table: 'daybook_entries', row: { id: pay, created_at: t, updated_at: t, direction: 'out', mode: 'cash', category: 'supplier', party_name: 'ramu',
+        amount_paise: 100, business_date: day, purchase_bill: 'account' } },
+    ] }).expect(200);
+    expect(other.body.results.map((r: { status: string }) => r.status)).toEqual(['rejected', 'rejected', 'applied']);
+    const c = new Client({ connectionString: OWNER_URL });
+    await c.connect();
+    try { expect((await c.query('SELECT purchase_bill FROM daybook_entries WHERE id = $1', [pay])).rows[0].purchase_bill).toBeNull(); }
+    finally { await c.end(); }
+  });
+
+  it('keeps the rikshaw fare out of the website bikri, and a website edit keeps the app remark', async () => {
+    const res = await registerShop('9877900041', 'Nariyal Web');
+    const shopId = res.me.shop.id as string;
+    await http().post('/v1/admin/auth/otp').send({ phone: '9877900041' }).expect(204);
+    const web = auth((await http().post('/v1/admin/auth/verify').send({ phone: '9877900041', code: OtpService.issuedForTests.get('9877900041') }).expect(200)).body.token);
+    const base = `/v1/admin/shops/${shopId}`;
+    const gaadi = (await http().post(`${base}/entries/gaadi`).set(web).send({ number: 'ka01rk1', supplier: 'Ramu', lots: [{ brandName: 'Kadur', grade: '1', qty: 100, ratePaise: 0 }] }).expect(201)).body;
+    // 10 dana at ₹50 + a ₹3 rikshaw fare: ₹503 on the slip, ₹500 of it bikri.
+    const made = (await http().post(`${base}/entries/parchi`).set(web).send({ truckId: gaadi.truckId, lines: [{ grade: '1', qty: 10, ratePaise: 5000 }],
+      pay: 'cash', packing: 'loose', labour: false, rikshawPaise: 300 }).expect(201)).body;
+    const today = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+    const q = `?from=${today}&to=${today}`;
+    expect((await http().get(`${base}/munafa${q}`).set(web).expect(200)).body.salesPaise).toBe(50000);
+    expect((await http().get(`${base}/dashboard${q}`).set(web).expect(200)).body.now.salesPaise).toBe(50000);
+    // The Bikri Register shows the fare in its own column; Kul is the bikri.
+    expect((await http().get(`${base}/sales-register${q}`).set(web).expect(200)).body.totals).toMatchObject({ cashPaise: 50300, rikshawPaise: 300, totalPaise: 50000 });
+    // A remark typed on the app; the accountant then corrects the bhav on the website.
+    await owner(`UPDATE bills SET remark = 'Shaam 5 baje' WHERE id = '${made.billId}'`);
+    const edited = (await http().post(`${base}/bills/${made.billId}/edit`).set(web).send({ truckId: gaadi.truckId, lines: [{ grade: '1', qty: 10, ratePaise: 6000 }],
+      pay: 'cash', packing: 'loose', labour: false, rikshawPaise: 300 }).expect(201)).body;
+    const c = new Client({ connectionString: OWNER_URL });
+    await c.connect();
+    try { expect((await c.query('SELECT remark, total_paise FROM bills WHERE id = $1', [edited.billId])).rows[0]).toEqual({ remark: 'Shaam 5 baje', total_paise: '60300' }); }
+    finally { await c.end(); }
+  });
+
+  it('makes a beejak for a Commission gaadi only, in a nariyal shop only', async () => {
+    const shop = (await registerShop('9877900003', 'Nariyal Beejak')).accessToken;
+    const t = new Date().toISOString();
+    const brandId = uuidv7(), comm = uuidv7(), bought = uuidv7(), billId = uuidv7();
+    const pushed = await http().post('/v1/sync/push').set(auth(shop)).send({ items: [
+      { table: 'brands', row: { id: brandId, created_at: t, updated_at: t, name: 'Calcutta', sort_order: 1, shelf_days: 7 } },
+      truck(comm, t, { deal: 'commission' }),
+      truck(bought, t, { number: 'BUY1', deal: 'purchase' }),
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: comm, brand_id: brandId, grade: '1', billed_qty: 100, received_qty: 100, rate_paise: 0 } },
+      { table: 'truck_grades', row: { id: uuidv7(), created_at: t, truck_id: comm, brand_id: brandId, grade: '2', billed_qty: 50, received_qty: 50, rate_paise: 0 } },
+      { table: 'bills', row: { id: billId, created_at: t, number: 'A1/2627/000001', kind: 'kachchi', buyer_name: 'Cash', business_date: t.slice(0, 10), pay_mode: 'cash', total_paise: 340000, paid_paise: 340000, cash_paise: 340000, slip_no: 1, truck_id: comm } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: comm, brand_id: brandId, grade: '1', qty: 80, rate_paise: 3000 } },
+      { table: 'bill_lines', row: { id: uuidv7(), created_at: t, bill_id: billId, truck_id: comm, brand_id: brandId, grade: '2', qty: 50, rate_paise: 2000 } },
+    ] }).expect(200);
+    expect(pushed.body.results.every((r: any) => r.status === 'applied')).toBe(true);
+
+    const b = (await http().get(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).expect(200)).body;
+    expect(b).toMatchObject({ party: 'Ramu', received: 150, sold: 130, left: 20, saved: null });
+    // Each dana quality the gaadi brought: aaye, bike, baaki and the average bhav it really sold at.
+    expect(b.lines).toMatchObject([
+      { line: 'Calcutta I', grade: '1', received: 100, qty: 80, phoota: 0, left: 20, salesPaise: 240000, avgPaise: 3000 },
+      { line: 'Calcutta II', grade: '2', received: 50, qty: 50, phoota: 0, left: 0, salesPaise: 100000, avgPaise: 2000 },
+    ]);
+
+    // Every line needs the shop's bhav.
+    await http().post(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).send({ bhav: [{ line: 'Calcutta I', ratePaise: 2500 }], heads: [] }).expect(400);
+    // 80 × ₹25 + 50 × ₹18 = ₹2,900; 6% = ₹174, 30 paise × 130 = ₹39, bhada ₹100 → net ₹2,587.
+    const body = { bhav: [{ line: 'Calcutta I', ratePaise: 2500 }, { line: 'Calcutta II', ratePaise: 1800 }],
+      heads: [{ key: 'commission', rate: 600 }, { key: 'mazdoori', rate: 30 }, { key: 'bhada', amountPaise: 10000 }] };
+    // A commission over 100% is a typo (60 typed for 6 is 6,000 here, 10,001 = 100.01%): refused.
+    const pct = (rate: number) => ({ ...body, heads: [{ key: 'commission', rate }] });
+    expect((await http().post(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).send(pct(10_001)).expect(400)).body.message).toMatch(/100%/);
+    await http().post(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).send(pct(10_000)).expect(201);
+    const s1 = (await http().post(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).send(body).expect(201)).body;
+    expect(s1).toMatchObject({ no: 1, dana: 130, grossPaise: 290000, expensesPaise: 17400 + 3900 + 10000, netPaise: 290000 - 31300 });
+    // Made again: same number.
+    const s2 = (await http().post(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).send({ ...body, heads: [] }).expect(201)).body;
+    expect(s2).toMatchObject({ no: 1, netPaise: 290000 });
+    // Package cost is a flat head of its own.
+    const s3 = (await http().post(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).send({ ...body, heads: [{ key: 'package', amountPaise: 5000 }] }).expect(201)).body;
+    expect(s3).toMatchObject({ no: 1, expensesPaise: 5000, netPaise: 285000 });
+    expect(s3.expenses).toContainEqual({ key: 'package', kind: 'flat', rate: null, amountPaise: 5000 });
+
+    // Opening balance: his earlier Commission gaadi's net (₹2,850) less ₹1,000 paid for it; another
+    // supplier's gaadi, a later one and a payment for a gaadi not his earlier ones don't count.
+    expect(b.openingPaise).toBe(0);
+    const later = new Date(Date.now() + 60_000).toISOString();
+    const next = uuidv7(), otherMan = uuidv7();
+    const pay = (bill: string, paise: number) => ({ table: 'daybook_entries', row: { id: uuidv7(), created_at: later, updated_at: later, direction: 'out',
+      mode: 'cash', category: 'supplier', party_name: 'ramu', amount_paise: paise, business_date: later.slice(0, 10), purchase_bill: bill } });
+    const p2 = await http().post('/v1/sync/push').set(auth(shop)).send({ items: [
+      truck(next, later, { number: 'DEAL2', supplier: ' RAMU.', deal: 'commission' }),
+      truck(otherMan, t, { number: 'DEAL3', supplier: 'Shyam', deal: 'commission' }),
+      pay(comm, 100000), pay(next, 7000),
+    ] }).expect(200);
+    expect(p2.body.results.every((r: any) => r.status === 'applied')).toBe(true);
+    expect((await http().get(`/v1/nariyal/beejaks/${next}`).set(auth(shop)).expect(200)).body.openingPaise).toBe(285000 - 100000);
+    expect((await http().get(`/v1/nariyal/beejaks/${comm}`).set(auth(shop)).expect(200)).body.openingPaise).toBe(0);
+    expect((await http().get(`/v1/nariyal/beejaks/${otherMan}`).set(auth(shop)).expect(200)).body.openingPaise).toBe(0);
+
+    // Bikri's list: the saved beejaks' number and net for the gaadis asked; one with none is left out.
+    expect((await http().get(`/v1/nariyal/beejaks?truckIds=${comm},${next}`).set(auth(shop)).expect(200)).body)
+      .toEqual({ items: [{ truckId: comm, no: 1, netPaise: 285000 }] });
+    expect((await http().get('/v1/nariyal/beejaks').set(auth(shop)).expect(200)).body).toEqual({ items: [] });
+    await http().get('/v1/nariyal/beejaks?truckIds=nope').set(auth(shop)).expect(400);
+
+    // A Purchase gaadi has no beejak; nor does any other fruit's shop.
+    await http().get(`/v1/nariyal/beejaks/${bought}`).set(auth(shop)).expect(422);
+    const s = await login('9877900004');
+    const cheeku = (await createApproved(s.accessToken, { name: 'Cheeku Beejak', mandi: 'Azadpur', shopNo: '2', role: 'owner', commodity: 'cheeku' })).accessToken;
+    const ct = uuidv7();
+    await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [truck(ct, t)] }).expect(200);
+    const refused = await http().get(`/v1/nariyal/beejaks/${ct}`).set(auth(cheeku)).expect(422);
+    expect(refused.body.message).toBe('Yeh sirf Nariyal dukaan ke liye hai');
+    await http().get(`/v1/nariyal/beejaks?truckIds=${ct}`).set(auth(cheeku)).expect(422);
+  });
+
+  it('keeps Bada "All paid" and who paid on a nariyal gaadi, and drops both for any other shop', async () => {
+    const paidOf = async (truckId: string) => {
+      const c = new Client({ connectionString: OWNER_URL });
+      await c.connect();
+      try {
+        return (await c.query<{ at: Date | null; by: string | null }>(
+          'SELECT bada_paid_at AS at, bada_paid_by AS by FROM trucks WHERE id = $1', [truckId])).rows[0];
+      } finally { await c.end(); }
+    };
+    const nariyal = (await registerShop('9877900005', 'Nariyal Bada')).accessToken;
+    const t1 = new Date().toISOString();
+    const id = uuidv7();
+    const r1 = await http().post('/v1/sync/push').set(auth(nariyal))
+      .send({ items: [truck(id, t1, { bada_paid_at: t1, bada_paid_by: 'Rajneesh' })] }).expect(200);
+    expect(r1.body.results[0].status).toBe('applied');
+    expect((await paidOf(id)).by).toBe('Rajneesh');
+    // Taken off again: both clear.
+    const t2 = new Date(Date.now() + 1000).toISOString();
+    await http().post('/v1/sync/push').set(auth(nariyal))
+      .send({ items: [truck(id, t2, { updated_at: t2, bada_paid_at: null, bada_paid_by: null })] }).expect(200);
+    expect(await paidOf(id)).toEqual({ at: null, by: null });
+
+    const s = await login('9877900006');
+    const cheeku = (await createApproved(s.accessToken, { name: 'Cheeku Bada', mandi: 'Azadpur', shopNo: '3', role: 'owner', commodity: 'cheeku' })).accessToken;
+    const other = uuidv7();
+    await http().post('/v1/sync/push').set(auth(cheeku)).send({ items: [truck(other, t1, { bada_paid_at: t1, bada_paid_by: 'Ashish' })] }).expect(200);
+    expect(await paidOf(other)).toEqual({ at: null, by: null });
+  });
+});

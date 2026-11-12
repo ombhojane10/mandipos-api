@@ -46,7 +46,7 @@ type Books = {
 };
 type Lot = { truckId: string; brandId: string; number: string; supplier: string; quality: string; left: number }
 
-const PANNI = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic'];
+const PANNI = ['Nariyal Pani', 'Jai Ho', 'AB', 'Organic', 'DFC'];
 const KATTA = ['Green', 'Jaipur', 'White'];
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);

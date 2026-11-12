@@ -11,7 +11,7 @@ import { CheekuWhatsappSheet } from '../entries/CheekuWhatsapp'
 
 type Bill = {
   id: string; number: string; slipNo: number | null; at: string; date: string; buyerId: string | null; buyerName: string; payMode: string
-  totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; chungiPaise: number; openPaise: number
+  totalPaise: number; paidPaise: number; cashPaise: number; upiPaise: number; labourPaise: number; chungiPaise: number; rikshawPaise?: number; openPaise: number
   packing: string; panniName: string; packs: number; staff: string; upiBank: string; truckId: string | null; truck: string | null; machine: string
   lines: { brand: string; grade: string; qty: number; ratePaise: number; leak: boolean }[]
   payments: { id: string; at: string; amountPaise: number; receiptNo: number | null; voided: boolean }[]
@@ -134,6 +134,7 @@ function Voucher({ shopId, billId, onClose, onDone }: VoucherProps & { billId: s
             </tbody>
             <tfoot>
               {b.chungiPaise > 0 && <tr><td>{t('Chungi')}</td><td /><td /><td className="num money">{rupees(b.chungiPaise)}</td></tr>}
+              {(b.rikshawPaise ?? 0) > 0 && <tr><td>{t('Rikshaw')}</td><td /><td /><td className="num money">{rupees(b.rikshawPaise ?? 0)}</td></tr>}
               <tr><td>{t('Kul')}</td><td className="num money">{count(qty)}</td><td /><td className="num money">{rupees(b.totalPaise)}</td></tr>
             </tfoot>
           </table>

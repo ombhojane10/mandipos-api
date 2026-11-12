@@ -61,23 +61,27 @@ const BIG_KHARCHA_PAISE = 500_000;
 export class InsightsService {
   constructor(private readonly db: Db) {}
 
-  /** A line per business day: parchi, nag, cash, UPI, udhaar, total — Tally's Sales Register. */
+  /**
+   * A line per business day: parchi, nag, cash, UPI, udhaar, total — Tally's Sales Register. Nariyal:
+   * the rickshaw fare is paid in with the slip but is not bikri, so it has its own column and
+   * total = cash + UPI + udhaar − rikshaw (0 for every other shop).
+   */
   async salesRegister(shopId: string, from: string, to: string) {
     if (from > to) throw new BadRequestException('from must be on or before to');
     return this.db.withShop(shopId, async (tx) => {
-      const rows = (await tx.query<{ day: string; slips: string; nags: string; total: string; cash: string; upi: string; free: string }>(
+      const rows = (await tx.query<{ day: string; slips: string; nags: string; total: string; cash: string; upi: string; free: string; rikshaw: string }>(
         `SELECT lb.business_date::text AS day, COUNT(*) AS slips,
                 COALESCE(SUM((SELECT SUM(qty) FROM bill_lines l WHERE l.bill_id = lb.id)), 0) AS nags,
-                SUM(lb.total_paise) AS total, SUM(lb.cash_paise) AS cash, SUM(lb.upi_paise) AS upi,
+                SUM(lb.total_paise) AS total, SUM(lb.cash_paise) AS cash, SUM(lb.upi_paise) AS upi, SUM(lb.rikshaw_paise) AS rikshaw,
                 COUNT(*) FILTER (WHERE lb.pay_mode = 'free') AS free
          FROM ${LIVE_BILLS} lb WHERE lb.business_date BETWEEN $1 AND $2
          GROUP BY lb.business_date ORDER BY lb.business_date`, [from, to])).rows;
       const days = rows.map((r) => {
-        const total = n(r.total), cash = n(r.cash), upi = n(r.upi);
-        return { date: r.day, slips: n(r.slips), nags: n(r.nags), cashPaise: cash, upiPaise: upi, udhaarPaise: Math.max(0, total - cash - upi), totalPaise: total, free: n(r.free) };
+        const total = n(r.total), cash = n(r.cash), upi = n(r.upi), rikshaw = n(r.rikshaw);
+        return { date: r.day, slips: n(r.slips), nags: n(r.nags), cashPaise: cash, upiPaise: upi, udhaarPaise: Math.max(0, total - cash - upi), rikshawPaise: rikshaw, totalPaise: total - rikshaw, free: n(r.free) };
       });
-      const sum = (k: 'slips' | 'nags' | 'cashPaise' | 'upiPaise' | 'udhaarPaise' | 'totalPaise') => days.reduce((s, d) => s + d[k], 0);
-      return { from, to, days, totals: { slips: sum('slips'), nags: sum('nags'), cashPaise: sum('cashPaise'), upiPaise: sum('upiPaise'), udhaarPaise: sum('udhaarPaise'), totalPaise: sum('totalPaise') } };
+      const sum = (k: 'slips' | 'nags' | 'cashPaise' | 'upiPaise' | 'udhaarPaise' | 'rikshawPaise' | 'totalPaise') => days.reduce((s, d) => s + d[k], 0);
+      return { from, to, days, totals: { slips: sum('slips'), nags: sum('nags'), cashPaise: sum('cashPaise'), upiPaise: sum('upiPaise'), udhaarPaise: sum('udhaarPaise'), rikshawPaise: sum('rikshawPaise'), totalPaise: sum('totalPaise') } };
     });
   }
 
@@ -123,7 +127,7 @@ export class InsightsService {
     if (from > to) throw new BadRequestException('from must be on or before to');
     return this.db.withShop(shopId, async (tx) => {
       const sales = n((await tx.query<{ s: string }>(
-        `SELECT COALESCE(SUM(total_paise), 0) AS s FROM ${LIVE_BILLS} lb WHERE lb.business_date BETWEEN $1 AND $2`, [from, to])).rows[0].s);
+        `SELECT COALESCE(SUM(total_paise - rikshaw_paise), 0) AS s FROM ${LIVE_BILLS} lb WHERE lb.business_date BETWEEN $1 AND $2`, [from, to])).rows[0].s);
       const cogs = n((await tx.query<{ s: string }>(
         `SELECT COALESCE(SUM(l.qty * tc.cost::numeric / NULLIF(tc.recv, 0)), 0)::bigint AS s
          FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id JOIN (${TRUCK_COST}) tc ON tc.id = l.truck_id
@@ -248,7 +252,7 @@ export class InsightsService {
       const dayRows = (await tx.query<{ day: string; slips: string; goods: string; apmc: string; labour: string; paid: string }>(
         `SELECT d::date::text AS day,
                 (SELECT COUNT(*) FROM ${LIVE_BILLS} lb WHERE lb.business_date = d::date) AS slips,
-                (SELECT COALESCE(SUM(total_paise - chungi_paise), 0) FROM ${LIVE_BILLS} lb WHERE lb.business_date = d::date) AS goods,
+                (SELECT COALESCE(SUM(total_paise - chungi_paise - rikshaw_paise), 0) FROM ${LIVE_BILLS} lb WHERE lb.business_date = d::date) AS goods,
                 (SELECT COALESCE(SUM(apmc_paise), 0) FROM ${LIVE_BILLS} lb WHERE lb.business_date = d::date) AS apmc,
                 (SELECT COALESCE(SUM(labour_paise), 0) FROM ${LIVE_BILLS} lb WHERE lb.business_date = d::date) AS labour,
                 (SELECT COALESCE(SUM(amount_paise), 0) FROM daybook_entries e

@@ -47,7 +47,7 @@ export class AdminService {
       // Few shops, each a cheap indexed sum; row-level security needs one scope per shop anyway.
       const today = approved
         ? await this.db.withShop(r.id, async (tx) => n((await tx.query<{ s: string }>(
-          `SELECT COALESCE(SUM(total_paise), 0) AS s FROM ${LIVE_BILLS} lb WHERE business_date = ${IST_DAY('now()')}`)).rows[0].s))
+          `SELECT COALESCE(SUM(total_paise - rikshaw_paise), 0) AS s FROM ${LIVE_BILLS} lb WHERE business_date = ${IST_DAY('now()')}`)).rows[0].s))
         : 0;
       out.push({
         id: r.id, name: r.name, mandi: r.mandi, shopNo: r.shop_no, gstin: r.gstin, commodity: r.commodity, nickname: r.nickname, ownerPhones: r.owner_phones ?? [],
@@ -111,7 +111,7 @@ export class AdminService {
       const one = async (sql: string, params: unknown[] = [from, to]) => (await tx.query<Record<string, string>>(sql, params)).rows[0];
 
       const sales = await one(
-        `SELECT COUNT(*) AS slips, COALESCE(SUM(total_paise),0) AS sales, COALESCE(SUM(cash_paise),0) AS cash, COALESCE(SUM(upi_paise),0) AS upi
+        `SELECT COUNT(*) AS slips, COALESCE(SUM(total_paise - rikshaw_paise),0) AS sales, COALESCE(SUM(cash_paise),0) AS cash, COALESCE(SUM(upi_paise),0) AS upi
          FROM ${LIVE_BILLS} lb WHERE business_date BETWEEN $1 AND $2`);
       const nags = await one(
         `SELECT COALESCE(SUM(l.qty),0) AS nags FROM bill_lines l JOIN ${LIVE_BILLS} lb ON lb.id = l.bill_id
@@ -152,14 +152,14 @@ export class AdminService {
            FROM trucks t WHERE t.closed_at IS NULL) x`, []);
 
       const series = (await tx.query<{ d: string; sales: string; slips: string }>(
-        `SELECT d::date::text AS d, COALESCE(SUM(lb.total_paise),0) AS sales, COUNT(lb.id) AS slips
+        `SELECT d::date::text AS d, COALESCE(SUM(lb.total_paise - lb.rikshaw_paise),0) AS sales, COUNT(lb.id) AS slips
          FROM generate_series($1::date, $2::date, interval '1 day') d
          LEFT JOIN ${LIVE_BILLS} lb ON lb.business_date = d::date
          GROUP BY d ORDER BY d`, [from, to])).rows;
       const topBuyers = (await tx.query<{ id: string; name: string; sales: string; slips: string }>(
-        `SELECT lb.buyer_id AS id, MAX(lb.buyer_name) AS name, SUM(lb.total_paise) AS sales, COUNT(*) AS slips
+        `SELECT lb.buyer_id AS id, MAX(lb.buyer_name) AS name, SUM(lb.total_paise - lb.rikshaw_paise) AS sales, COUNT(*) AS slips
          FROM ${LIVE_BILLS} lb WHERE lb.buyer_id IS NOT NULL AND business_date BETWEEN $1 AND $2
-         GROUP BY lb.buyer_id ORDER BY SUM(lb.total_paise) DESC LIMIT 5`, [from, to])).rows;
+         GROUP BY lb.buyer_id ORDER BY SUM(lb.total_paise - lb.rikshaw_paise) DESC LIMIT 5`, [from, to])).rows;
 
       const cash = n(sales.cash), upi = n(sales.upi);
       return {
@@ -237,9 +237,9 @@ export class AdminService {
    * Ledger Multiple and Chithi prints don't run four queries per grahak.
    */
   private async histories(tx: Tx, buyerIds: string[]) {
-    const bills = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string; labour_paise: string; chungi_paise: string; apmc_paise: string }>(
+    const bills = (await tx.query<{ id: string; buyer_id: string; created_at: Date; business_date: string; slip_no: number | null; number: string; pay_mode: string; total_paise: string; paid_paise: string; cash_paise: string; upi_paise: string; packing: string; staff_name: string; labour_paise: string; chungi_paise: string; apmc_paise: string; rikshaw_paise: string }>(
       `SELECT id, buyer_id, created_at, business_date::text AS business_date, slip_no, number, pay_mode, total_paise, paid_paise, cash_paise, upi_paise, packing, staff_name,
-              labour_paise, chungi_paise, apmc_paise
+              labour_paise, chungi_paise, apmc_paise, rikshaw_paise
        FROM ${LIVE_BILLS} lb WHERE buyer_id = ANY($1::uuid[])`, [buyerIds])).rows;
     const lines = (await tx.query<{ bill_id: string; brand: string | null; grade: string; qty: number; rate_paise: string; leak: boolean }>(
       `SELECT l.bill_id, br.name AS brand, l.grade, l.qty, l.rate_paise, l.leak FROM bill_lines l
@@ -452,10 +452,10 @@ export class AdminService {
   async bill(shopId: string, billId: string) {
     await this.requireApproved(shopId);
     return this.db.withShop(shopId, async (tx) => {
-      const b = (await tx.query<{ id: string; number: string; slip_no: number | null; created_at: Date; day: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; labour: string; chungi: string; apmc: string; packing: string; panni_name: string; packs: number; staff_name: string; upi_bank: string; truck_id: string | null; truck: string | null; device: string | null; device_label: string | null }>(
+      const b = (await tx.query<{ id: string; number: string; slip_no: number | null; created_at: Date; day: string; buyer_id: string | null; buyer_name: string; pay_mode: string; total: string; paid: string; cash: string; upi: string; labour: string; chungi: string; apmc: string; rikshaw: string; packing: string; panni_name: string; packs: number; staff_name: string; upi_bank: string; truck_id: string | null; truck: string | null; device: string | null; device_label: string | null }>(
         `SELECT b.id, b.number, b.truck_id, b.slip_no, b.created_at, b.business_date::text AS day, b.buyer_id, b.buyer_name, b.pay_mode,
                 b.total_paise AS total, b.paid_paise AS paid, b.cash_paise AS cash, b.upi_paise AS upi, b.labour_paise AS labour,
-                b.chungi_paise AS chungi, b.apmc_paise AS apmc, b.packing, b.panni_name, b.packs, b.staff_name, b.upi_bank,
+                b.chungi_paise AS chungi, b.apmc_paise AS apmc, b.rikshaw_paise AS rikshaw, b.packing, b.panni_name, b.packs, b.staff_name, b.upi_bank,
                 t.number AS truck, d.code AS device, d.label AS device_label
          FROM bills b LEFT JOIN trucks t ON t.id = b.truck_id LEFT JOIN devices d ON d.id = b.device_id WHERE b.id = $1`, [billId])).rows[0];
       if (!b) throw new NotFoundException('Parchi nahi mili');
@@ -488,7 +488,7 @@ export class AdminService {
       return {
         id: b.id, number: b.number, slipNo: b.slip_no, at: b.created_at.toISOString(), date: b.day,
         buyerId: b.buyer_id, buyerName: b.buyer_name, payMode: b.pay_mode,
-        totalPaise: n(b.total), paidPaise: n(b.paid), cashPaise: n(b.cash), upiPaise: n(b.upi), labourPaise: n(b.labour), chungiPaise: n(b.chungi), apmcPaise: n(b.apmc),
+        totalPaise: n(b.total), paidPaise: n(b.paid), cashPaise: n(b.cash), upiPaise: n(b.upi), labourPaise: n(b.labour), chungiPaise: n(b.chungi), apmcPaise: n(b.apmc), rikshawPaise: n(b.rikshaw),
         openPaise: Math.max(0, n(b.total) - n(b.paid) - paidLater),
         packing: b.packing, panniName: b.panni_name, packs: b.packs, staff: b.staff_name, upiBank: b.upi_bank, truckId: b.truck_id, truck: b.truck,
         // Vasooli still standing on the slip: an edit is refused, a delete hands it back or keeps it.
@@ -576,10 +576,10 @@ export class AdminService {
  * What a slip's total carries over its maal (qty × bhav), named so the khata can show it as a line:
  * coconut's mazdoori, amrud's chungi, angoor's APMC + labour. Null when the total is just the maal.
  */
-function chargesOf(b: { total_paise: string; labour_paise: string; chungi_paise: string; apmc_paise: string }, ls: { qty: number; ratePaise: number }[]) {
+function chargesOf(b: { total_paise: string; labour_paise: string; chungi_paise: string; apmc_paise: string; rikshaw_paise?: string }, ls: { qty: number; ratePaise: number }[]) {
   const paise = n(b.total_paise) - ls.reduce((s, l) => s + l.qty * l.ratePaise, 0);
   if (!paise) return undefined;
   const apmc = n(b.apmc_paise), labour = n(b.labour_paise), chungi = n(b.chungi_paise) - apmc - labour;
-  const parts = [apmc > 0 && 'APMC', chungi > 0 && 'Chungi', labour > 0 && 'Mazdoori'].filter(Boolean);
+  const parts = [apmc > 0 && 'APMC', chungi > 0 && 'Chungi', labour > 0 && 'Mazdoori', n(b.rikshaw_paise ?? '0') > 0 && 'Rikshaw'].filter(Boolean);
   return { label: paise < 0 ? 'Chhoot' : parts.join(' + ') || 'Kharcha', paise };
 }
